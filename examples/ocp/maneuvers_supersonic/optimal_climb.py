@@ -75,13 +75,13 @@ t_ref = 100.
 v_ref = (3 * atm.speed_of_sound(65_600.) - 0.38 * atm.speed_of_sound(0.)) / 2
 gam_ref = 30 * np.pi / 180
 h_ref = 65_600. / 2
-m_ref = 34_200. / 2
+m_ref = 34_200. / g0 / 2
 
 ocp.add_constraint(location='initial', expr=t / t_ref)
 ocp.add_constraint(location='initial', expr=(h - h0) / h_ref)
 ocp.add_constraint(location='initial', expr=(v - v0) / v_ref)
 ocp.add_constraint(location='initial', expr=(gam - gam0) / gam_ref)
-ocp.add_constraint(location='initial', expr=(m - m0) / h_ref)
+ocp.add_constraint(location='initial', expr=(m - m0) / m_ref)
 
 hf = ca.MX.sym('hf')
 vf = ca.MX.sym('vf')
@@ -103,9 +103,10 @@ ocp.set_cost(0, 0, weight_time * t / t_ref + (1 - weight_time) * m / m_ref)
 # Compilation
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual, verbose=False, max_nodes=100, node_buffer=10)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual, verbose=False, max_nodes=100, node_buffer=10,
+                                                      bc_tol=1e-8)
 
-guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=9 * np.pi/180, t_span=5)
+guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=9 * np.pi/180, t_span=2.5)
 
 with open('guess_climb.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -118,7 +119,8 @@ with open('seed_sol_climb.data', 'wb') as file:
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(100, {'vf': 0.5 * atm.speed_of_sound(0.), 'hf': 0., 'gamf': 0.})
-cont.add_linear_series(100, {'m0': 34_200. / g0, 'hf': 65_600., 'vf': 3. * atm.speed_of_sound(65_600.)})
+cont.add_linear_series(100, {'m0': 30_000. / g0, 'hf': 65_600., 'vf': 3. * atm.speed_of_sound(65_600.)})
+cont.add_linear_series(25, {'m0': 34_200. / g0})
 sol_set = cont.run_continuation()
 
 # Save Solution
