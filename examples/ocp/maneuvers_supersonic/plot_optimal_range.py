@@ -10,16 +10,29 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 DATA = 2
 
 if DATA == 0:
-    with open('guess_climb.data', 'rb') as f:
+    with open('guess_range.data', 'rb') as f:
         sol = pickle.load(f)
 elif DATA == 1:
-    with open('seed_sol_climb.data', 'rb') as f:
+    with open('seed_sol_range.data', 'rb') as f:
         sol = pickle.load(f)
 else:
-    with open('sol_set_climb.data', 'rb') as f:
+    with open('sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[-1]
 
+# Create Dicts
+k_dict = {}
+x_dict = {}
+u_dict = {}
+
+for key, val in zip(sol.annotations.constants, sol.k):
+    k_dict[key] = val
+
+for key, val in zip(sol.annotations.states, list(sol.x)):
+    x_dict[key] = val
+
+for key, val in zip(sol.annotations.controls, list(sol.u)):
+    u_dict[key] = val
 
 # Constants
 r2d = 180 / np.pi
@@ -28,20 +41,20 @@ s_ref = 500.
 eta = 1.0
 
 # PLOT STATES
-ylabs = (r'$h$ [ft]', r'$V$ [ft/s]', r'$\gamma$ [deg]', r'$m$ [lbm]')
-ymult = np.array((1., 1., r2d, g0))
+ylabs = (r'$h$ [ft]', r'$x_N$ [ft]', r'$V$ [ft/s]', r'$\gamma$ [deg]', r'$m$ [lbm]')
+ymult = np.array((1., 1., 1., r2d, g0))
 fig_states = plt.figure()
 axes_states = []
 
 for idx, state in enumerate(list(sol.x)):
-    axes_states.append(fig_states.add_subplot(2, 2, idx + 1))
+    axes_states.append(fig_states.add_subplot(2, 3, idx + 1))
     ax = axes_states[-1]
     ax.grid()
     ax.set_xlabel('Time [s]')
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, state * ymult[idx])
 
-fig_states.suptitle(f'Cost(Wt = {sol.k[-1]}) = {sol.cost}, tf = {sol.t[-1]}, mf = {sol.x[-1, -1]}')
+fig_states.suptitle(f'Cost = {sol.cost}, Downrange = {x_dict["xn"][-1]}')
 fig_states.tight_layout()
 
 
@@ -62,42 +75,40 @@ for idx, ctrl in enumerate(list(sol.u)):
 fig_u.tight_layout()
 
 # PLOT COSTATES
-ylabs = (r'$\lambda_{h}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$', r'$\lambda_{m}$')
-ymult = np.array((1., 1., 1., 1.))
+ylabs = (r'$\lambda_{h}$', r'$\lambda_{x_N}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$', r'$\lambda_{m}$')
+ymult = np.array((1., 1., 1., 1., 1.))
 fig_costates = plt.figure()
 axes_costates = []
 
 for idx, costate in enumerate(list(sol.lam)):
-    axes_costates.append(fig_costates.add_subplot(2, 2, idx + 1))
+    axes_costates.append(fig_costates.add_subplot(2, 3, idx + 1))
     ax = axes_costates[-1]
     ax.grid()
     ax.set_xlabel('Time [s]')
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, costate * ymult[idx])
 
-fig_costates.suptitle(f'Cost(Wt = {sol.k[-1]}) = {sol.cost}, tf = {sol.t[-1]}, mf = {sol.x[-1, -1]}')
+fig_costates.suptitle(f'Cost = {sol.cost}, Downrange = {x_dict["xn"][-1]}')
 fig_costates.tight_layout()
 
 # PLOT FORCES
 lift = np.empty(sol.t.shape)
 drag = np.empty(sol.t.shape)
-thrust = np.empty(sol.t.shape)
 
-for idx, (x, u) in enumerate(zip(list(sol.x.T), list(sol.u.T))):
-    _mach = x[1] / atm.speed_of_sound(x[0])
-    _qdyn = 0.5 * x[1] ** 2 * atm.density(x[0])
-    lift[idx] = float(_qdyn * s_ref * cl_alpha_table(_mach) * u[0])
-    drag[idx] = float(_qdyn * s_ref * (cd0_table(_mach) + eta * cl_alpha_table(_mach) * u[0] ** 2))
-    thrust[idx] = float(thrust_table((_mach, x[0])))
+for idx, (h, v, alpha) in enumerate(zip(x_dict['h'], x_dict['v'], u_dict['alpha'])):
+    _mach = v / atm.speed_of_sound(h)
+    _qdyn = 0.5 * atm.density(h) * v ** 2
+    lift[idx] = float(_qdyn * s_ref * cl_alpha_table(_mach) * alpha)
+    drag[idx] = float(_qdyn * s_ref * (cd0_table(_mach) + eta * cl_alpha_table(_mach) * alpha ** 2))
 
-ylabs = (r'$L$ [g]', r'$D$ [g]', r'$T$ [g]')
-ydata = (lift, drag, thrust)
+ylabs = (r'$L$ [g]', r'$D$ [g]', r'$L/D$')
+ydata = (lift / (x_dict['m'] * g0), drag / (x_dict['m'] * g0), lift / drag)
 
 fig_aero = plt.figure()
 
 for idx, y in enumerate(ydata):
     ax = fig_aero.add_subplot(3, 1, idx + 1)
-    ax.plot(sol.t, y / (sol.x[3] * g0))
+    ax.plot(sol.t, y)
     ax.grid()
     ax.set_xlabel('Time [s]')
     ax.set_ylabel(ylabs[idx])
