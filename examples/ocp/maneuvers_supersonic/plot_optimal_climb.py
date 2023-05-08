@@ -103,5 +103,24 @@ for idx, y in enumerate(ydata):
     ax.set_ylabel(ylabs[idx])
 
 fig_aero.tight_layout()
+#
+# # PLOT SERIES
+# fig_series = plt.figure()
+#
+# ax_hv = fig_series.add_subplot(1, 2, 1)
+# ax_hv.grid()
+# ax_hv.set_xlabel('Velocity [ft/s]')
+# ax_hv.set_ylabel('Altitude [ft]')
+#
+# ax_ctrl = fig_series.add_subplot(1, 2, 2)
+# ax_ctrl.grid()
+# ax_ctrl.set_xlabel('Time [s]')
+# ax_ctrl.set_ylabel(r'$\alpha$ [deg]')
+#
+# for solution in [sols[idx] for idx in (-100, -1)]:
+#     ax_hv.plot(solution.x[1, :], solution.x[0, :])
+#     ax_ctrl.plot(solution.t, solution.u[0, :] * r2d)
+#
+# fig_series.tight_layout()
 
 plt.show()

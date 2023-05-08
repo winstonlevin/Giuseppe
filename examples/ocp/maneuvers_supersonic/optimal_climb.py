@@ -103,28 +103,7 @@ ocp.set_cost(0, 0, weight_time * t / t_ref + (1 - weight_time) * m / m_ref)
 # Compilation
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual, verbose=2, max_nodes=100, node_buffer=10)
-
-
-# # Proportional Ctrl Law to Drive gam -> gam_cmd
-# def ctrl_law(_t, _x, _p, _k):
-#     _gain = -np.log(0.02) / 2  # 2 second settling time
-#     _gam_cmd = 0.  # FPA command
-#     _alpha_max = 10. * np.pi / 180
-#
-#     _h = _x[0]
-#     _v = _x[1]
-#     _gam = _x[2]
-#     _m = _x[3]
-#
-#     _mach = _v / atm.speed_of_sound(_h)
-#     _lift_alpha = 0.5 * atm.density(_h) * _v ** 2 * cl_alpha_table(_mach)
-#     _thrust = thrust_table((_mach, _h))
-#     _alpha = float((_gain * _m * _v * (_gam_cmd - _gam) + _m * (mu / (Re + _h) ** 2) * np.cos(_gam)) \
-#                    / (_thrust + _lift_alpha))
-#     _alpha = min(max(_alpha, -_alpha_max), _alpha_max)
-#     return np.array((_alpha,))
-
+    num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual, verbose=False, max_nodes=100, node_buffer=10)
 
 guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=9 * np.pi/180, t_span=5)
 
@@ -139,7 +118,7 @@ with open('seed_sol.data', 'wb') as file:
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(100, {'vf': 0.5 * atm.speed_of_sound(0.), 'hf': 0., 'gamf': 0.})
-cont.add_linear_series(100, {'hf': 65_600., 'vf': 3. * atm.speed_of_sound(65_600.)})
+cont.add_linear_series(100, {'m0': 34_200. / g0, 'hf': 65_600., 'vf': 3. * atm.speed_of_sound(65_600.)})
 sol_set = cont.run_continuation()
 
 # Save Solution
