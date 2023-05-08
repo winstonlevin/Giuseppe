@@ -107,12 +107,12 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=9 * np.pi/180, t_span=5)
 
-with open('guess.data', 'wb') as file:
+with open('guess_climb.data', 'wb') as file:
     pickle.dump(guess, file)
 
 seed_sol = num_solver.solve(guess)
 
-with open('seed_sol.data', 'wb') as file:
+with open('seed_sol_climb.data', 'wb') as file:
     pickle.dump(seed_sol, file)
 
 # Continuations (from guess BCs to desired BCs)
@@ -122,4 +122,4 @@ cont.add_linear_series(100, {'m0': 34_200. / g0, 'hf': 65_600., 'vf': 3. * atm.s
 sol_set = cont.run_continuation()
 
 # Save Solution
-sol_set.save('sol_set.data')
+sol_set.save('sol_set_climb.data')

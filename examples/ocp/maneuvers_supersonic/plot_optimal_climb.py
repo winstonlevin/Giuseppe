@@ -10,13 +10,13 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 DATA = 2
 
 if DATA == 0:
-    with open('guess.data', 'rb') as f:
+    with open('guess_climb.data', 'rb') as f:
         sol = pickle.load(f)
 elif DATA == 1:
-    with open('seed_sol.data', 'rb') as f:
+    with open('seed_sol_climb.data', 'rb') as f:
         sol = pickle.load(f)
 else:
-    with open('sol_set.data', 'rb') as f:
+    with open('sol_set_climb.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[-1]
 
