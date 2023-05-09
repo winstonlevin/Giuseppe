@@ -103,6 +103,16 @@ ocp.add_constraint(location='terminal', expr=(h - hf) / h_ref)
 ocp.add_constraint(location='terminal', expr=(v - vf) / v_ref)
 ocp.add_constraint(location='terminal', expr=(gam - gamf) / gam_ref)
 
+# Altitude Constraint
+eps_h = ca.MX.sym('eps_h')
+h_min = ca.MX.sym('h_min')
+ocp.add_constant(eps_h, 1e-3 * h_ref)
+ocp.add_constant(h_min, -1.5e3)
+ocp.add_inequality_constraint(
+    'path', h, h_min,
+    regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffPenaltyConstraintHandler(eps_h, 'rat')
+)
+
 # Cost
 terminal_angle = ca.MX.sym('Wt')  # 1.0 -> min time, 0.0 -> min fuel
 ocp.add_constant(terminal_angle, 0.0)
