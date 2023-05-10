@@ -10,7 +10,7 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = False
-DATA = 1
+DATA = 2
 
 if DATA == 0:
     with open('guess_range.data', 'rb') as f:
@@ -37,6 +37,20 @@ for key, val in zip(sol.annotations.states, list(sol.x)):
 
 for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
+
+
+# De-Regularaize Control
+# def reg2ctrl(u: np.array, u_max: float, u_min: float, eps_u: float):  # atan
+#     return (u_max - u_min) / np.pi * np.arctan(u / eps_u)
+
+# def reg2ctrl(u: np.array, u_max: float, u_min: float, eps_u: float):  # asin
+#     return (u_max - u_min) / 2 * np.sin(u) + (u_max + u_min) / 2
+
+
+# sol.u[0, :] = reg2ctrl(sol.u[0, :], k_dict['alpha_min'], k_dict['alpha_max'], k_dict['eps_alpha'])
+# u_dict['alpha'] = sol.u[0, :]
+# sol.u[1, :] = reg2ctrl(sol.u[0, :], k_dict['phi_min'], k_dict['phi_max'], k_dict['eps_phi'])
+# u_dict['phi'] = sol.u[0, :]
 
 # Process Data
 r2d = 180 / np.pi
@@ -70,7 +84,8 @@ pe = g * x_dict['h']
 e = ke + pe
 
 t_label = 'Time [s]'
-title_str = f'Cost = {sol.cost * k_dict["x_ref"]}, Downrange = {x_dict["xn"][-1]}'
+title_str = f'Cost(Ang. ={k_dict["terminal_angle"]}) = {sol.cost * k_dict["x_ref"]},' \
+            f'\nDownrange = {x_dict["xn"][-1]}, Crossrange = {x_dict["xe"][-1]}'
 
 # PLOT STATES
 ylabs = (r'$h$ [ft]', r'$x_N$ [ft]', r'$x_E$ [ft]', r'$V$ [ft/s]', r'$\gamma$ [deg]', r'$\psi$ [deg]', r'$m$ [lbm]')

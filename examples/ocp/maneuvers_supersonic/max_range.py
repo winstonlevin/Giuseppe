@@ -22,39 +22,41 @@ alpha_min = ca.MX.sym('alpha_min', 1)
 alpha_max = ca.MX.sym('alpha_max', 1)
 eps_alpha = ca.MX.sym('eps_alpha', 1)
 
+alpha_bnd_val = 30 * d2r
 ocp.add_control(alpha)
-ocp.add_constant(alpha_min, -30 * d2r)
-ocp.add_constant(alpha_max, 30 * d2r)
-ocp.add_constant(eps_alpha, 1e-2 * d2r)
+ocp.add_constant(alpha_min, -alpha_bnd_val)
+ocp.add_constant(alpha_max, alpha_bnd_val)
+ocp.add_constant(eps_alpha, 1e-3)
 
 phi = ca.MX.sym('phi', 1)
 phi_min = ca.MX.sym('phi_min', 1)
 phi_max = ca.MX.sym('phi_max', 1)
 eps_phi = ca.MX.sym('eps_phi', 1)
 
+phi_bnd_val = np.arccos(1. / 5.)  # Max load factor = 5 for L = W
 ocp.add_control(phi)
-ocp.add_constant(phi_min, -np.arccos(1. / 5.))  # Max load factor = 5 for L = W
-ocp.add_constant(phi_max, np.arccos(1. / 5.))
-ocp.add_constant(eps_phi, 1e-2 * d2r)
+ocp.add_constant(phi_min, -phi_bnd_val)
+ocp.add_constant(phi_max, phi_bnd_val)
+ocp.add_constant(eps_phi, 1e-1)
 
-ocp.add_inequality_constraint(
-    'control', alpha, alpha_min, alpha_max,
-    regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffControlConstraintHandler(
-        eps_alpha, 'sin'
-    )
-)
-
-ocp.add_inequality_constraint(
-    'control', phi, phi_min, phi_max,
-    regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffControlConstraintHandler(
-        eps_phi, 'sin'
-    )
-)
+# ocp.add_inequality_constraint(
+#     'control', alpha, alpha_min, alpha_max,
+#     regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffControlConstraintHandler(
+#         eps_alpha * d2r, 'sin'
+#     )
+# )
+#
+# ocp.add_inequality_constraint(
+#     'control', phi, phi_min, phi_max,
+#     regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffControlConstraintHandler(
+#         eps_phi * d2r, 'sin'
+#     )
+# )
 
 # States
 h = ca.MX.sym('h', 1)
 xn = ca.MX.sym('xn', 1)
-xd = ca.MX.sym('cross', 1)
+xd = ca.MX.sym('xe', 1)
 v = ca.MX.sym('v', 1)
 gam = ca.MX.sym('gam', 1)
 psi = ca.MX.sym('psi', 1)
@@ -111,6 +113,7 @@ xn0 = ca.MX.sym('xn0')
 xd0 = ca.MX.sym('xd0')
 v0 = ca.MX.sym('v0')
 gam0 = ca.MX.sym('gam0')
+psi0 = ca.MX.sym('psi0')
 m0 = ca.MX.sym('m0')
 
 ocp.add_constant(h0, 65_600.)
@@ -118,12 +121,14 @@ ocp.add_constant(xn0, 0.)
 ocp.add_constant(xd0, 0.)
 ocp.add_constant(v0, 3 * atm.speed_of_sound(65_600.))
 ocp.add_constant(gam0, 0.)
+ocp.add_constant(psi0, 0.)
 # ocp.add_constant(m0, 34_200. / g0)
 ocp.add_constant(m0, 32138.594625382884 / g0)
 
 t_ref = ca.MX.sym('t_ref')
 v_ref = ca.MX.sym('v_ref')
 gam_ref = ca.MX.sym('gam_ref')
+psi_ref = ca.MX.sym('psi_ref')
 h_ref = ca.MX.sym('h_ref')
 m_ref = ca.MX.sym('m_ref')
 x_ref = ca.MX.sym('x_ref')
@@ -134,6 +139,7 @@ t_ref_val = 100.
 ocp.add_constant(t_ref, t_ref_val)
 ocp.add_constant(v_ref, v_ref_val)
 ocp.add_constant(gam_ref, 30 * d2r)
+ocp.add_constant(psi_ref, 90 * d2r)
 ocp.add_constant(h_ref, 65_600. / 2)
 ocp.add_constant(m_ref, 34_200. / g0 / 2)
 ocp.add_constant(x_ref, v_ref_val * t_ref_val)
@@ -144,6 +150,7 @@ ocp.add_constraint(location='initial', expr=(xn - xn0) / x_ref)
 ocp.add_constraint(location='initial', expr=(xd - xd0) / x_ref)
 ocp.add_constraint(location='initial', expr=(v - v0) / v_ref)
 ocp.add_constraint(location='initial', expr=(gam - gam0) / gam_ref)
+ocp.add_constraint(location='initial', expr=(psi - psi0) / psi_ref)
 ocp.add_constraint(location='initial', expr=(m - m0) / m_ref)
 
 hf = ca.MX.sym('hf')
@@ -182,7 +189,11 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
     num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual, verbose=False, max_nodes=100, node_buffer=10)
 
-guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=np.array((3., 0.)) * d2r, t_span=30)
+
+guess = giuseppe.guess_generation.auto_propagate_guess(
+    adiff_dual,
+    control=np.asarray(adiff_dual.ca_control2pseudo(np.array((3., 0.)) * d2r, adiff_dual.default_values)).flatten(),
+    t_span=30)
 
 with open('guess_range.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -196,18 +207,20 @@ with open('seed_sol_range.data', 'wb') as file:
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(100, {'vf': 0.38 * atm.speed_of_sound(0.), 'hf': 60., 'gamf': 0. * d2r})
 # cont.add_linear_series(100, {'h_min': 59.})
-cont.add_logarithmic_series(100, {'eps_h': 1e-6})
+cont.add_logarithmic_series(100, {'eps_h': 1e-6, 'eps_alpha': 1e-6, 'eps_phi': 1e-6})
 sol_set = cont.run_continuation()
 
 # Save Solution
 sol_set.save('sol_set_range.data')
 
-# # Sweep Altitudes
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-# cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
-# sol_set_altitude = cont.run_continuation()
-#
-# # Sweep Altitudes
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-# cont.add_linear_series(179, {'terminal_angle': 180. * d2r})
-# sol_set_crossrange = cont.run_continuation()
+# Sweep Altitudes
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
+sol_set_altitude = cont.run_continuation()
+sol_set_altitude.save('sol_set_range_altitude.data')
+
+# Sweep Altitudes
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+cont.add_linear_series(179, {'terminal_angle': 180. * d2r})
+sol_set_crossrange = cont.run_continuation()
+sol_set_crossrange.save('sol_set_crossrange.data')
