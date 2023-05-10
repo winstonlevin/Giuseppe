@@ -39,20 +39,6 @@ ocp.add_constant(phi_min, -phi_bnd_val)
 ocp.add_constant(phi_max, phi_bnd_val)
 ocp.add_constant(eps_phi, 1e-1)
 
-# ocp.add_inequality_constraint(
-#     'control', alpha, alpha_min, alpha_max,
-#     regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffControlConstraintHandler(
-#         eps_alpha * d2r, 'sin'
-#     )
-# )
-#
-# ocp.add_inequality_constraint(
-#     'control', phi, phi_min, phi_max,
-#     regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffControlConstraintHandler(
-#         eps_phi * d2r, 'sin'
-#     )
-# )
-
 # States
 h = ca.MX.sym('h', 1)
 xn = ca.MX.sym('xn', 1)
@@ -206,7 +192,6 @@ with open('seed_sol_range.data', 'wb') as file:
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(100, {'vf': 0.38 * atm.speed_of_sound(0.), 'hf': 60., 'gamf': 0. * d2r})
-# cont.add_linear_series(100, {'h_min': 59.})
 cont.add_logarithmic_series(100, {'eps_h': 1e-6, 'eps_alpha': 1e-6, 'eps_phi': 1e-6})
 sol_set = cont.run_continuation()
 

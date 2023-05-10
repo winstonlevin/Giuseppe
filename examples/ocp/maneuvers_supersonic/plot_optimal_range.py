@@ -38,20 +38,6 @@ for key, val in zip(sol.annotations.states, list(sol.x)):
 for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
 
-
-# De-Regularaize Control
-# def reg2ctrl(u: np.array, u_max: float, u_min: float, eps_u: float):  # atan
-#     return (u_max - u_min) / np.pi * np.arctan(u / eps_u)
-
-# def reg2ctrl(u: np.array, u_max: float, u_min: float, eps_u: float):  # asin
-#     return (u_max - u_min) / 2 * np.sin(u) + (u_max + u_min) / 2
-
-
-# sol.u[0, :] = reg2ctrl(sol.u[0, :], k_dict['alpha_min'], k_dict['alpha_max'], k_dict['eps_alpha'])
-# u_dict['alpha'] = sol.u[0, :]
-# sol.u[1, :] = reg2ctrl(sol.u[0, :], k_dict['phi_min'], k_dict['phi_max'], k_dict['eps_phi'])
-# u_dict['phi'] = sol.u[0, :]
-
 # Process Data
 r2d = 180 / np.pi
 g0 = k_dict['mu'] / k_dict['Re'] ** 2
