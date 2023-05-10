@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 import casadi as ca
 import pickle
@@ -16,17 +18,46 @@ ocp.set_independent(t)
 
 # Controls
 alpha = ca.MX.sym('alpha', 1)
-# sigma = ca.MX.sym('sigma', 1)
+alpha_min = ca.MX.sym('alpha_min', 1)
+alpha_max = ca.MX.sym('alpha_max', 1)
+eps_alpha = ca.MX.sym('eps_alpha', 1)
+
 ocp.add_control(alpha)
-# ocp.add_control(sigma)
+ocp.add_constant(alpha_min, -30 * d2r)
+ocp.add_constant(alpha_max, 30 * d2r)
+ocp.add_constant(eps_alpha, 1e-2 * d2r)
+
+phi = ca.MX.sym('phi', 1)
+phi_min = ca.MX.sym('phi_min', 1)
+phi_max = ca.MX.sym('phi_max', 1)
+eps_phi = ca.MX.sym('eps_phi', 1)
+
+ocp.add_control(phi)
+ocp.add_constant(phi_min, -np.arccos(1. / 5.))  # Max load factor = 5 for L = W
+ocp.add_constant(phi_max, np.arccos(1. / 5.))
+ocp.add_constant(eps_phi, 1e-2 * d2r)
+
+ocp.add_inequality_constraint(
+    'control', alpha, alpha_min, alpha_max,
+    regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffControlConstraintHandler(
+        eps_alpha, 'sin'
+    )
+)
+
+ocp.add_inequality_constraint(
+    'control', phi, phi_min, phi_max,
+    regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffControlConstraintHandler(
+        eps_phi, 'sin'
+    )
+)
 
 # States
 h = ca.MX.sym('h', 1)
 xn = ca.MX.sym('xn', 1)
-# cross = ca.MX.sym('cross', 1)
+xd = ca.MX.sym('cross', 1)
 v = ca.MX.sym('v', 1)
 gam = ca.MX.sym('gam', 1)
-# psi = ca.MX.sym('psi', 1)
+psi = ca.MX.sym('psi', 1)
 m = ca.MX.sym('m', 1)
 
 # Immutable Constant Parameters
@@ -44,6 +75,7 @@ ocp.add_constant(Re, 20902900)
 
 g0 = 1.4076539e16 / 20902900 ** 2
 g = mu / (Re + h) ** 2
+# g = g0
 
 # Look-Up Tables & Atmospheric Expressions
 T = temp_table(h)
@@ -66,20 +98,24 @@ drag = qdyn * s_ref * cd
 
 # Dynamics
 ocp.add_state(h, v * ca.sin(gam))
-ocp.add_state(xn, v * ca.cos(gam))
+ocp.add_state(xn, v * ca.cos(gam) * ca.cos(psi))
+ocp.add_state(xd, v * ca.cos(gam) * ca.sin(psi))
 ocp.add_state(v, (thrust * ca.cos(alpha) - drag) / m - g * ca.sin(gam))
-ocp.add_state(gam, (thrust * ca.sin(alpha) + lift) / (m * v) - g / v * ca.cos(gam))
+ocp.add_state(gam, (thrust * ca.sin(alpha) + lift) * ca.cos(phi) / (m * v) - g / v * ca.cos(gam))
+ocp.add_state(psi, (thrust * ca.sin(alpha) + lift) * ca.sin(phi) / (m * v * ca.cos(gam)))
 ocp.add_state(m, -thrust / (Isp * g0))
 
 # Boundary Conditions
 h0 = ca.MX.sym('h0')
 xn0 = ca.MX.sym('xn0')
+xd0 = ca.MX.sym('xd0')
 v0 = ca.MX.sym('v0')
 gam0 = ca.MX.sym('gam0')
 m0 = ca.MX.sym('m0')
 
 ocp.add_constant(h0, 65_600.)
 ocp.add_constant(xn0, 0.)
+ocp.add_constant(xd0, 0.)
 ocp.add_constant(v0, 3 * atm.speed_of_sound(65_600.))
 ocp.add_constant(gam0, 0.)
 # ocp.add_constant(m0, 34_200. / g0)
@@ -90,7 +126,7 @@ v_ref = ca.MX.sym('v_ref')
 gam_ref = ca.MX.sym('gam_ref')
 h_ref = ca.MX.sym('h_ref')
 m_ref = ca.MX.sym('m_ref')
-xn_ref = ca.MX.sym('xn_ref')
+x_ref = ca.MX.sym('x_ref')
 
 v_ref_val = (3 * atm.speed_of_sound(65_600.) - 0.38 * atm.speed_of_sound(0.)) / 2
 t_ref_val = 100.
@@ -100,11 +136,12 @@ ocp.add_constant(v_ref, v_ref_val)
 ocp.add_constant(gam_ref, 30 * d2r)
 ocp.add_constant(h_ref, 65_600. / 2)
 ocp.add_constant(m_ref, 34_200. / g0 / 2)
-ocp.add_constant(xn_ref, v_ref_val * t_ref_val)
+ocp.add_constant(x_ref, v_ref_val * t_ref_val)
 
 ocp.add_constraint(location='initial', expr=t / t_ref)
 ocp.add_constraint(location='initial', expr=(h - h0) / h_ref)
-ocp.add_constraint(location='initial', expr=(xn - xn0) / xn_ref)
+ocp.add_constraint(location='initial', expr=(xn - xn0) / x_ref)
+ocp.add_constraint(location='initial', expr=(xd - xd0) / x_ref)
 ocp.add_constraint(location='initial', expr=(v - v0) / v_ref)
 ocp.add_constraint(location='initial', expr=(gam - gam0) / gam_ref)
 ocp.add_constraint(location='initial', expr=(m - m0) / m_ref)
@@ -136,16 +173,16 @@ ocp.add_inequality_constraint(
 )
 
 # Cost
-terminal_angle = ca.MX.sym('Wt')  # 1.0 -> min time, 0.0 -> min fuel
+terminal_angle = ca.MX.sym('terminal_angle')  # 0 deg -> max downrange, 90 deg -> max crossrange
 ocp.add_constant(terminal_angle, 0.0)
-ocp.set_cost(0, 0, -(xn / xn_ref) * ca.cos(terminal_angle))
+ocp.set_cost(0, 0, -(xn * ca.cos(terminal_angle) - xd * ca.sin(terminal_angle)) / x_ref)
 
 # Compilation
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
     num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual, verbose=False, max_nodes=100, node_buffer=10)
 
-guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=3 * d2r, t_span=30)
+guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=np.array((3., 0.)) * d2r, t_span=30)
 
 with open('guess_range.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -164,3 +201,13 @@ sol_set = cont.run_continuation()
 
 # Save Solution
 sol_set.save('sol_set_range.data')
+
+# # Sweep Altitudes
+# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+# cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
+# sol_set_altitude = cont.run_continuation()
+#
+# # Sweep Altitudes
+# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+# cont.add_linear_series(179, {'terminal_angle': 180. * d2r})
+# sol_set_crossrange = cont.run_continuation()
