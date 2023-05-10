@@ -12,6 +12,7 @@ DATA = 2
 if DATA == 0:
     with open('guess_range.data', 'rb') as f:
         sol = pickle.load(f)
+        sol.cost = np.nan
 elif DATA == 1:
     with open('seed_sol_range.data', 'rb') as f:
         sol = pickle.load(f)
@@ -36,9 +37,11 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
 
 # Constants
 r2d = 180 / np.pi
-g0 = 32.174
-s_ref = 500.
-eta = 1.0
+g0 = k_dict['mu'] / k_dict['Re'] ** 2
+s_ref = k_dict['s_ref']
+eta = k_dict['eta']
+
+title_str = f'Cost = {sol.cost * k_dict["xn_ref"]}, Downrange = {x_dict["xn"][-1]}'
 
 # PLOT STATES
 ylabs = (r'$h$ [ft]', r'$x_N$ [ft]', r'$V$ [ft/s]', r'$\gamma$ [deg]', r'$m$ [lbm]')
@@ -54,25 +57,8 @@ for idx, state in enumerate(list(sol.x)):
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, state * ymult[idx])
 
-fig_states.suptitle(f'Cost = {sol.cost}, Downrange = {x_dict["xn"][-1]}')
+fig_states.suptitle(title_str)
 fig_states.tight_layout()
-
-
-# PLOT U
-ylabs = (r'$\alpha$ [deg]',)
-ymult = np.array((r2d,))
-fig_u = plt.figure()
-axes_u = []
-
-for idx, ctrl in enumerate(list(sol.u)):
-    axes_u.append(fig_u.add_subplot(1, 1, idx + 1))
-    ax = axes_u[-1]
-    ax.grid()
-    ax.set_xlabel('Time [s]')
-    ax.set_ylabel(ylabs[idx])
-    ax.plot(sol.t, ctrl * ymult[idx])
-
-fig_u.tight_layout()
 
 # PLOT COSTATES
 ylabs = (r'$\lambda_{h}$', r'$\lambda_{x_N}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$', r'$\lambda_{m}$')
@@ -88,32 +74,64 @@ for idx, costate in enumerate(list(sol.lam)):
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, costate * ymult[idx])
 
-fig_costates.suptitle(f'Cost = {sol.cost}, Downrange = {x_dict["xn"][-1]}')
+fig_costates.suptitle(title_str)
 fig_costates.tight_layout()
 
 # PLOT FORCES
 lift = np.empty(sol.t.shape)
 drag = np.empty(sol.t.shape)
+alpha_ld_max = np.empty(sol.t.shape)
+lift_ld_max = np.empty(sol.t.shape)
+drag_ld_max = np.empty(sol.t.shape)
 
 for idx, (h, v, alpha) in enumerate(zip(x_dict['h'], x_dict['v'], u_dict['alpha'])):
     _mach = v / atm.speed_of_sound(h)
     _qdyn = 0.5 * atm.density(h) * v ** 2
-    lift[idx] = float(_qdyn * s_ref * cl_alpha_table(_mach) * alpha)
-    drag[idx] = float(_qdyn * s_ref * (cd0_table(_mach) + eta * cl_alpha_table(_mach) * alpha ** 2))
+    cl_alpha = float(cl_alpha_table(_mach))
+    cd0 = float(cd0_table(_mach))
+
+    lift[idx] = _qdyn * s_ref * cl_alpha * alpha
+    drag[idx] = float(_qdyn * s_ref * (cd0 + eta * cl_alpha * alpha ** 2))
+    alpha_ld_max[idx] = float((eta * cl_alpha / cd0) ** 0.5)
+    lift_ld_max[idx] = _qdyn * s_ref * cl_alpha * alpha_ld_max[idx]
+    drag_ld_max[idx] = float(_qdyn * s_ref * (cd0 + eta * cl_alpha * alpha_ld_max[idx] ** 2))
 
 ylabs = (r'$L$ [g]', r'$D$ [g]', r'$L/D$')
 ydata = (lift / (x_dict['m'] * g0), drag / (x_dict['m'] * g0), lift / drag)
+ydataref = (lift_ld_max / (x_dict['m'] * g0), drag_ld_max / (x_dict['m'] * g0), lift_ld_max / drag_ld_max)
 
 fig_aero = plt.figure()
 
-for idx, y in enumerate(ydata):
+for idx, (y, yref) in enumerate(zip(ydata, ydataref)):
     ax = fig_aero.add_subplot(3, 1, idx + 1)
     ax.plot(sol.t, y)
+    ax.plot(sol.t, yref, 'k--', label='Max L/D')
     ax.grid()
     ax.set_xlabel('Time [s]')
     ax.set_ylabel(ylabs[idx])
 
+fig_aero.suptitle(title_str)
 fig_aero.tight_layout()
+
+# PLOT U
+ylabs = (r'$\alpha$ [deg]',)
+ymult = np.array((r2d,))
+fig_u = plt.figure()
+axes_u = []
+
+for idx, (ctrl, uref) in enumerate(zip(list(sol.u), (alpha_ld_max,))):
+    axes_u.append(fig_u.add_subplot(1, 1, idx + 1))
+    ax = axes_u[-1]
+    ax.grid()
+    ax.set_xlabel('Time [s]')
+    ax.set_ylabel(ylabs[idx])
+    ax.plot(sol.t, ctrl * ymult[idx])
+    ax.plot(sol.t, uref * ymult[idx], label='Max L/D')
+    ax.legend()
+
+fig_u.suptitle(title_str)
+fig_u.tight_layout()
+
 #
 # # PLOT SERIES
 # fig_series = plt.figure()

@@ -6,6 +6,8 @@ import giuseppe
 
 from lookup_tables import thrust_table, cl_alpha_table, cd0_table, temp_table, dens_table, atm
 
+d2r = np.pi / 180
+
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.MX)
 
 # Independent Variable
@@ -28,13 +30,19 @@ gam = ca.MX.sym('gam', 1)
 m = ca.MX.sym('m', 1)
 
 # Immutable Constant Parameters
-Isp = 2800.0
-s_ref = 500.
-eta = 1.0
+Isp = ca.MX.sym('Isp')
+s_ref = ca.MX.sym('s_ref')
+eta = ca.MX.sym('eta')
+mu = ca.MX.sym('mu')
+Re = ca.MX.sym('Re')
 
-mu = 1.4076539e16
-Re = 20902900
-g0 = mu / Re ** 2
+ocp.add_constant(Isp, 2800.0)
+ocp.add_constant(s_ref, 500.)
+ocp.add_constant(eta, 1.0)
+ocp.add_constant(mu, 1.4076539e16)
+ocp.add_constant(Re, 20902900)
+
+g0 = 1.4076539e16 / 20902900 ** 2
 g = mu / (Re + h) ** 2
 
 # Look-Up Tables & Atmospheric Expressions
@@ -77,12 +85,22 @@ ocp.add_constant(gam0, 0.)
 # ocp.add_constant(m0, 34_200. / g0)
 ocp.add_constant(m0, 32138.594625382884 / g0)
 
-t_ref = 100.
-v_ref = (3 * atm.speed_of_sound(65_600.) - 0.38 * atm.speed_of_sound(0.)) / 2
-gam_ref = 30 * np.pi / 180
-h_ref = 65_600. / 2
-m_ref = 34_200. / g0 / 2
-xn_ref = v_ref * t_ref
+t_ref = ca.MX.sym('t_ref')
+v_ref = ca.MX.sym('v_ref')
+gam_ref = ca.MX.sym('gam_ref')
+h_ref = ca.MX.sym('h_ref')
+m_ref = ca.MX.sym('m_ref')
+xn_ref = ca.MX.sym('xn_ref')
+
+v_ref_val = (3 * atm.speed_of_sound(65_600.) - 0.38 * atm.speed_of_sound(0.)) / 2
+t_ref_val = 100.
+
+ocp.add_constant(t_ref, t_ref_val)
+ocp.add_constant(v_ref, v_ref_val)
+ocp.add_constant(gam_ref, 30 * d2r)
+ocp.add_constant(h_ref, 65_600. / 2)
+ocp.add_constant(m_ref, 34_200. / g0 / 2)
+ocp.add_constant(xn_ref, v_ref_val * t_ref_val)
 
 ocp.add_constraint(location='initial', expr=t / t_ref)
 ocp.add_constraint(location='initial', expr=(h - h0) / h_ref)
@@ -106,11 +124,15 @@ ocp.add_constraint(location='terminal', expr=(gam - gamf) / gam_ref)
 # Altitude Constraint
 eps_h = ca.MX.sym('eps_h')
 h_min = ca.MX.sym('h_min')
-ocp.add_constant(eps_h, 1e-3 * h_ref)
-ocp.add_constant(h_min, -1.5e3)
+h_max = ca.MX.sym('h_max')
+ocp.add_constant(eps_h, 1e-1)
+ocp.add_constant(h_min, 0.)
+ocp.add_constant(h_max, 100e3)
 ocp.add_inequality_constraint(
-    'path', h, h_min,
-    regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffPenaltyConstraintHandler(eps_h, 'rat')
+    'path', h, h_min, h_max,
+    regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffPenaltyConstraintHandler(
+        eps_h/h_ref, 'utm'
+    )
 )
 
 # Cost
@@ -123,7 +145,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
     num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual, verbose=False, max_nodes=100, node_buffer=10)
 
-guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=2 * np.pi/180, t_span=60)
+guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=3 * d2r, t_span=30)
 
 with open('guess_range.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -135,7 +157,9 @@ with open('seed_sol_range.data', 'wb') as file:
 
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(100, {'vf': 0.38 * atm.speed_of_sound(0.), 'hf': 0., 'gamf': 0.})
+cont.add_linear_series(100, {'vf': 0.38 * atm.speed_of_sound(0.), 'hf': 60., 'gamf': -2.5 * d2r})
+cont.add_linear_series(100, {'h_min': 59.})
+cont.add_logarithmic_series(100, {'eps_h': 1e-6})
 sol_set = cont.run_continuation()
 
 # TODO -- Add altitude constraint
