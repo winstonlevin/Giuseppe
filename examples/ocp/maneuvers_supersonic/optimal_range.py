@@ -175,7 +175,7 @@ with open('seed_sol_range.data', 'wb') as file:
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(100, {'vf': 0.38 * atm.speed_of_sound(0.), 'hf': 60., 'gamf': 0. * d2r})
-cont.add_logarithmic_series(100, {'eps_h': 1e-6, 'eps_alpha': 1e-6, 'eps_phi': 1e-6})
+cont.add_logarithmic_series(100, {'eps_h': 1e-6})
 sol_set = cont.run_continuation()
 
 # Save Solution
