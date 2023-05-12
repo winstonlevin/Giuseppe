@@ -80,18 +80,16 @@ for idx, sol in enumerate(sols):
         / (auxiliaries[idx]['cd0']
            + auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_mg'] ** 2)
 
-    auxiliaries[idx]['t_ld_dist_intersect'] = ([], [], [])
+    auxiliaries[idx]['t_ld_dist_intersect'] = (np.empty((0,)), np.nan, np.inf)
 
     # Obtain the closest point to ld = max(ld) = ld : n = 1
     for t, ld, ld_max, ld_mg in zip(auxiliaries[idx]['t'],
                                     auxiliaries[idx]['lift'] / auxiliaries[idx]['drag'],
                                     auxiliaries[idx]['ld_max'],
                                     auxiliaries[idx]['ld_mg']):
-        dist = ((ld - ld_max) ** 2 + (ld - ld_mg) ** 2)**0.5
-        if dist < 1e-2:
-            auxiliaries[idx]['t_ld_dist_intersect'][0].append(t)
-            auxiliaries[idx]['t_ld_dist_intersect'][1].append(ld)
-            auxiliaries[idx]['t_ld_dist_intersect'][2].append(dist)
+        dist = ((ld - ld_max) ** 2 + (ld - ld_mg) ** 2 + (ld_max - ld_mg) ** 2)**0.5
+        if dist < auxiliaries[idx]['t_ld_dist_intersect'][2]:
+            auxiliaries[idx]['t_ld_dist_intersect'] = (t, ld, dist)
 
 
 r2d = 180 / np.pi
@@ -205,9 +203,7 @@ if PLOT_AUXILIARY:
         ax_lift.plot(sol.t, aux['lift'] / aux['weight'], color=cols_gradient(idx))
         ax_drag.plot(sol.t, aux['drag'] / aux['weight'], color=cols_gradient(idx))
         ax_ld.plot(sol.t, aux['lift'] / aux['drag'], color=cols_gradient(idx))
-
-        if len(aux['t_ld_dist_intersect'][0]) > 0:
-            ax_ld.plot(aux['t_ld_dist_intersect'][0], aux['t_ld_dist_intersect'][1], '*', color=cols_gradient(idx))
+        ax_ld.plot(aux['t_ld_dist_intersect'][0], aux['t_ld_dist_intersect'][1], '*', color=cols_gradient(idx))
 
         ax_e.plot(sol.t, aux['e'], color=cols_gradient(idx))
         ax_hv.plot(aux['mach'], aux['h'], color=cols_gradient(idx))
