@@ -8,8 +8,8 @@ from lookup_tables import cl_alpha_table, cd0_table, thrust_table, atm
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-PLOT_COSTATE = True
-PLOT_AUXILIARY = False
+PLOT_COSTATE = False
+PLOT_AUXILIARY = True
 DATA = 2
 
 if DATA == 0:
@@ -60,8 +60,10 @@ cd0 = np.asarray(cd0_table(mach), dtype=float).flatten()
 qdyn = 0.5 * rho * x_dict['v'] ** 2
 lift = qdyn * s_ref * cl_alpha * u_dict['alpha']
 drag = qdyn * s_ref * (cd0 + eta * cl_alpha * u_dict['alpha'] ** 2)
-alpha_mg = weight / (qdyn * s_ref * cl_alpha)
+alpha_mg = weight / (qdyn * s_ref * cl_alpha) * np.cos(x_dict['gam']) / np.cos(u_dict['phi'])
 alpha_ld = (cd0 / (k_dict['eta'] * cl_alpha)) ** 0.5
+ld_mg = cl_alpha * alpha_mg / (cd0 + eta * cl_alpha * alpha_mg ** 2)
+ld_max = cl_alpha * alpha_ld / (cd0 + eta * cl_alpha * alpha_ld ** 2)
 
 ke = 0.5 * x_dict['v']**2
 qdyn_min_drag = (eta * weight**2. / (s_ref**2 * cd0)) ** 0.5
@@ -105,8 +107,8 @@ for idx, ctrl in enumerate(list(sol.u)):
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, ctrl * ymult[idx])
-    ax.plot(sol.t, ydataref1[idx] * ymult[idx], 'k--', label=r'$\alpha$ : L = mg')
-    ax.plot(sol.t, ydataref2[idx] * ymult[idx], 'k:', label=r'$\alpha$ : max(L/D)')
+    ax.plot(sol.t, ydataref1[idx] * ymult[idx], 'k--', label='n = 1')
+    ax.plot(sol.t, ydataref2[idx] * ymult[idx], 'k:', label='max L/D')
 
 axes_u[0].legend()
 
@@ -141,14 +143,20 @@ if PLOT_AUXILIARY:
     ydata = (lift / weight, drag / weight, lift / drag)
 
     fig_aero = plt.figure()
+    axes_aero = []
 
     for idx, y in enumerate(ydata):
-        ax = fig_aero.add_subplot(3, 1, idx + 1)
+        axes_aero.append(fig_aero.add_subplot(3, 1, idx + 1))
+        ax = axes_aero[-1]
         ax.plot(sol.t, y)
         # ax.plot(sol.t, ydataref[idx], 'k--', label='Max L/D')
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
+
+    axes_aero[-1].plot(sol.t, ld_mg, 'k--', label='n = 1', zorder=0)
+    axes_aero[-1].plot(sol.t, ld_max, 'k:', label='L/D max', zorder=0)
+    axes_aero[-1].legend()
 
     fig_aero.suptitle(title_str)
     fig_aero.tight_layout()
@@ -178,6 +186,12 @@ if PLOT_AUXILIARY:
     ax_qdyn.grid()
     ax_qdyn.set_xlabel(t_label)
     ax_qdyn.set_ylabel(r'$q_{\infty}$ [psf]')
+
+    ax_ne = fig_energy_state.add_subplot(224)
+    ax_ne.plot(x_dict['xe'], x_dict['xn'])
+    ax_ne.grid()
+    ax_ne.set_xlabel(r'$x_E$')
+    ax_ne.set_ylabel(r'$x_N$')
 
     fig_energy_state.suptitle(title_str)
     fig_energy_state.tight_layout()

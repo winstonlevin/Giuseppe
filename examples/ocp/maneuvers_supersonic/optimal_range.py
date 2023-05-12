@@ -18,26 +18,9 @@ ocp.set_independent(t)
 
 # Controls
 alpha = ca.MX.sym('alpha', 1)
-alpha_min = ca.MX.sym('alpha_min', 1)
-alpha_max = ca.MX.sym('alpha_max', 1)
-eps_alpha = ca.MX.sym('eps_alpha', 1)
-
-alpha_bnd_val = 30 * d2r
-ocp.add_control(alpha)
-ocp.add_constant(alpha_min, -alpha_bnd_val)
-ocp.add_constant(alpha_max, alpha_bnd_val)
-ocp.add_constant(eps_alpha, 1e-3)
-
 phi = ca.MX.sym('phi', 1)
-phi_min = ca.MX.sym('phi_min', 1)
-phi_max = ca.MX.sym('phi_max', 1)
-eps_phi = ca.MX.sym('eps_phi', 1)
-
-phi_bnd_val = np.arccos(1. / 5.)  # Max load factor = 5 for L = W
+ocp.add_control(alpha)
 ocp.add_control(phi)
-ocp.add_constant(phi_min, -phi_bnd_val)
-ocp.add_constant(phi_max, phi_bnd_val)
-ocp.add_constant(eps_phi, 1e-1)
 
 # States
 h = ca.MX.sym('h', 1)
@@ -204,8 +187,14 @@ cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.
 sol_set_altitude = cont.run_continuation()
 sol_set_altitude.save('sol_set_range_altitude.data')
 
-# Sweep Altitudes
+# Sweep Velocities
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set_altitude.solutions[-1]))
+cont.add_linear_series(100, {'v0': 0.5 * atm.speed_of_sound(40_000.)})
+sol_set_altitude = cont.run_continuation()
+sol_set_altitude.save('sol_set_range_velocity.data')
+
+# Sweep Cross-Range
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
 cont.add_linear_series(179, {'terminal_angle': 180. * d2r})
 sol_set_crossrange = cont.run_continuation()
-sol_set_crossrange.save('sol_set_crossrange.data')
+sol_set_crossrange.save('sol_set_range_crossrange.data')
