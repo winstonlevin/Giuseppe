@@ -12,7 +12,7 @@ gradient = mpl.colormaps['viridis'].colors
 
 PLOT_COSTATE = False
 PLOT_AUXILIARY = True
-DATA = 'crossrange'  # {altitude, velocity, crossrange}
+DATA = 'velocity'  # {altitude, velocity, crossrange}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
@@ -29,9 +29,10 @@ def cols_gradient(n):
 auxiliaries = [{} for _ in range(len(sols))]
 
 for idx, sol in enumerate(sols):
-    for key, val in zip(sols[-1].annotations.constants, sol.k):
+    auxiliaries[idx][sol.annotations.independent] = sol.t
+    for key, val in zip(sol.annotations.constants, sol.k):
         auxiliaries[idx][key] = val
-    for key, val in zip(sols[-1].annotations.parameters, sol.p):
+    for key, val in zip(sol.annotations.parameters, sol.p):
         auxiliaries[idx][key] = val
     for key, val in zip(sol.annotations.states, list(sol.x)):
         auxiliaries[idx][key] = val
@@ -70,14 +71,27 @@ for idx, sol in enumerate(sols):
         * np.cos(auxiliaries[idx]['gam']) / np.cos(auxiliaries[idx]['phi'])
     auxiliaries[idx]['alpha_ld'] = \
         (auxiliaries[idx]['cd0'] / (auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'])) ** 0.5
-    auxiliaries[idx]['min_ld'] = \
+    auxiliaries[idx]['ld_max'] = \
         auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_ld'] \
         / (auxiliaries[idx]['cd0']
            + auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_ld'] ** 2)
-    auxiliaries[idx]['mg_ld'] = \
+    auxiliaries[idx]['ld_mg'] = \
         auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_mg'] \
         / (auxiliaries[idx]['cd0']
            + auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_mg'] ** 2)
+
+    auxiliaries[idx]['t_ld_dist_intersect'] = ([], [], [])
+
+    # Obtain the closest point to ld = max(ld) = ld : n = 1
+    for t, ld, ld_max, ld_mg in zip(auxiliaries[idx]['t'],
+                                    auxiliaries[idx]['lift'] / auxiliaries[idx]['drag'],
+                                    auxiliaries[idx]['ld_max'],
+                                    auxiliaries[idx]['ld_mg']):
+        dist = ((ld - ld_max) ** 2 + (ld - ld_mg) ** 2)**0.5
+        if dist < 1e-2:
+            auxiliaries[idx]['t_ld_dist_intersect'][0].append(t)
+            auxiliaries[idx]['t_ld_dist_intersect'][1].append(ld)
+            auxiliaries[idx]['t_ld_dist_intersect'][2].append(dist)
 
 
 r2d = 180 / np.pi
@@ -192,19 +206,22 @@ if PLOT_AUXILIARY:
         ax_drag.plot(sol.t, aux['drag'] / aux['weight'], color=cols_gradient(idx))
         ax_ld.plot(sol.t, aux['lift'] / aux['drag'], color=cols_gradient(idx))
 
+        if len(aux['t_ld_dist_intersect'][0]) > 0:
+            ax_ld.plot(aux['t_ld_dist_intersect'][0], aux['t_ld_dist_intersect'][1], '*', color=cols_gradient(idx))
+
         ax_e.plot(sol.t, aux['e'], color=cols_gradient(idx))
         ax_hv.plot(aux['mach'], aux['h'], color=cols_gradient(idx))
         ax_qdyn.plot(sol.t, aux['qdyn'], color=cols_gradient(idx))
         ax_ne.plot(aux['xe'], aux['xn'], color=cols_gradient(idx))
 
         if idx == 0:
-            ax_ld.plot(sol.t, aux['mg_ld'], '--', label='n = 1', color=cols_gradient(idx))
-            ax_ld.plot(sol.t, aux['min_ld'], ':', label='Max L/D', color=cols_gradient(idx))
+            ax_ld.plot(sol.t, aux['ld_mg'], '--', label='n = 1', color=cols_gradient(idx))
+            ax_ld.plot(sol.t, aux['ld_max'], ':', label='Max L/D', color=cols_gradient(idx))
 
             ax_qdyn.plot(sol.t, aux['qdyn_min_drag'], '--', label='Min Drag', color=cols_gradient(idx))
         else:
-            ax_ld.plot(sol.t, aux['mg_ld'], '--', color=cols_gradient(idx))
-            ax_ld.plot(sol.t, aux['min_ld'], ':', color=cols_gradient(idx))
+            ax_ld.plot(sol.t, aux['ld_mg'], '--', color=cols_gradient(idx))
+            ax_ld.plot(sol.t, aux['ld_max'], ':', color=cols_gradient(idx))
 
             ax_qdyn.plot(sol.t, aux['qdyn_min_drag'], '--', color=cols_gradient(idx))
 
