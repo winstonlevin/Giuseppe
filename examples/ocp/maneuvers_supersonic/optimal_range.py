@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 import numpy as np
+import scipy as sp
 import casadi as ca
 import pickle
 
@@ -38,9 +39,12 @@ eta = ca.MX.sym('eta')
 mu = ca.MX.sym('mu')
 Re = ca.MX.sym('Re')
 
+eta_val = 1.0
+s_ref_val = 500.
+
 ocp.add_constant(Isp, 2800.0)
-ocp.add_constant(s_ref, 500.)
-ocp.add_constant(eta, 1.0)
+ocp.add_constant(s_ref, s_ref_val)
+ocp.add_constant(eta, eta_val)
 ocp.add_constant(mu, 1.4076539e16)
 ocp.add_constant(Re, 20902900)
 
@@ -85,14 +89,16 @@ gam0 = ca.MX.sym('gam0')
 psi0 = ca.MX.sym('psi0')
 m0 = ca.MX.sym('m0')
 
+# m0_val = 34_200. / g0
+m0_val = 32138.594625382884 / g0
+
 ocp.add_constant(h0, 65_600.)
 ocp.add_constant(xn0, 0.)
 ocp.add_constant(xd0, 0.)
 ocp.add_constant(v0, 3 * atm.speed_of_sound(65_600.))
 ocp.add_constant(gam0, 0.)
 ocp.add_constant(psi0, 0.)
-# ocp.add_constant(m0, 34_200. / g0)
-ocp.add_constant(m0, 32138.594625382884 / g0)
+ocp.add_constant(m0, m0_val)
 
 t_ref = ca.MX.sym('t_ref')
 v_ref = ca.MX.sym('v_ref')
@@ -172,9 +178,27 @@ seed_sol = num_solver.solve(guess)
 with open('seed_sol_range.data', 'wb') as file:
     pickle.dump(seed_sol, file)
 
+
+def terminal_conditions(_hf, _weightf, _eta, _s_ref):
+    # Terminal velocity based on Mach number
+    _gamf = 0. * d2r
+
+    # Terminal velocity based on max(L/D) = L/D : L cos(gam) = W
+    def obj_n1(_vf_trial):
+        _mach_trial = _vf_trial / atm.speed_of_sound(_hf)
+        _qdyn_trial = 0.5 * atm.density(_hf) * _vf_trial ** 2
+        _alpha_trial = float(cd0_table(_mach_trial) / (_eta * cl_alpha_table(_mach_trial))) ** 0.5  # Max L/D
+        _lift_trial = _qdyn_trial * _s_ref * float(cl_alpha_table(_mach_trial)) * _alpha_trial
+        return _lift_trial * np.cos(_gamf) - _weightf
+
+    _vf = sp.optimize.fsolve(obj_n1, 0.5 * atm.speed_of_sound(_hf))
+    return _hf, _vf, _gamf
+
+
 # Continuations (from guess BCs to desired BCs)
+xf = terminal_conditions(60., m0_val, eta_val, s_ref_val)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(100, {'vf': 0.38 * atm.speed_of_sound(0.), 'hf': 60., 'gamf': 0. * d2r})
+cont.add_linear_series(100, {'hf': xf[0], 'vf': xf[1], 'gamf': xf[2]})
 cont.add_logarithmic_series(100, {'eps_h': 1e-6})
 sol_set = cont.run_continuation()
 
