@@ -108,16 +108,22 @@ h_ref = ca.MX.sym('h_ref')
 m_ref = ca.MX.sym('m_ref')
 x_ref = ca.MX.sym('x_ref')
 
-v_ref_val = (3 * atm.speed_of_sound(65_600.) - 0.38 * atm.speed_of_sound(0.)) / 2
 t_ref_val = 100.
+v_ref_val = (3 * atm.speed_of_sound(65_600.) - 0.38 * atm.speed_of_sound(0.)) / 2
+gam_ref_val = 30 * d2r
+psi_ref_val = 90 * d2r
+h_ref_val = 65_600. / 2.
+x_ref_val = v_ref_val * t_ref_val
+m_ref_val = (34_200. / g0) / 2.
 
 ocp.add_constant(t_ref, t_ref_val)
+ocp.add_constant(h_ref, h_ref_val)
+ocp.add_constant(x_ref, x_ref_val)
 ocp.add_constant(v_ref, v_ref_val)
-ocp.add_constant(gam_ref, 30 * d2r)
-ocp.add_constant(psi_ref, 90 * d2r)
-ocp.add_constant(h_ref, 65_600. / 2)
-ocp.add_constant(m_ref, 34_200. / g0 / 2)
-ocp.add_constant(x_ref, v_ref_val * t_ref_val)
+ocp.add_constant(gam_ref, gam_ref_val)
+ocp.add_constant(psi_ref, psi_ref_val)
+ocp.add_constant(m_ref, m_ref_val)
+
 
 ocp.add_constraint(location='initial', expr=t / t_ref)
 ocp.add_constraint(location='initial', expr=(h - h0) / h_ref)
@@ -150,7 +156,7 @@ ocp.add_constant(h_max, 100e3)
 ocp.add_inequality_constraint(
     'path', h, h_min, h_max,
     regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffPenaltyConstraintHandler(
-        eps_h/h_ref, 'utm'
+        eps_h/(h_max - h_min), 'utm'
     )
 )
 
@@ -196,7 +202,7 @@ def terminal_conditions(_hf, _weightf, _eta, _s_ref):
 
 
 # Continuations (from guess BCs to desired BCs)
-xf = terminal_conditions(60., m0_val, eta_val, s_ref_val)
+xf = terminal_conditions(60., m0_val*g0, eta_val, s_ref_val)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(100, {'hf': xf[0], 'vf': xf[1], 'gamf': xf[2]})
 cont.add_logarithmic_series(100, {'eps_h': 1e-6})

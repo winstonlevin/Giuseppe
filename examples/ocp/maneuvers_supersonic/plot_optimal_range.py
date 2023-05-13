@@ -3,12 +3,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib as mpl
 
-from lookup_tables import cl_alpha_table, cd0_table, thrust_table, atm
+from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_table, temp_table, atm
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-PLOT_COSTATE = False
+PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 DATA = 2
 
@@ -47,12 +47,8 @@ eta = k_dict['eta']
 g = k_dict['mu'] / (k_dict['Re'] + x_dict['h']) ** 2
 weight = x_dict['m'] * g
 
-mach = np.empty(sol.t.shape)
-rho = np.empty(sol.t.shape)
-
-for idx, (h, v, alpha) in enumerate(zip(x_dict['h'], x_dict['v'], u_dict['alpha'])):
-    mach[idx] = v / atm.speed_of_sound(h)
-    rho[idx] = atm.density(h)
+mach = np.asarray(x_dict['v'] / (atm.specific_heat_ratio * atm.gas_constant * temp_table(x_dict['h'])) ** 0.5).flatten()
+rho = np.asarray(dens_table(x_dict['h'])).flatten()
 
 cl_alpha = np.asarray(cl_alpha_table(mach), dtype=float).flatten()
 cd0 = np.asarray(cd0_table(mach), dtype=float).flatten()
@@ -167,7 +163,7 @@ if PLOT_AUXILIARY:
     ax_e = fig_energy_state.add_subplot(221)
     ax_e.plot(sol.t, ke, color=col[0], label='KE')
     ax_e.plot(sol.t, pe, color=col[1], label='PE')
-    ax_e.plot(sol.t, ke_min_drag, '--', color=col[0], label=r'KE($D_{min}$)')
+    # ax_e.plot(sol.t, ke_min_drag, '--', color=col[0], label=r'KE($D_{min}$)')
     ax_e.plot(sol.t, e, 'k', label='E = KE + PE')
     ax_e.grid()
     ax_e.set_xlabel(t_label)
@@ -180,11 +176,15 @@ if PLOT_AUXILIARY:
     ax_hv.set_xlabel('M')
     ax_hv.set_ylabel('h [ft]')
 
+    # qdyn_idces = np.where(np.logical_and(sol.t > 200., sol.t < 800.))
     ax_qdyn = fig_energy_state.add_subplot(223)
+    # ax_qdyn.plot(x_dict['gam'][qdyn_idces] * r2d, qdyn[qdyn_idces])
+    # ax_qdyn.plot(x_dict['gam'] * r2d, qdyn)
     ax_qdyn.plot(sol.t, qdyn)
-    ax_qdyn.plot(sol.t, qdyn_min_drag, 'k--', label=r'$q_{\infty}$ : $D$ = $D_{min}$')
+    # ax_qdyn.plot(sol.t, qdyn_min_drag, 'k--', label=r'$q_{\infty}$ : $D$ = $D_{min}$')
     ax_qdyn.grid()
     ax_qdyn.set_xlabel(t_label)
+    # ax_qdyn.set_xlabel(r'$\gamma$ [deg]')
     ax_qdyn.set_ylabel(r'$q_{\infty}$ [psf]')
 
     ax_ne = fig_energy_state.add_subplot(224)

@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib as mpl
 
-from lookup_tables import cl_alpha_table, cd0_table, thrust_table, atm
+from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_table, temp_table, atm
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -12,11 +12,11 @@ gradient = mpl.colormaps['viridis'].colors
 
 PLOT_COSTATE = False
 PLOT_AUXILIARY = True
-DATA = 'velocity'  # {altitude, velocity, crossrange}
+DATA = 'crossrange'  # {altitude, velocity, crossrange}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
-    sols = [sols[0], sols[25], sols[50], sols[-1]]
+    # sols = [sols[0], sols[25], sols[50], sols[-1]]
 
 # Process Data
 grad_idcs = np.int32(np.floor(np.linspace(0, 255, len(sols))))
@@ -43,12 +43,12 @@ for idx, sol in enumerate(sols):
     auxiliaries[idx]['g'] = auxiliaries[idx]['mu'] / (auxiliaries[idx]['Re'] + auxiliaries[idx]['h']) ** 2
     auxiliaries[idx]['weight'] = auxiliaries[idx]['m'] * auxiliaries[idx]['g']
 
-    auxiliaries[idx]['mach'] = np.empty(sol.t.shape)
-    auxiliaries[idx]['rho'] = np.empty(sol.t.shape)
-
-    for jdx, (h, v, alpha) in enumerate(zip(auxiliaries[idx]['h'], auxiliaries[idx]['v'], auxiliaries[idx]['alpha'])):
-        auxiliaries[idx]['mach'][jdx] = v / atm.speed_of_sound(h)
-        auxiliaries[idx]['rho'][jdx] = atm.density(h)
+    auxiliaries[idx]['mach'] = np.asarray(
+        auxiliaries[idx]['v'] / (atm.specific_heat_ratio
+                                 * atm.gas_constant
+                                 * temp_table(auxiliaries[idx]['h'])) ** 0.5
+    ).flatten()
+    auxiliaries[idx]['rho'] = np.asarray(dens_table(auxiliaries[idx]['h'])).flatten()
 
     auxiliaries[idx]['cl_alpha'] = np.asarray(cl_alpha_table(auxiliaries[idx]['mach']), dtype=float).flatten()
     auxiliaries[idx]['cd0'] = np.asarray(cd0_table(auxiliaries[idx]['mach']), dtype=float).flatten()
@@ -138,8 +138,8 @@ for idx, lab in enumerate(ylabs):
                 ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', label='Max L/D', color=cols_gradient(jdx))
                 ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', label=r'$n = 1$', color=cols_gradient(jdx))
             else:
-                ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', label='Max L/D', color=cols_gradient(jdx))
-                ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', label=r'$n = 1$', color=cols_gradient(jdx))
+                ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', color=cols_gradient(jdx))
+                ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', color=cols_gradient(jdx))
 
 axes_u[0].legend()
 
@@ -214,15 +214,15 @@ if PLOT_AUXILIARY:
             ax_ld.plot(sol.t, aux['ld_mg'], '--', label='n = 1', color=cols_gradient(idx))
             ax_ld.plot(sol.t, aux['ld_max'], ':', label='Max L/D', color=cols_gradient(idx))
 
-            ax_qdyn.plot(sol.t, aux['qdyn_min_drag'], '--', label='Min Drag', color=cols_gradient(idx))
+            # ax_qdyn.plot(sol.t, aux['qdyn_min_drag'], '--', label='Min Drag', color=cols_gradient(idx))
         else:
             ax_ld.plot(sol.t, aux['ld_mg'], '--', color=cols_gradient(idx))
             ax_ld.plot(sol.t, aux['ld_max'], ':', color=cols_gradient(idx))
 
-            ax_qdyn.plot(sol.t, aux['qdyn_min_drag'], '--', color=cols_gradient(idx))
+            # ax_qdyn.plot(sol.t, aux['qdyn_min_drag'], '--', color=cols_gradient(idx))
 
     ax_ld.legend()
-    ax_qdyn.legend()
+    # ax_qdyn.legend()
 
     fig_aero.tight_layout()
     fig_energy_state.tight_layout()
