@@ -9,106 +9,94 @@ M = ca.MX.sym('M', 1)
 interp_method = 'bspline'  # either 'bspline' or 'linear'
 
 M_grid_thrust = np.array((0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8))
-h_grid_thrust = np.array((0, 5, 10, 15, 20, 25, 30, 40, 50, 70)) * 1e3
+h_grid_thrust = np.array((-2, 0, 5, 10, 15, 20, 25, 30, 40, 50, 70)) * 1e3
 
-data_thrust_original = np.array(((24.2, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan),
-                                 (28.0, 24.6, 21.1, 18.1, 15.2, 12.8, 10.7, np.nan, np.nan, np.nan),
-                                 (28.3, 25.2, 21.9, 18.7, 15.9, 13.4, 11.2, 7.3, 4.4, np.nan),
-                                 (30.8, 27.2, 23.8, 20.5, 17.3, 14.7, 12.3, 8.1, 4.9, np.nan),
-                                 (34.5, 30.3, 26.6, 23.2, 19.8, 16.8, 14.1, 9.4, 5.6, 1.1),
-                                 (37.9, 34.3, 30.4, 26.8, 23.3, 19.8, 16.8, 11.2, 6.8, 1.4),
-                                 (36.1, 38.0, 34.9, 31.3, 27.3, 23.6, 20.1, 13.4, 8.3, 1.7),
-                                 (np.nan, 36.6, 38.5, 36.1, 31.6, 28.1, 24.2, 16.2, 10.0, 2.2),
-                                 (np.nan, np.nan, np.nan, 38.7, 35.7, 32.0, 28.1, 19.3, 11.9, 2.9),
-                                 (np.nan, np.nan, np.nan, np.nan, np.nan, 34.6, 31.1, 21.7, 13.3, 3.1))) * 1e3
+data_thrust_original = np.array(((np.nan, 24.2, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan),
+                                 (np.nan, 28.0, 24.6, 21.1, 18.1, 15.2, 12.8, 10.7, np.nan, np.nan, np.nan),
+                                 (np.nan, 28.3, 25.2, 21.9, 18.7, 15.9, 13.4, 11.2, 7.3, 4.4, np.nan),
+                                 (np.nan, 30.8, 27.2, 23.8, 20.5, 17.3, 14.7, 12.3, 8.1, 4.9, np.nan),
+                                 (np.nan, 34.5, 30.3, 26.6, 23.2, 19.8, 16.8, 14.1, 9.4, 5.6, 1.1),
+                                 (np.nan, 37.9, 34.3, 30.4, 26.8, 23.3, 19.8, 16.8, 11.2, 6.8, 1.4),
+                                 (np.nan, 36.1, 38.0, 34.9, 31.3, 27.3, 23.6, 20.1, 13.4, 8.3, 1.7),
+                                 (np.nan, np.nan, 36.6, 38.5, 36.1, 31.6, 28.1, 24.2, 16.2, 10.0, 2.2),
+                                 (np.nan, np.nan, np.nan, np.nan, 38.7, 35.7, 32.0, 28.1, 19.3, 11.9, 2.9),
+                                 (np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, 34.6, 31.1, 21.7, 13.3, 3.1))) * 1e3
 
 
-def extrapolate_upper_right(x, y, z, x_idx, y_idx, z_min=0.0):
-    x_idx_lower = min(x_idx + 1, len(x) - 1)
-    x_idx_lower2 = min(x_idx + 2, len(x) - 1)
-    y_idx_left = max(y_idx - 1, 0)
-    y_idx_left2 = max(y_idx - 2, 0)
+def extrapolate(x, y, z, x_idx_new, y_idx_new, x_idx_old, y_idx_old, z_min=0.0):
+    z_old = z[x_idx_old, y_idx_old]
 
-    if x_idx_lower == x_idx_lower2:
-        dz_dx = 0
+    if x_idx_new == x_idx_old:
+        # Extrapolate along y only
+        idx_dir = np.sign(y_idx_new - y_idx_old)
+        dz_dy = (z_old - z[x_idx_old, y_idx_old - idx_dir]) / (y[y_idx_old] - y[y_idx_old - idx_dir])
+        dy = y[y_idx_new] - y[y_idx_old]
+        z_new = max(float(z_old + dz_dy * dy), z_min)
+    elif y_idx_new == y_idx_old:
+        # Extrapolate along x only
+        idx_dir = np.sign(x_idx_new - x_idx_old)
+        dz_dx = (z_old - z[x_idx_old - idx_dir, y_idx_old]) / (x[x_idx_old] - x[x_idx_old - idx_dir])
+        dx = x[x_idx_new] - x[x_idx_old]
+        z_new = max(float(z_old + dz_dx * dx), z_min)
     else:
-        dz_dx = (z[x_idx_lower, y_idx] - z[x_idx_lower2, y_idx]) / (x[x_idx_lower] - x[x_idx_lower2])
-
-    if y_idx_left == y_idx_left2:
-        dz_dy = 0
-    else:
-        dz_dy = (z[x_idx, y_idx_left] - z[x_idx, y_idx_left2]) / (y[y_idx_left] - y[y_idx_left2])
-
-    dx = x[x_idx] - x[x_idx_lower]
-    dy = y[y_idx] - y[y_idx_left]
-
-    z_new_upper = z[x_idx_lower, y_idx] + dz_dx * dx
-    z_new_right = z[x_idx, y_idx_left] + dz_dy * dy
-    z_new = max(float(np.mean((z_new_right, z_new_upper))), z_min)
-
-    return z_new
-
-
-def extrapolate_lower_left(x, y, z, x_idx, y_idx, z_min=0.0):
-    x_idx_upper = max(x_idx - 1, 0)
-    x_idx_upper2 = max(x_idx - 2, 0)
-    y_idx_right = min(y_idx + 1, len(y) - 1)
-    y_idx_right2 = min(y_idx + 2, len(y) - 1)
-
-    if x_idx_upper == x_idx_upper2:
-        dz_dx = 0
-    else:
-        dz_dx = (z[x_idx_upper, y_idx] - z[x_idx_upper2, y_idx]) / (x[x_idx_upper] - x[x_idx_upper2])
-
-    if y_idx_right == y_idx_right2:
-        dz_dy = 0
-    else:
-        dz_dy = (z[x_idx, y_idx_right] - z[x_idx, y_idx_right2]) / (y[y_idx_right] - y[y_idx_right2])
-
-    dx = x[x_idx] - x[x_idx_upper]
-    dy = y[y_idx] - y[y_idx_right]
-
-    z_new_lower = z[x_idx_upper, y_idx] + dz_dx * dx
-    z_new_left = z[x_idx, y_idx_right] + dz_dy * dy
-    z_new = max(float(np.mean((z_new_left, z_new_lower))), z_min)
+        # Extrapolate Corner
+        dz_x = z[x_idx_new, y_idx_old] - z_old
+        dz_y = z[x_idx_old, y_idx_new] - z_old
+        z_new = max(float(z_old + dz_x + dz_y), z_min)
 
     return z_new
 
 
 data_thrust = data_thrust_original.copy()
-x_y_types = ((1, 7, 'ur'),
-           (1, 8, 'ur'),
-           (3, 9, 'ur'),
-           (2, 9, 'ur'),
-           (1, 9, 'ur'),
-           (0, 1, 'ur'),
-           (0, 2, 'ur'),
-           (0, 3, 'ur'),
-           (0, 4, 'ur'),
-           (0, 5, 'ur'),
-           (0, 6, 'ur'),
-           (0, 7, 'ur'),
-           (0, 8, 'ur'),
-           (0, 9, 'ur'),
-           (7, 0, 'll'),
-           (8, 2, 'll'),
-           (8, 1, 'll'),
-           (8, 0, 'll'),
-           (9, 4, 'll'),
-           (9, 3, 'll'),
-           (9, 2, 'll'),
-           (9, 1, 'll'),
-           (9, 0, 'll'))
+x_y_types = ((1, 8, 'ur'),
+             (1, 9, 'ur'),
+             (3, 10, 'ur'),
+             (2, 10, 'ur'),
+             (1, 10, 'ur'),
+             (0, 2, 'ur'),
+             (0, 3, 'ur'),
+             (0, 4, 'ur'),
+             (0, 5, 'ur'),
+             (0, 6, 'ur'),
+             (0, 7, 'ur'),
+             (0, 8, 'ur'),
+             (0, 9, 'ur'),
+             (0, 10, 'ur'),
+             (7, 1, 'll'),
+             (8, 3, 'll'),
+             (8, 2, 'll'),
+             (8, 1, 'll'),
+             (9, 5, 'll'),
+             (9, 4, 'll'),
+             (9, 3, 'll'),
+             (9, 2, 'll'),
+             (9, 1, 'll'),
+             (0, 0, 'l'),
+             (1, 0, 'll'),
+             (2, 0, 'll'),
+             (3, 0, 'll'),
+             (4, 0, 'll'),
+             (5, 0, 'll'),
+             (6, 0, 'll'),
+             (7, 0, 'll'),
+             (8, 0, 'll'),
+             (9, 0, 'll'),
+             )
 
 for x_y_type in x_y_types:
     x_idx_i, y_idx_i, type_i = x_y_type
-    if type_i == 'ur':
-        data_thrust[x_idx_i, y_idx_i] = extrapolate_upper_right(M_grid_thrust, h_grid_thrust, data_thrust,
-                                                                x_idx_i, y_idx_i)
-    else:
-        data_thrust[x_idx_i, y_idx_i] = extrapolate_lower_left(M_grid_thrust, h_grid_thrust, data_thrust,
-                                                               x_idx_i, y_idx_i)
+    if type_i == 'ur':  # upper right
+        data_thrust[x_idx_i, y_idx_i] = extrapolate(M_grid_thrust, h_grid_thrust, data_thrust,
+                                                    x_idx_i, y_idx_i, x_idx_i + 1, y_idx_i - 1)
+    elif type_i == 'll':  # lower left
+        data_thrust[x_idx_i, y_idx_i] = extrapolate(M_grid_thrust, h_grid_thrust, data_thrust,
+                                                    x_idx_i, y_idx_i, x_idx_i - 1, y_idx_i + 1)
+    elif type_i == 'l':  # left
+        data_thrust[x_idx_i, y_idx_i] = extrapolate(M_grid_thrust, h_grid_thrust, data_thrust,
+                                                    x_idx_i, y_idx_i, x_idx_i, y_idx_i + 1)
 
+# data_thrust = np.hstack((data_thrust[:, 0].reshape(-1, 1), data_thrust))
+# data_thrust[:, 0] = data_thrust[:, 1]
 data_flat_thrust = data_thrust.ravel(order='F')
 thrust_table_bspline = ca.interpolant('thrust_table', 'bspline', (M_grid_thrust, h_grid_thrust), data_flat_thrust)
 thrust_table_linear = ca.interpolant('thrust_table', 'linear', (M_grid_thrust, h_grid_thrust), data_flat_thrust)
@@ -156,15 +144,17 @@ diff_eta_fun_linear = ca.Function('deta_dv', (M,), (ca.jacobian(eta_linear, M),)
 
 # Expand Table for flatter subsonic spline
 # Added Points: 0.2, 0.6, 0.7, 0.79 all flat
-# Optimize intermediate value at M = 0.825 to minimize curvature
+# Optimize intermediate values to minimize curvature
 M_grid_aero_expanded = np.array((0, 0.2, 0.4, 0.6, 0.7, 0.79, 0.8, 0.825, 0.875, 0.9, 1.0, 1.2, 1.4, 1.6, 1.8))
 
 atm = Atmosphere1976(use_metric=False)
-vals_per_layer = 10
-h_buffer = 1_000  # ft
-h_grid_atm = np.concatenate((np.linspace(atm.h_layers[0], atm.h_layers[1] - h_buffer, vals_per_layer),
-                             np.linspace(atm.h_layers[1] + h_buffer, atm.h_layers[2] - h_buffer, vals_per_layer),
-                             np.linspace(atm.h_layers[2] + h_buffer, atm.h_layers[3], vals_per_layer)))
+# vals_per_layer = 10
+# h_buffer = 1_000  # ft
+# h_grid_atm = np.concatenate((np.linspace(atm.h_layers[0], atm.h_layers[1] - h_buffer, vals_per_layer),
+#                              np.linspace(atm.h_layers[1] + h_buffer, atm.h_layers[2] - h_buffer, vals_per_layer),
+#                              np.linspace(atm.h_layers[2] + h_buffer, atm.h_layers[3], vals_per_layer)))
+# h_grid_atm = h_grid_thrust
+h_grid_atm = np.array((-2, 0, 5, 10, 15, 20, 25, 30, 40, 45, 50, 65, 70)) * 1e3
 data_temp = np.asarray([atm.temperature(alt) for alt in h_grid_atm])
 data_dens = np.asarray([atm.density(alt) for alt in h_grid_atm])
 
@@ -220,7 +210,7 @@ if __name__ == "__main__":
 
     M = np.linspace(0, 1.8, N_VALS)  # Mach number
     M_2D = M.reshape(1, -1)
-    h = np.linspace(0, 70_000, N_VALS)  # Altitude
+    h = np.linspace(h_grid_thrust[0], h_grid_thrust[-1], N_VALS)  # Altitude
     h_atm = np.linspace(h_grid_atm[0] + 1, h_grid_atm[-1], N_VALS)
 
     expanded_idcs = []
