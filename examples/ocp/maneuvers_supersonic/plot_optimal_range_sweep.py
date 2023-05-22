@@ -10,9 +10,9 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 gradient = mpl.colormaps['viridis'].colors
 
-PLOT_COSTATE = False
+PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-DATA = 'crossrange'  # {altitude, velocity, crossrange}
+DATA = 'altitude'  # {altitude, velocity, crossrange}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)

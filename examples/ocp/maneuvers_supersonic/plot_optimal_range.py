@@ -27,13 +27,15 @@ else:
 # Create Dicts
 k_dict = {}
 x_dict = {}
+lam_dict = {}
 u_dict = {}
 
 for key, val in zip(sol.annotations.constants, sol.k):
     k_dict[key] = val
 
-for key, val in zip(sol.annotations.states, list(sol.x)):
-    x_dict[key] = val
+for key, x_val, lam_val in zip(sol.annotations.states, list(sol.x), list(sol.lam)):
+    x_dict[key] = x_val
+    lam_dict[key] = lam_val
 
 for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
@@ -58,6 +60,7 @@ lift = qdyn * s_ref * cl_alpha * u_dict['alpha']
 drag = qdyn * s_ref * (cd0 + eta * cl_alpha * u_dict['alpha'] ** 2)
 alpha_mg = weight / (qdyn * s_ref * cl_alpha) * np.cos(x_dict['gam']) / np.cos(u_dict['phi'])
 alpha_ld = (cd0 / (k_dict['eta'] * cl_alpha)) ** 0.5
+alpha_opt = lam_dict['gam'] / (2 * k_dict['eta'] * x_dict['v'] * lam_dict['v'])
 ld_mg = cl_alpha * alpha_mg / (cd0 + eta * cl_alpha * alpha_mg ** 2)
 ld_max = cl_alpha * alpha_ld / (cd0 + eta * cl_alpha * alpha_ld ** 2)
 
@@ -93,6 +96,7 @@ ylabs = (r'$\alpha$ [deg]', r'$\phi$ [deg]')
 ymult = np.array((r2d, r2d))
 ydataref1 = (alpha_mg, np.nan * alpha_mg)
 ydataref2 = (alpha_ld, np.nan * alpha_ld)
+ydataref3 = (alpha_opt, np.nan * alpha_opt)
 fig_u = plt.figure()
 axes_u = []
 
@@ -105,6 +109,7 @@ for idx, ctrl in enumerate(list(sol.u)):
     ax.plot(sol.t, ctrl * ymult[idx])
     ax.plot(sol.t, ydataref1[idx] * ymult[idx], 'k--', label='n = 1')
     ax.plot(sol.t, ydataref2[idx] * ymult[idx], 'k:', label='max L/D')
+    ax.plot(sol.t, ydataref3[idx] * ymult[idx], 'k*', label='Analytic')
 
 axes_u[0].legend()
 
@@ -118,7 +123,8 @@ if PLOT_COSTATE:
         r'$\lambda_{V}$', r'$\lambda_{\gamma}$', r'$\lambda_{\psi}$',
         r'$\lambda_{m}$'
     )
-    ymult = np.array((1., 1., 1., 1., 1., 1., 1.))
+    ymult = np.array((k_dict['h_ref'], k_dict['x_ref'], k_dict['x_ref'],
+                      k_dict['v_ref'], k_dict['gam_ref'], k_dict['psi_ref'], k_dict['m_ref']))
     fig_costates = plt.figure()
     axes_costates = []
 

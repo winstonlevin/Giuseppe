@@ -11,6 +11,32 @@ from lookup_tables import thrust_table, cl_alpha_table, cd0_table, temp_table, d
 
 d2r = np.pi / 180
 
+
+def boundary_conditions(_h, _weight, _eta, _s_ref, _mach_guess: float = 1.0):
+    # Terminal velocity based on Mach number
+    _gam = 0. * d2r
+
+    # Terminal velocity based on max(L/D) = L/D : L cos(gam) = W
+    def obj_n1(_v_trial):
+        _mach_trial = _v_trial / atm.speed_of_sound(_h)
+        _qdyn_trial = 0.5 * atm.density(_h) * _v_trial ** 2
+        _alpha_trial = float(cd0_table(_mach_trial) / (_eta * cl_alpha_table(_mach_trial))) ** 0.5  # Max L/D
+        _lift_trial = _qdyn_trial * _s_ref * float(cl_alpha_table(_mach_trial)) * _alpha_trial
+        return _lift_trial * np.cos(_gam) - _weight
+
+    _v = sp.optimize.fsolve(obj_n1, _mach_guess * atm.speed_of_sound(_h))
+    if type(_v) == np.array:
+        _v = _v[0]
+    return _h, _v, _gam
+
+
+def alpha_dgam0(_h, _v, _gam, _weight, _s_ref):
+    _qdyn = 0.5 * atm.density(_h) * _v ** 2
+    _mach = _v / atm.speed_of_sound(_h)
+    _alpha = _weight * np.cos(_gam) / float(_qdyn * _s_ref * cl_alpha_table(_mach))
+    return _alpha
+
+
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.MX)
 
 # Independent Variable
@@ -89,14 +115,17 @@ gam0 = ca.MX.sym('gam0')
 psi0 = ca.MX.sym('psi0')
 m0 = ca.MX.sym('m0')
 
+h0_val = 65_600.
 # m0_val = 34_200. / g0
 m0_val = 32138.594625382884 / g0
 
-ocp.add_constant(h0, 65_600.)
+h0_val, v0_val, gam0_val = boundary_conditions(h0_val, m0_val * g0, eta_val, s_ref_val, _mach_guess=2.5)
+
+ocp.add_constant(h0, h0_val)
 ocp.add_constant(xn0, 0.)
 ocp.add_constant(xd0, 0.)
-ocp.add_constant(v0, 3 * atm.speed_of_sound(65_600.))
-ocp.add_constant(gam0, 0.)
+ocp.add_constant(v0, v0_val)
+ocp.add_constant(gam0, gam0_val)
 ocp.add_constant(psi0, 0.)
 ocp.add_constant(m0, m0_val)
 
@@ -150,8 +179,10 @@ ocp.add_constraint(location='terminal', expr=(gam - gamf) / gam_ref)
 eps_h = ca.MX.sym('eps_h')
 h_min = ca.MX.sym('h_min')
 h_max = ca.MX.sym('h_max')
-ocp.add_constant(eps_h, 1e-1)
-ocp.add_constant(h_min, 0.)
+# ocp.add_constant(eps_h, 1e-1)
+# ocp.add_constant(h_min, 0.)
+ocp.add_constant(eps_h, 1e-7)
+ocp.add_constant(h_min, -1.5e3)
 ocp.add_constant(h_max, 100e3)
 ocp.add_inequality_constraint(
     'path', h, h_min, h_max,
@@ -173,7 +204,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     adiff_dual,
-    control=np.asarray(adiff_dual.ca_control2pseudo(np.array((3., 0.)) * d2r, adiff_dual.default_values)).flatten(),
+    control=np.array((alpha_dgam0(h0_val, v0_val, gam0_val, m0_val*g0, s_ref_val), 0.)),
     t_span=30)
 
 with open('guess_range.data', 'wb') as file:
@@ -185,27 +216,10 @@ with open('seed_sol_range.data', 'wb') as file:
     pickle.dump(seed_sol, file)
 
 
-def terminal_conditions(_hf, _weightf, _eta, _s_ref):
-    # Terminal velocity based on Mach number
-    _gamf = 0. * d2r
-
-    # Terminal velocity based on max(L/D) = L/D : L cos(gam) = W
-    def obj_n1(_vf_trial):
-        _mach_trial = _vf_trial / atm.speed_of_sound(_hf)
-        _qdyn_trial = 0.5 * atm.density(_hf) * _vf_trial ** 2
-        _alpha_trial = float(cd0_table(_mach_trial) / (_eta * cl_alpha_table(_mach_trial))) ** 0.5  # Max L/D
-        _lift_trial = _qdyn_trial * _s_ref * float(cl_alpha_table(_mach_trial)) * _alpha_trial
-        return _lift_trial * np.cos(_gamf) - _weightf
-
-    _vf = sp.optimize.fsolve(obj_n1, 0.5 * atm.speed_of_sound(_hf))
-    return _hf, _vf, _gamf
-
-
 # Continuations (from guess BCs to desired BCs)
-xf = terminal_conditions(60., m0_val*g0, eta_val, s_ref_val)
+xf = boundary_conditions(60., m0_val*g0, eta_val, s_ref_val, _mach_guess=0.5)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(100, {'hf': xf[0], 'vf': xf[1], 'gamf': xf[2]})
-cont.add_logarithmic_series(100, {'eps_h': 1e-6})
 sol_set = cont.run_continuation()
 
 # Save Solution
