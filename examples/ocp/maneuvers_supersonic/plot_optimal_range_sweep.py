@@ -5,6 +5,7 @@ import scipy as sp
 import matplotlib as mpl
 
 from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_table, temp_table, atm
+from glide_slope import get_glide_slope
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -100,50 +101,7 @@ r2d = 180 / np.pi
 g0 = auxiliaries[0]['g0']
 
 aux_ref = auxiliaries[0]
-
-
-def drag_n1(_v, _e):
-    _h = (_e - 0.5 * _v**2) / aux_ref['g0']
-    _mach = _v / atm.speed_of_sound(_h)
-    _cd0 = float(cd0_table(_mach))
-    _cla = float(cl_alpha_table(_mach))
-    _weight = aux_ref['m'][0] * aux_ref['g0']
-    _qdyn = 0.5 * atm.density(_h) * _v**2
-
-    _alpha = _weight / (_qdyn * aux_ref['s_ref'] * _cla)
-    _drag = _qdyn * aux_ref['s_ref'] * (_cd0 + aux_ref['eta'] * _cla * _alpha ** 2)
-    return _drag
-
-
-def fpa_glide(_v, _e, _dh_dv):
-    _drag = drag_n1(_v, _e)
-    _gamma = - np.arcsin(_drag * _dh_dv / (aux_ref['m'][0] * (_v + _dh_dv * aux_ref['g0'])))
-    return _gamma
-
-
-e_vals = np.linspace(aux_ref['e'][-1], aux_ref['e'][0], 100)
-v_vals = np.empty(e_vals.shape)
-mach_vals = np.empty(e_vals.shape)
-h_vals = np.empty(e_vals.shape)
-gam_vals = np.empty(e_vals.shape)
-v_guess = aux_ref['v'][-1]
-
-for idx in range(len(v_vals)):
-    e_i = e_vals[idx]
-    sol = sp.optimize.minimize(lambda v_i: drag_n1(v_i, e_i), v_guess)
-    v_vals[idx] = sol.x[0]
-    v_guess = sol.x[0]
-    h_vals[idx] = (e_i - 0.5 * v_vals[idx]**2) / aux_ref['g0']
-    mach_vals[idx] = v_vals[idx] / atm.speed_of_sound(h_vals[idx])
-
-h_interp = sp.interpolate.pchip(v_vals, h_vals)
-
-for idx, (v_val, e_val, h_val) in enumerate(zip(v_vals, e_vals, h_vals)):
-    v_pert = v_val + 10
-    dh_dv = (h_interp(v_pert) - h_interp(v_val)) / (v_pert - v_val)
-    gam_vals[idx] = fpa_glide(v_val, e_val, dh_dv)
-
-gam_interp = sp.interpolate.pchip(h_vals, gam_vals)
+h_interp, v_interp, gam_interp = get_glide_slope(aux_ref['g0'], aux_ref['m'][0], aux_ref['s_ref'], aux_ref['eta'])
 
 t_label = 'Time [s]'
 
@@ -278,7 +236,7 @@ if PLOT_AUXILIARY:
     if PLOT_REFERENCE:
         ax_ld.legend()
 
-        ax_hv.plot(mach_vals, h_vals, 'k--', label='Min{D} (E const)')
+        ax_hv.plot(aux_ref['mach'], h_interp(aux_ref['e']), 'k--', label='Min{D} (E const)')
         ax_hv.legend()
         # ax_qdyn.legend()
 
