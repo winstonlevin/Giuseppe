@@ -52,7 +52,7 @@ ocp.add_control(phi)
 # States
 h = ca.MX.sym('h', 1)
 xn = ca.MX.sym('xn', 1)
-xd = ca.MX.sym('xe', 1)
+xe = ca.MX.sym('xe', 1)
 v = ca.MX.sym('v', 1)
 gam = ca.MX.sym('gam', 1)
 psi = ca.MX.sym('psi', 1)
@@ -100,35 +100,13 @@ drag = qdyn * s_ref * cd
 # Dynamics
 ocp.add_state(h, v * ca.sin(gam))
 ocp.add_state(xn, v * ca.cos(gam) * ca.cos(psi))
-ocp.add_state(xd, v * ca.cos(gam) * ca.sin(psi))
+ocp.add_state(xe, v * ca.cos(gam) * ca.sin(psi))
 ocp.add_state(v, (thrust * ca.cos(alpha) - drag) / m - g * ca.sin(gam))
 ocp.add_state(gam, (thrust * ca.sin(alpha) + lift) * ca.cos(phi) / (m * v) - g / v * ca.cos(gam))
 ocp.add_state(psi, (thrust * ca.sin(alpha) + lift) * ca.sin(phi) / (m * v * ca.cos(gam)))
 ocp.add_state(m, -thrust / (Isp * g0))
 
-# Boundary Conditions
-h0 = ca.MX.sym('h0')
-xn0 = ca.MX.sym('xn0')
-xd0 = ca.MX.sym('xd0')
-v0 = ca.MX.sym('v0')
-gam0 = ca.MX.sym('gam0')
-psi0 = ca.MX.sym('psi0')
-m0 = ca.MX.sym('m0')
-
-h0_val = 65_600.
-# m0_val = 34_200. / g0
-m0_val = 32138.594625382884 / g0
-
-h0_val, v0_val, gam0_val = boundary_conditions(h0_val, m0_val * g0, eta_val, s_ref_val, _mach_guess=2.5)
-
-ocp.add_constant(h0, h0_val)
-ocp.add_constant(xn0, 0.)
-ocp.add_constant(xd0, 0.)
-ocp.add_constant(v0, v0_val)
-ocp.add_constant(gam0, gam0_val)
-ocp.add_constant(psi0, 0.)
-ocp.add_constant(m0, m0_val)
-
+# Reference Values
 t_ref = ca.MX.sym('t_ref')
 v_ref = ca.MX.sym('v_ref')
 gam_ref = ca.MX.sym('gam_ref')
@@ -153,11 +131,38 @@ ocp.add_constant(gam_ref, gam_ref_val)
 ocp.add_constant(psi_ref, psi_ref_val)
 ocp.add_constant(m_ref, m_ref_val)
 
+# Cost
+terminal_angle = ca.MX.sym('terminal_angle')  # 0 deg -> max downrange, 90 deg -> max crossrange
+ocp.add_constant(terminal_angle, 0.0)
+ocp.set_cost(0, 0, -(xn * ca.cos(terminal_angle) - xe * ca.sin(terminal_angle)) / x_ref)
+
+# Boundary Conditions
+h0 = ca.MX.sym('h0')
+xn0 = ca.MX.sym('xn0')
+xe0 = ca.MX.sym('xd0')
+v0 = ca.MX.sym('v0')
+gam0 = ca.MX.sym('gam0')
+psi0 = ca.MX.sym('psi0')
+m0 = ca.MX.sym('m0')
+
+h0_val = 65_600.
+# m0_val = 34_200. / g0
+m0_val = 32138.594625382884 / g0
+
+h0_val, v0_val, gam0_val = boundary_conditions(h0_val, m0_val * g0, eta_val, s_ref_val, _mach_guess=2.5)
+
+ocp.add_constant(h0, h0_val)
+ocp.add_constant(xn0, 0.)
+ocp.add_constant(xe0, 0.)
+ocp.add_constant(v0, v0_val)
+ocp.add_constant(gam0, gam0_val)
+ocp.add_constant(psi0, 0.)
+ocp.add_constant(m0, m0_val)
 
 ocp.add_constraint(location='initial', expr=t / t_ref)
 ocp.add_constraint(location='initial', expr=(h - h0) / h_ref)
 ocp.add_constraint(location='initial', expr=(xn - xn0) / x_ref)
-ocp.add_constraint(location='initial', expr=(xd - xd0) / x_ref)
+ocp.add_constraint(location='initial', expr=(xe - xe0) / x_ref)
 ocp.add_constraint(location='initial', expr=(v - v0) / v_ref)
 ocp.add_constraint(location='initial', expr=(gam - gam0) / gam_ref)
 ocp.add_constraint(location='initial', expr=(psi - psi0) / psi_ref)
@@ -174,6 +179,7 @@ ocp.add_constant(gamf, 0.)
 ocp.add_constraint(location='terminal', expr=(h - hf) / h_ref)
 ocp.add_constraint(location='terminal', expr=(v - vf) / v_ref)
 ocp.add_constraint(location='terminal', expr=(gam - gamf) / gam_ref)
+ocp.add_constraint(location='terminal', expr=(xe - xn * ca.tan(terminal_angle)) / x_ref)
 
 # Altitude Constraint
 eps_h = ca.MX.sym('eps_h')
@@ -190,11 +196,6 @@ ocp.add_inequality_constraint(
         eps_h/(h_max - h_min), 'utm'
     )
 )
-
-# Cost
-terminal_angle = ca.MX.sym('terminal_angle')  # 0 deg -> max downrange, 90 deg -> max crossrange
-ocp.add_constant(terminal_angle, 0.0)
-ocp.set_cost(0, 0, -(xn * ca.cos(terminal_angle) - xd * ca.sin(terminal_angle)) / x_ref)
 
 # Compilation
 with giuseppe.utils.Timer(prefix='Compilation Time:'):

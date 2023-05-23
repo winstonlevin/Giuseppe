@@ -1,6 +1,7 @@
 import pickle
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy as sp
 import matplotlib as mpl
 
 from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_table, temp_table, atm
@@ -12,7 +13,8 @@ gradient = mpl.colormaps['viridis'].colors
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-DATA = 'altitude'  # {altitude, velocity, crossrange}
+PLOT_REFERENCE = True
+DATA = 'crossrange'  # {altitude, velocity, crossrange}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
@@ -36,6 +38,8 @@ for idx, sol in enumerate(sols):
         auxiliaries[idx][key] = val
     for key, val in zip(sol.annotations.states, list(sol.x)):
         auxiliaries[idx][key] = val
+    for key, val in zip(sol.annotations.states, list(sol.lam)):
+        auxiliaries[idx]['lam_' + key] = val
     for key, val in zip(sol.annotations.controls, list(sol.u)):
         auxiliaries[idx][key] = val
 
@@ -95,6 +99,52 @@ for idx, sol in enumerate(sols):
 r2d = 180 / np.pi
 g0 = auxiliaries[0]['g0']
 
+aux_ref = auxiliaries[0]
+
+
+def drag_n1(_v, _e):
+    _h = (_e - 0.5 * _v**2) / aux_ref['g0']
+    _mach = _v / atm.speed_of_sound(_h)
+    _cd0 = float(cd0_table(_mach))
+    _cla = float(cl_alpha_table(_mach))
+    _weight = aux_ref['m'][0] * aux_ref['g0']
+    _qdyn = 0.5 * atm.density(_h) * _v**2
+
+    _alpha = _weight / (_qdyn * aux_ref['s_ref'] * _cla)
+    _drag = _qdyn * aux_ref['s_ref'] * (_cd0 + aux_ref['eta'] * _cla * _alpha ** 2)
+    return _drag
+
+
+def fpa_glide(_v, _e, _dh_dv):
+    _drag = drag_n1(_v, _e)
+    _gamma = - np.arcsin(_drag * _dh_dv / (aux_ref['m'][0] * (_v + _dh_dv * aux_ref['g0'])))
+    return _gamma
+
+
+e_vals = np.linspace(aux_ref['e'][-1], aux_ref['e'][0], 100)
+v_vals = np.empty(e_vals.shape)
+mach_vals = np.empty(e_vals.shape)
+h_vals = np.empty(e_vals.shape)
+gam_vals = np.empty(e_vals.shape)
+v_guess = aux_ref['v'][-1]
+
+for idx in range(len(v_vals)):
+    e_i = e_vals[idx]
+    sol = sp.optimize.minimize(lambda v_i: drag_n1(v_i, e_i), v_guess)
+    v_vals[idx] = sol.x[0]
+    v_guess = sol.x[0]
+    h_vals[idx] = (e_i - 0.5 * v_vals[idx]**2) / aux_ref['g0']
+    mach_vals[idx] = v_vals[idx] / atm.speed_of_sound(h_vals[idx])
+
+h_interp = sp.interpolate.pchip(v_vals, h_vals)
+
+for idx, (v_val, e_val, h_val) in enumerate(zip(v_vals, e_vals, h_vals)):
+    v_pert = v_val + 10
+    dh_dv = (h_interp(v_pert) - h_interp(v_val)) / (v_pert - v_val)
+    gam_vals[idx] = fpa_glide(v_val, e_val, dh_dv)
+
+gam_interp = sp.interpolate.pchip(h_vals, gam_vals)
+
 t_label = 'Time [s]'
 
 # INITIALIZE PLOTS ----------------------------------------------------
@@ -115,6 +165,10 @@ for idx, lab in enumerate(ylabs):
     for jdx, sol in enumerate(sols):
         ax.plot(sol.t, sol.x[idx, :] * ymult[idx], color=cols_gradient(jdx))
 
+if PLOT_REFERENCE:
+    axes_states[4].plot(aux_ref['t'], gam_interp(aux_ref['h']) * ymult[4], 'k--', label='Glide Slope')
+    axes_states[4].legend()
+
 fig_states.tight_layout()
 
 # PLOT U
@@ -133,7 +187,7 @@ for idx, lab in enumerate(ylabs):
     for jdx, (sol, aux) in enumerate(zip(sols, auxiliaries)):
         ax.plot(sol.t, sol.u[idx, :] * ymult[idx], color=cols_gradient(jdx))
 
-        if idx == 0:
+        if idx == 0 and PLOT_REFERENCE:
             if jdx == 0:
                 ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', label='Max L/D', color=cols_gradient(jdx))
                 ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', label=r'$n = 1$', color=cols_gradient(jdx))
@@ -141,7 +195,8 @@ for idx, lab in enumerate(ylabs):
                 ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', color=cols_gradient(jdx))
                 ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', color=cols_gradient(jdx))
 
-axes_u[0].legend()
+if PLOT_REFERENCE:
+    axes_u[0].legend()
 
 fig_u.tight_layout()
 
@@ -203,26 +258,29 @@ if PLOT_AUXILIARY:
         ax_lift.plot(sol.t, aux['lift'] / aux['weight'], color=cols_gradient(idx))
         ax_drag.plot(sol.t, aux['drag'] / aux['weight'], color=cols_gradient(idx))
         ax_ld.plot(sol.t, aux['lift'] / aux['drag'], color=cols_gradient(idx))
-        ax_ld.plot(aux['t_ld_dist_intersect'][0], aux['t_ld_dist_intersect'][1], '*', color=cols_gradient(idx))
 
         ax_e.plot(sol.t, aux['e'], color=cols_gradient(idx))
         ax_hv.plot(aux['mach'], aux['h'], color=cols_gradient(idx))
         ax_qdyn.plot(sol.t, aux['qdyn'], color=cols_gradient(idx))
         ax_ne.plot(aux['xe'], aux['xn'], color=cols_gradient(idx))
 
-        if idx == 0:
-            ax_ld.plot(sol.t, aux['ld_mg'], '--', label='n = 1', color=cols_gradient(idx))
-            ax_ld.plot(sol.t, aux['ld_max'], ':', label='Max L/D', color=cols_gradient(idx))
+        if PLOT_REFERENCE:
+            ax_ld.plot(aux['t_ld_dist_intersect'][0], aux['t_ld_dist_intersect'][1], '*', color=cols_gradient(idx))
 
-            # ax_qdyn.plot(sol.t, aux['qdyn_min_drag'], '--', label='Min Drag', color=cols_gradient(idx))
-        else:
-            ax_ld.plot(sol.t, aux['ld_mg'], '--', color=cols_gradient(idx))
-            ax_ld.plot(sol.t, aux['ld_max'], ':', color=cols_gradient(idx))
+            if idx == 0:
+                ax_ld.plot(sol.t, aux['ld_mg'], '--', label='n = 1', color=cols_gradient(idx))
+                ax_ld.plot(sol.t, aux['ld_max'], ':', label='Max L/D', color=cols_gradient(idx))
 
-            # ax_qdyn.plot(sol.t, aux['qdyn_min_drag'], '--', color=cols_gradient(idx))
+            else:
+                ax_ld.plot(sol.t, aux['ld_mg'], '--', color=cols_gradient(idx))
+                ax_ld.plot(sol.t, aux['ld_max'], ':', color=cols_gradient(idx))
 
-    ax_ld.legend()
-    # ax_qdyn.legend()
+    if PLOT_REFERENCE:
+        ax_ld.legend()
+
+        ax_hv.plot(mach_vals, h_vals, 'k--', label='Min{D} (E const)')
+        ax_hv.legend()
+        # ax_qdyn.legend()
 
     fig_aero.tight_layout()
     fig_energy_state.tight_layout()
