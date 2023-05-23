@@ -130,7 +130,7 @@ w_0 = ca.MX.sym('w_0', 1)
 ocp.add_constant(h_0, 0.0)  # ft
 ocp.add_constant(v_0, 0.38 * a_func(0.0))  # ft/s
 ocp.add_constant(gam_0, 0.0)  # rad
-ocp.add_constant(w_0, 10_000.)  # lb
+ocp.add_constant(w_0, 42_000.)  # lb
 
 ocp.add_constraint(location='initial', expr=t / t_ref)
 ocp.add_constraint(location='initial', expr=(h - h_0) / h_ref)
@@ -144,7 +144,7 @@ v_f = ca.MX.sym('v_f', 1)
 gam_f = ca.MX.sym('gam_f', 1)
 
 ocp.add_constant(h_f, 65600.0)  # ft
-ocp.add_constant(v_f, 968.148)  # ft/s
+ocp.add_constant(v_f, a_func(65_600))  # ft/s
 ocp.add_constant(gam_f, 0.0)  # rad
 
 ocp.add_constraint(location='terminal', expr=(h - h_f) / h_ref)
@@ -173,10 +173,10 @@ if __name__ == "__main__":
 
     # Continuations (from guess BCs to desired BCs)
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_linear_series(100, {'h_f': 50, 'v_f': 500, 'gam_f': 3 * np.pi/180})
-    cont.add_linear_series(100, {'h_f': 10_000, 'v_f': 1_000, 'gam_f': 35 * np.pi/180})
-    cont.add_linear_series(100, {'h_f': 65_600.0, 'v_f': a_func(65_600)})
-    cont.add_linear_series(100, {'gam_f': 0})
+    cont.add_linear_series(50, {'v_f': 500})
+    cont.add_linear_series(50, {'h_f': 10_000, 'v_f': a_func(65_600), 'gam_f': 35 * np.pi/180})
+    cont.add_linear_series(50, {'h_f': 65_600.0})
+    cont.add_linear_series(50, {'gam_f': 0})
     sol_set = cont.run_continuation()
 
     # Save Solution
