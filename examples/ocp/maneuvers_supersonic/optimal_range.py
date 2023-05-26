@@ -7,34 +7,10 @@ import pickle
 
 import giuseppe
 
-from lookup_tables import thrust_table, cl_alpha_table, cd0_table, temp_table, dens_table, atm
+from lookup_tables import thrust_table, cl_alpha_table, cd0_table, temp_table, sped_table, dens_table, atm
+from glide_slope import get_glide_slope, alpha_n1
 
 d2r = np.pi / 180
-
-
-def boundary_conditions(_h, _weight, _eta, _s_ref, _mach_guess: float = 1.0):
-    # Terminal velocity based on Mach number
-    _gam = 0. * d2r
-
-    # Terminal velocity based on max(L/D) = L/D : L cos(gam) = W
-    def obj_n1(_v_trial):
-        _mach_trial = _v_trial / atm.speed_of_sound(_h)
-        _qdyn_trial = 0.5 * atm.density(_h) * _v_trial ** 2
-        _alpha_trial = float(cd0_table(_mach_trial) / (_eta * cl_alpha_table(_mach_trial))) ** 0.5  # Max L/D
-        _lift_trial = _qdyn_trial * _s_ref * float(cl_alpha_table(_mach_trial)) * _alpha_trial
-        return _lift_trial * np.cos(_gam) - _weight
-
-    _v = sp.optimize.fsolve(obj_n1, _mach_guess * atm.speed_of_sound(_h))
-    if type(_v) == np.array:
-        _v = _v[0]
-    return _h, _v, _gam
-
-
-def alpha_dgam0(_h, _v, _gam, _weight, _s_ref):
-    _qdyn = 0.5 * atm.density(_h) * _v ** 2
-    _mach = _v / atm.speed_of_sound(_h)
-    _alpha = _weight * np.cos(_gam) / float(_qdyn * _s_ref * cl_alpha_table(_mach))
-    return _alpha
 
 
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.MX)
@@ -79,10 +55,13 @@ g = mu / (Re + h) ** 2
 # g = g0
 
 # Look-Up Tables & Atmospheric Expressions
-T = temp_table(h)
+a = sped_table(h)
+# T = temp_table(h)
+# a = ca.sqrt(atm.specific_heat_ratio * atm.gas_constant * T)
+
 rho = dens_table(h)
 
-a = ca.sqrt(atm.specific_heat_ratio * atm.gas_constant * T)
+
 M = v / a
 
 # thrust = thrust_table(ca.vertcat(M, h))
@@ -145,11 +124,79 @@ gam0 = ca.MX.sym('gam0')
 psi0 = ca.MX.sym('psi0')
 m0 = ca.MX.sym('m0')
 
-h0_val = 65_600.
+# h0_val = 65_600.
 # m0_val = 34_200. / g0
 m0_val = 32138.594625382884 / g0
 
-h0_val, v0_val, gam0_val = boundary_conditions(h0_val, m0_val * g0, eta_val, s_ref_val, _mach_guess=2.5)
+# Base initial conditions off glide slope
+h_interp, v_interp, gam_interp, alpha_interp = get_glide_slope(g0, m0_val, s_ref_val, eta_val)
+
+energy0 = g0 * 65_600. + 0.5 * (2.5 * atm.speed_of_sound(65_600.)) ** 2
+h0_val = h_interp(energy0)
+v0_val = v_interp(energy0)
+gam0_val = gam_interp(energy0)
+
+
+def ctrl_law(_t, _x, _p, _k):
+    # Unpack state
+    _h = _x[0]
+    _v = _x[3]
+    _gam = _x[4]
+    _m = _x[6]
+
+    _qdyn = 0.5 * float(dens_table(_h)) * _v ** 2
+    _mach = _v / float(sped_table(_h))
+    _cla = float(cl_alpha_table(_mach))
+    _e = g0 * _h + 0.5 * _v ** 2
+    _gam_glide = float(gam_interp(_e))
+    _tau = 0.1
+
+    # Control Law: dgam = (gam_glide - gam) / tau
+    _alp = (g0 / _v * np.cos(_gam) + (_gam_glide - _gam) / _tau) * _m * _v / (_qdyn * s_ref_val * _cla)
+    _phi = 0.0
+    return np.array((_alp, _phi))
+
+# def eom_n1(_t, _x):
+#     _h = _x[0]
+#     _v = _x[2]
+#     _gam = _x[3]
+#     _m = m0_val
+#
+#     _qdyn = 0.5 * float(dens_table(_h)) * _v**2
+#     _mach = _v / float(sped_table(_h))
+#     _cla = float(cl_alpha_table(_mach))
+#     _cd0 = float(cd0_table(_mach))
+#     _cd1 = _cla * eta_val
+#     _e = g0 * _h + 0.5 * _v ** 2
+#     _gam_glide = float(gam_interp(_e))
+#     _tau = 0.1
+#
+#     # Control Law: dgam = (gam_glide - gam) / tau
+#     _alp = (g0/_v * np.cos(_gam) + (_gam_glide - _gam) / _tau) * _m * _v / (_qdyn * s_ref_val * _cla)
+#
+#     _lift = g0 * _m
+#     _drag = _qdyn * s_ref_val * (_cd0 + _cd1 * _alp**2)
+#
+#     _dh = _v * np.sin(_gam)
+#     _dxn = _v * np.cos(_gam)
+#     _dv = -_drag / _m - g0 * np.sin(_gam)
+#     _dgam = _lift / (_m * _v) - g0 / _v * np.cos(_gam)
+#
+#     return np.array((_dh, _dxn, _dv, _dgam))
+
+# sol = sp.integrate.solve_ivp(eom_n1, np.array((0., 900.)), np.array((h0_val, 0., v0_val, gam0_val)))
+# _h_guess = sol.y[0, :]
+# _xn_guess = sol.y[1, :]
+# _xe_guess = 0 * sol.t
+# _v_guess = sol.y[2, :]
+# _gam_guess = sol.y[3, :]
+# _
+# _e_guess =
+
+energyf = 0.5 * (0.7 * atm.speed_of_sound(0.)) ** 2
+hf_val = h_interp(energyf)
+vf_val = v_interp(energyf)
+gamf_val = gam_interp(energyf)
 
 ocp.add_constant(h0, h0_val)
 ocp.add_constant(xn0, 0.)
@@ -179,7 +226,7 @@ ocp.add_constant(gamf, 0.)
 ocp.add_constraint(location='terminal', expr=(h - hf) / h_ref)
 ocp.add_constraint(location='terminal', expr=(v - vf) / v_ref)
 ocp.add_constraint(location='terminal', expr=(gam - gamf) / gam_ref)
-ocp.add_constraint(location='terminal', expr=(xe - xn * ca.tan(terminal_angle)) / x_ref)
+# ocp.add_constraint(location='terminal', expr=(ca.atan2(xe, xn)) / psi_ref)
 
 # Altitude Constraint
 eps_h = ca.MX.sym('eps_h')
@@ -205,7 +252,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     adiff_dual,
-    control=np.array((alpha_dgam0(h0_val, v0_val, gam0_val, m0_val*g0, s_ref_val), 0.)),
+    control=ctrl_law(0., np.array((h0_val, 0., 0., v0_val, gam0_val, 0., m0_val)), None, None),
     t_span=30)
 
 with open('guess_range.data', 'wb') as file:
@@ -218,25 +265,24 @@ with open('seed_sol_range.data', 'wb') as file:
 
 
 # Continuations (from guess BCs to desired BCs)
-xf = boundary_conditions(60., m0_val*g0, eta_val, s_ref_val, _mach_guess=0.5)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(100, {'hf': xf[0], 'vf': xf[1], 'gamf': xf[2]})
+cont.add_linear_series(100, {'hf': hf_val, 'vf': vf_val, 'gamf': gamf_val})
 sol_set = cont.run_continuation()
 
 # Save Solution
 sol_set.save('sol_set_range.data')
 
-# Sweep Altitudes
-cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
-sol_set_altitude = cont.run_continuation()
-sol_set_altitude.save('sol_set_range_altitude.data')
-
-# Sweep Velocities
-cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set_altitude.solutions[-1]))
-cont.add_linear_series(100, {'v0': 0.5 * atm.speed_of_sound(40_000.)})
-sol_set_altitude = cont.run_continuation()
-sol_set_altitude.save('sol_set_range_velocity.data')
+# # Sweep Altitudes
+# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+# cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
+# sol_set_altitude = cont.run_continuation()
+# sol_set_altitude.save('sol_set_range_altitude.data')
+#
+# # Sweep Velocities
+# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set_altitude.solutions[-1]))
+# cont.add_linear_series(100, {'v0': 0.5 * atm.speed_of_sound(40_000.)})
+# sol_set_altitude = cont.run_continuation()
+# sol_set_altitude.save('sol_set_range_velocity.data')
 
 # Sweep Cross-Range
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))

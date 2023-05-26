@@ -124,7 +124,7 @@ for idx, lab in enumerate(ylabs):
         ax.plot(sol.t, sol.x[idx, :] * ymult[idx], color=cols_gradient(jdx))
 
 if PLOT_REFERENCE:
-    axes_states[4].plot(aux_ref['t'], gam_interp(aux_ref['h']) * ymult[4], 'k--', label='Glide Slope')
+    axes_states[4].plot(aux_ref['t'], gam_interp(aux_ref['e']) * ymult[4], 'k--', label='Glide Slope')
     axes_states[4].legend()
 
 fig_states.tight_layout()
@@ -165,7 +165,7 @@ if PLOT_COSTATE:
         r'$\lambda_{V}$', r'$\lambda_{\gamma}$', r'$\lambda_{\psi}$',
         r'$\lambda_{m}$'
     )
-    ymult = np.array((1., 1., 1., 1., 1., 1., 1.))
+    ymult_key = ['h_ref', 'x_ref', 'x_ref', 'v_ref', 'gam_ref', 'psi_ref', 'm_ref']
     fig_costates = plt.figure()
     axes_costates = []
 
@@ -175,8 +175,8 @@ if PLOT_COSTATE:
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
-        for jdx, sol in enumerate(sols):
-            ax.plot(sol.t, sol.lam[idx, :] * ymult[idx], color=cols_gradient(jdx))
+        for jdx, (sol, aux) in enumerate(zip(sols, auxiliaries)):
+            ax.plot(sol.t, sol.lam[idx, :] * aux[ymult_key[idx]], color=cols_gradient(jdx))
 
     fig_costates.tight_layout()
 

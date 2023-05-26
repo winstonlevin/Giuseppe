@@ -23,13 +23,15 @@ lut_data = {
 }
 
 lut_data['Theta'] = np.asarray([atm.temperature(alt) for alt in lut_data['h']])
+lut_data['a'] = np.asarray([atm.speed_of_sound(alt) for alt in lut_data['h']])
 lut_data['rho'] = np.asarray([atm.density(alt) for alt in lut_data['h']])
 
 thrust_table = ca.interpolant('T', 'bspline', (lut_data['M'], lut_data['h']), lut_data['T'].ravel(order='F'))
 cl_alpha_table = ca.interpolant('CLalpha', 'bspline', (lut_data['M'],), lut_data['CLalpha'])
 cd0_table = ca.interpolant('CD0', 'bspline', (lut_data['M'],), lut_data['CD0'])
 temp_table = ca.interpolant('T', 'bspline', (lut_data['h'],), lut_data['Theta'])
-dens_table = ca.interpolant('T', 'bspline', (lut_data['h'],), lut_data['rho'])
+sped_table = ca.interpolant('a', 'bspline', (lut_data['h'],), lut_data['a'])
+dens_table = ca.interpolant('rho', 'bspline', (lut_data['h'],), lut_data['rho'])
 
 if __name__ == '__main__':
     from matplotlib import cm, pyplot as plt
@@ -42,6 +44,8 @@ if __name__ == '__main__':
     theta_vals = np.empty(h_vals.shape)
     for idx, h in enumerate(h_vals):
         theta_vals[idx], _, rho_vals[idx] = atm.atm_data(h)
+
+    a_vals = (theta_vals * atm.gas_constant * atm.specific_heat_ratio) ** 0.5
 
     M_grid, h_grid = np.meshgrid(M_vals, h_vals)
     thrust_vals = np.empty(M_grid.shape)
@@ -61,16 +65,20 @@ if __name__ == '__main__':
     fig_aero.tight_layout()
 
     fig_atm = plt.figure()
+    axes_atm = []
 
-    for idx, (tab, ylab, ref) in enumerate(zip((temp_table, dens_table),
-                                               ('Temperature [R]', 'Density [slug/ft3]'),
-                                               (theta_vals, rho_vals))):
-        ax = fig_atm.add_subplot(2, 1, idx + 1)
+    for idx, (tab, ylab, ref) in enumerate(zip((temp_table, dens_table, sped_table),
+                                               ('Temperature [R]', 'Density [slug/ft3]', 'Speed of Sound [ft/s]'),
+                                               (theta_vals, rho_vals, a_vals))):
+        axes_atm.append(fig_atm.add_subplot(3, 1, idx + 1))
+        ax = axes_atm[-1]
         ax.plot(h_vals, tab(h_vals))
         ax.plot(h_vals, ref, zorder=0)
         ax.plot(lut_data['h'], tab(lut_data['h']), 'kx')
         ax.set_xlabel('Altitude [ft]')
         ax.set_ylabel(ylab)
+
+    # Plot Spe
 
     fig_thrust, ax = plt.subplots(subplot_kw=dict(projection='3d'))
     ax.plot_surface(M_grid, h_grid, thrust_vals, cmap=cm.coolwarm, linewidth=0, antialiased=False)
