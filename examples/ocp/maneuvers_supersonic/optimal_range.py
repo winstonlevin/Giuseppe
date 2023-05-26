@@ -129,7 +129,7 @@ m0 = ca.MX.sym('m0')
 m0_val = 32138.594625382884 / g0
 
 # Base initial conditions off glide slope
-h_interp, v_interp, gam_interp, alpha_interp = get_glide_slope(g0, m0_val, s_ref_val, eta_val)
+h_interp, v_interp, gam_interp = get_glide_slope(g0, m0_val, s_ref_val, eta_val)
 
 energy0 = g0 * 65_600. + 0.5 * (2.5 * atm.speed_of_sound(65_600.)) ** 2
 h0_val = h_interp(energy0)
@@ -156,42 +156,6 @@ def ctrl_law(_t, _x, _p, _k):
     _phi = 0.0
     return np.array((_alp, _phi))
 
-# def eom_n1(_t, _x):
-#     _h = _x[0]
-#     _v = _x[2]
-#     _gam = _x[3]
-#     _m = m0_val
-#
-#     _qdyn = 0.5 * float(dens_table(_h)) * _v**2
-#     _mach = _v / float(sped_table(_h))
-#     _cla = float(cl_alpha_table(_mach))
-#     _cd0 = float(cd0_table(_mach))
-#     _cd1 = _cla * eta_val
-#     _e = g0 * _h + 0.5 * _v ** 2
-#     _gam_glide = float(gam_interp(_e))
-#     _tau = 0.1
-#
-#     # Control Law: dgam = (gam_glide - gam) / tau
-#     _alp = (g0/_v * np.cos(_gam) + (_gam_glide - _gam) / _tau) * _m * _v / (_qdyn * s_ref_val * _cla)
-#
-#     _lift = g0 * _m
-#     _drag = _qdyn * s_ref_val * (_cd0 + _cd1 * _alp**2)
-#
-#     _dh = _v * np.sin(_gam)
-#     _dxn = _v * np.cos(_gam)
-#     _dv = -_drag / _m - g0 * np.sin(_gam)
-#     _dgam = _lift / (_m * _v) - g0 / _v * np.cos(_gam)
-#
-#     return np.array((_dh, _dxn, _dv, _dgam))
-
-# sol = sp.integrate.solve_ivp(eom_n1, np.array((0., 900.)), np.array((h0_val, 0., v0_val, gam0_val)))
-# _h_guess = sol.y[0, :]
-# _xn_guess = sol.y[1, :]
-# _xe_guess = 0 * sol.t
-# _v_guess = sol.y[2, :]
-# _gam_guess = sol.y[3, :]
-# _
-# _e_guess =
 
 energyf = 0.5 * (0.7 * atm.speed_of_sound(0.)) ** 2
 hf_val = h_interp(energyf)
@@ -272,17 +236,17 @@ sol_set = cont.run_continuation()
 # Save Solution
 sol_set.save('sol_set_range.data')
 
-# # Sweep Altitudes
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-# cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
-# sol_set_altitude = cont.run_continuation()
-# sol_set_altitude.save('sol_set_range_altitude.data')
-#
-# # Sweep Velocities
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set_altitude.solutions[-1]))
-# cont.add_linear_series(100, {'v0': 0.5 * atm.speed_of_sound(40_000.)})
-# sol_set_altitude = cont.run_continuation()
-# sol_set_altitude.save('sol_set_range_velocity.data')
+# Sweep Altitudes
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
+sol_set_altitude = cont.run_continuation()
+sol_set_altitude.save('sol_set_range_altitude.data')
+
+# Sweep Velocities
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+cont.add_linear_series(100, {'v0': 0.5 * atm.speed_of_sound(40_000.)})
+sol_set_altitude = cont.run_continuation()
+sol_set_altitude.save('sol_set_range_velocity.data')
 
 # Sweep Cross-Range
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))

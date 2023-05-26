@@ -81,15 +81,12 @@ def get_glide_slope(_g0, _m, _s_ref, _eta, _e_vals: Optional[np.array] = None):
     h_interp_v = sp.interpolate.pchip(_v_vals, _h_vals)
 
     _gam_vals = np.empty(_e_vals.shape)
-    _alpha_vals = np.empty(_e_vals.shape)
 
     for idx, (_v_val, _e_val, _h_val) in enumerate(zip(_v_vals, _e_vals, _h_vals)):
         _v_pert = _v_val + 10
         _dh_dv = (h_interp_v(_v_val) - h_interp_v(_v_pert)) / (_v_val - _v_pert)
         _gam_vals[idx] = fpa_glide(_v_val, _e_val, _dh_dv, _g0, _m, _s_ref, _eta)
-        _alpha_vals[idx] = alpha_n1(_v_val, _h_val, _g0, _m, _s_ref)
 
     gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
-    alpha_interp = sp.interpolate.pchip(_e_vals, _alpha_vals)
 
-    return h_interp, v_interp, gam_interp, alpha_interp
+    return h_interp, v_interp, gam_interp

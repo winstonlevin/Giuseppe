@@ -109,7 +109,7 @@ for idx, ctrl in enumerate(list(sol.u)):
     ax.plot(sol.t, ctrl * ymult[idx])
     ax.plot(sol.t, ydataref1[idx] * ymult[idx], 'k--', label='n = 1')
     ax.plot(sol.t, ydataref2[idx] * ymult[idx], 'k:', label='max L/D')
-    ax.plot(sol.t, ydataref3[idx] * ymult[idx], 'k*', label='Analytic')
+    # ax.plot(sol.t, ydataref3[idx] * ymult[idx], 'k*', label='Analytic')
 
 axes_u[0].legend()
 

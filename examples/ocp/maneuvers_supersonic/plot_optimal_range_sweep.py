@@ -15,14 +15,18 @@ gradient = mpl.colormaps['viridis'].colors
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 PLOT_REFERENCE = True
-DATA = 'crossrange'  # {altitude, velocity, crossrange}
+DATA = 'velocity'  # {altitude, velocity, crossrange}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
-    # sols = [sols[0], sols[25], sols[50], sols[-1]]
+    sols = [sols[0], sols[25], sols[50], sols[-1]]
+    # sols = [sols[0]]
 
 # Process Data
-grad_idcs = np.int32(np.floor(np.linspace(0, 255, len(sols))))
+if len(sols) == 1:
+    grad_idcs = np.array((0,), dtype=np.int32)
+else:
+    grad_idcs = np.int32(np.floor(np.linspace(0, 255, len(sols))))
 
 
 def cols_gradient(n):
@@ -85,23 +89,18 @@ for idx, sol in enumerate(sols):
         / (auxiliaries[idx]['cd0']
            + auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_mg'] ** 2)
 
-    auxiliaries[idx]['t_ld_dist_intersect'] = (np.empty((0,)), np.nan, np.inf)
-
-    # Obtain the closest point to ld = max(ld) = ld : n = 1
-    for t, ld, ld_max, ld_mg in zip(auxiliaries[idx]['t'],
-                                    auxiliaries[idx]['lift'] / auxiliaries[idx]['drag'],
-                                    auxiliaries[idx]['ld_max'],
-                                    auxiliaries[idx]['ld_mg']):
-        dist = ((ld - ld_max) ** 2 + (ld - ld_mg) ** 2 + (ld_max - ld_mg) ** 2)**0.5
-        if dist < auxiliaries[idx]['t_ld_dist_intersect'][2]:
-            auxiliaries[idx]['t_ld_dist_intersect'] = (t, ld, dist)
-
 
 r2d = 180 / np.pi
 g0 = auxiliaries[0]['g0']
 
 aux_ref = auxiliaries[0]
 h_interp, v_interp, gam_interp = get_glide_slope(aux_ref['g0'], aux_ref['m'][0], aux_ref['s_ref'], aux_ref['eta'])
+
+for aux in auxiliaries:
+    aux['dh'] = aux['h'] - h_interp(aux['e'])
+    aux['dv'] = aux['v'] - v_interp(aux['e'])
+    aux['dgam'] = aux['gam'] - gam_interp(aux['e'])
+    aux['dalp'] = aux['alpha'] - aux['alpha_mg']
 
 t_label = 'Time [s]'
 
@@ -223,8 +222,6 @@ if PLOT_AUXILIARY:
         ax_ne.plot(aux['xe'], aux['xn'], color=cols_gradient(idx))
 
         if PLOT_REFERENCE:
-            ax_ld.plot(aux['t_ld_dist_intersect'][0], aux['t_ld_dist_intersect'][1], '*', color=cols_gradient(idx))
-
             if idx == 0:
                 ax_ld.plot(sol.t, aux['ld_mg'], '--', label='n = 1', color=cols_gradient(idx))
                 ax_ld.plot(sol.t, aux['ld_max'], ':', label='Max L/D', color=cols_gradient(idx))
@@ -242,5 +239,27 @@ if PLOT_AUXILIARY:
 
     fig_aero.tight_layout()
     fig_energy_state.tight_layout()
+
+
+# COMPARE TO GLIDE SLOPE
+y_labs = [r'$h - h^*$ [ft]', r'$V - V^*$ [ft/s]', r'$\gamma - \gamma^*$ [deg]', r'$\alpha - \alpha_W$ [deg]']
+y_keys = ['dh', 'dv', 'dgam', 'dalp']
+y_mult = np.array((1., 1., r2d, r2d))
+
+fig_perturbation = plt.figure()
+axes_perturbation = []
+
+for idx in range(4):
+    axes_perturbation.append(fig_perturbation.add_subplot(4, 1, idx + 1))
+    ax = axes_perturbation[-1]
+    ax.grid()
+    ax.set_xlabel(t_label)
+    ax.set_ylabel(y_labs[idx])
+
+    for jdx, aux in enumerate(auxiliaries):
+        ax.plot(aux['t'], aux[y_keys[idx]] * y_mult[idx], color=cols_gradient(jdx))
+
+
+fig_perturbation.tight_layout()
 
 plt.show()
