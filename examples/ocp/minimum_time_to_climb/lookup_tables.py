@@ -145,7 +145,8 @@ diff_eta_fun_linear = ca.Function('deta_dv', (M,), (ca.jacobian(eta_linear, M),)
 # Expand Table for flatter subsonic spline
 # Added Points: 0.2, 0.6, 0.7, 0.79 all flat
 # Optimize intermediate values to minimize curvature
-M_grid_aero_expanded = np.array((0, 0.2, 0.4, 0.6, 0.7, 0.79, 0.8, 0.825, 0.875, 0.9, 1.0, 1.2, 1.4, 1.6, 1.8))
+M_grid_aero_expanded = np.array((0, 0.2, 0.4, 0.6, 0.7, 0.75, 0.8, 0.825, 0.875, 0.9, 1.0, 1.2, 1.4, 1.6, 1.8))
+# M_grid_aero_expanded = np.array((0, 0.2, 0.4, 0.6, 0.7, 0.79, 0.8, 0.825, 0.875, 0.9, 1.0, 1.2, 1.4, 1.6, 1.8))
 
 atm = Atmosphere1976(use_metric=False)
 # vals_per_layer = 10
@@ -154,17 +155,22 @@ atm = Atmosphere1976(use_metric=False)
 #                              np.linspace(atm.h_layers[1] + h_buffer, atm.h_layers[2] - h_buffer, vals_per_layer),
 #                              np.linspace(atm.h_layers[2] + h_buffer, atm.h_layers[3], vals_per_layer)))
 # h_grid_atm = h_grid_thrust
-h_grid_atm = np.array((-2, 0, 5, 10, 15, 20, 25, 30, 40, 45, 50, 65, 70)) * 1e3
+h_grid_atm = np.array((-2, 0, 5, 10, 15, 20, 25, 30, 40, 50, 70, 71)) * 1e3
+# h_grid_atm = np.array((-2, 0, 5, 10, 15, 20, 25, 30, 40, 45, 50, 65, 70)) * 1e3
 data_temp = np.asarray([atm.temperature(alt) for alt in h_grid_atm])
+data_sond = np.asarray([atm.speed_of_sound(alt) for alt in h_grid_atm])
 data_dens = np.asarray([atm.density(alt) for alt in h_grid_atm])
 
 temp_table_bspline = ca.interpolant('T', 'bspline', (h_grid_atm,), data_temp)
+sond_table_bspline = ca.interpolant('a', 'bspline', (h_grid_atm,), data_sond)
 dens_table_bspline = ca.interpolant('T', 'bspline', (h_grid_atm,), data_dens)
 
 temp_bspline = temp_table_bspline(h)
+sond_bspline = sond_table_bspline(h)
 dens_bspline = dens_table_bspline(h)
 
 diff_temp_fun_bspline = ca.Function('dT_dh', (h,), (ca.jacobian(temp_bspline, h),), ('h',), ('dT_dh',))
+diff_sond_fun_bspline = ca.Function('da_dh', (h,), (ca.jacobian(sond_bspline, h),), ('h',), ('dT_dh',))
 diff_dens_fun_bspline = ca.Function('drho_dh', (h,), (ca.jacobian(dens_bspline, h),), ('h',), ('drho_dh',))
 
 CLalpha_table_pchip = PchipInterpolator(M_grid_aero, data_CLalpha)
@@ -184,12 +190,12 @@ CLalpha_bspline_expanded = CLalpha_table_bspline_expanded(M)
 CD0_bspline_expanded = CD0_table_bspline_expanded(M)
 eta_bspline_expanded = eta_table_bspline_expanded(M)
 
-diff_CLalpha_fun_bspline_expanded = ca.Function('dCLalpha_dv', (M,), (ca.jacobian(CLalpha_bspline_expanded, M),),
-                                                ('v',), ('dCLalpha_dv',))
-diff_CD0_fun_bspline_expanded = ca.Function('dCD0_dv', (M,), (ca.jacobian(CD0_bspline_expanded, M),),
-                                            ('v',), ('dCD0_dv',))
-diff_eta_fun_bspline_expanded = ca.Function('deta_dv', (M,), (ca.jacobian(eta_bspline_expanded, M),),
-                                            ('v',), ('deta_dv',))
+diff_CLalpha_fun_bspline_expanded = ca.Function('dCLalpha_dM', (M,), (ca.jacobian(CLalpha_bspline_expanded, M),),
+                                                ('M',), ('dCLalpha_dM',))
+diff_CD0_fun_bspline_expanded = ca.Function('dCD0_dM', (M,), (ca.jacobian(CD0_bspline_expanded, M),),
+                                            ('M',), ('dCD0_dM',))
+diff_eta_fun_bspline_expanded = ca.Function('deta_dM', (M,), (ca.jacobian(eta_bspline_expanded, M),),
+                                            ('M',), ('deta_dM',))
 
 if __name__ == "__main__":
     from matplotlib import pyplot as plt
@@ -233,21 +239,28 @@ if __name__ == "__main__":
     eta_linear_vals = eta_table_linear(M)
 
     temp_vals = temp_table_bspline(h_atm)
+    sond_vals = sond_table_bspline(h_atm)
     dens_vals = dens_table_bspline(h_atm)
 
     h_sym = ca.SX.sym('h')
     temp_sx, _, dens_sx = atm.get_ca_atm_expr(h_sym)
+    sond_sx = (temp_sx * atm.gas_constant * atm.specific_heat_ratio) ** 0.5
     dtemp_sx = ca.jacobian(temp_sx, h_sym)
+    dsond_sx = ca.jacobian(sond_sx, h_sym)
     ddens_sx = ca.jacobian(dens_sx, h_sym)
 
     temp_cond_func = ca.Function('T', (h_sym,), (temp_sx,), ('h',), ('T',))
+    sond_cond_func = ca.Function('a', (h_sym,), (sond_sx,), ('h',), ('a',))
     dens_cond_func = ca.Function('rho', (h_sym,), (dens_sx,), ('h',), ('rho',))
     dtemp_cond_func = ca.Function('dT', (h_sym,), (dtemp_sx,), ('h',), ('dT',))
+    dsond_cond_func = ca.Function('da', (h_sym,), (dsond_sx,), ('h',), ('da',))
     ddens_cond_func = ca.Function('drho', (h_sym,), (ddens_sx,), ('h',), ('drho',))
 
     temp_cond_vals = np.asarray(temp_cond_func(h_atm))
+    sond_cond_vals = np.asarray(sond_cond_func(h_atm))
     dens_cond_vals = np.asarray(dens_cond_func(h_atm))
     dtemp_cond_vals = np.asarray(dtemp_cond_func(h_atm))
+    dsond_cond_vals = np.asarray(dsond_cond_func(h_atm))
     ddens_cond_vals = np.asarray(ddens_cond_func(h_atm))
 
     dCLalpha_bspline_dM = diff_CLalpha_fun_bspline(M)
@@ -263,6 +276,7 @@ if __name__ == "__main__":
     deta_linear_dM = diff_eta_fun_linear(M)
 
     dTemp_dh = diff_temp_fun_bspline(h_atm)
+    dSond_dh = diff_sond_fun_bspline(h_atm)
     dDens_dh = diff_dens_fun_bspline(h_atm)
 
     # FIGURE 1 (CLalpha)
@@ -398,30 +412,45 @@ if __name__ == "__main__":
     # FIGURE 5 (ATMOSPHERE)
     fig5 = plt.figure(figsize=(6.5, 5))
 
-    ax51 = fig5.add_subplot(221)
+    ax51 = fig5.add_subplot(231)
     ax51.plot(h_atm / 1_000, temp_cond_vals, label='Cond.')
     ax51.plot(h_atm / 1_000, temp_vals, label='Spline', zorder=0)
-    # ax51.plot(h_grid_atm / 1_000, data_temp, 'kx', label='1976 Atm Data')
+    ax51.plot(h_grid_atm / 1_000, data_temp, 'kx', label='1976 Atm Data')
     ax51.grid()
     ax51.legend()
     ax51.set_ylabel(r'Temp ($T$) [deg R]')
 
-    ax52 = fig5.add_subplot(222)
+    ax51 = fig5.add_subplot(232)
+    ax51.plot(h_atm / 1_000, sond_cond_vals, label='Cond.')
+    ax51.plot(h_atm / 1_000, sond_vals, label='Spline', zorder=0)
+    ax51.plot(h_grid_atm / 1_000, data_sond, 'kx', label='1976 Atm Data')
+    ax51.grid()
+    ax51.legend()
+    ax51.set_ylabel(r'Sp. of Sound ($a$) [ft/s]')
+
+    ax52 = fig5.add_subplot(233)
     ax52.plot(h_atm / 1_000, dens_cond_vals, label='Cond.')
     ax52.plot(h_atm / 1_000, dens_vals, label='Spline', zorder=0)
-    # ax52.plot(h_grid_atm / 1_000, data_dens, 'kx')
+    ax52.plot(h_grid_atm / 1_000, data_dens, 'kx')
     ax52.grid()
     ax52.set_yscale('log')
     ax52.set_ylabel(r'Dens ($\rho$) [slug/ft$^3$]')
 
-    ax53 = fig5.add_subplot(223)
+    ax53 = fig5.add_subplot(234)
     ax53.plot(h_atm / 1_000, dtemp_cond_vals, label='Cond.')
     ax53.plot(h_atm / 1_000, dTemp_dh, label='Spline', zorder=0)
     ax53.grid()
     ax53.set_ylabel(r'$\dfrac{dT}{dh}$ [deg R/ft]')
     ax53.set_xlabel('h [1,000 ft]')
 
-    ax54 = fig5.add_subplot(224)
+    ax53 = fig5.add_subplot(235)
+    ax53.plot(h_atm / 1_000, dsond_cond_vals, label='Cond.')
+    ax53.plot(h_atm / 1_000, dSond_dh, label='Spline', zorder=0)
+    ax53.grid()
+    ax53.set_ylabel(r'$\dfrac{da}{dh}$ [1/s]')
+    ax53.set_xlabel('h [1,000 ft]')
+
+    ax54 = fig5.add_subplot(236)
     ax54.plot(h_atm / 1_000, ddens_cond_vals, label='Cond.')
     ax54.plot(h_atm / 1_000, dDens_dh, label='Spline', zorder=0)
     ax54.grid()

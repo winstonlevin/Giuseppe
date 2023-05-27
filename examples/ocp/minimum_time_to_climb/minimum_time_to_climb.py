@@ -5,7 +5,7 @@ import pickle
 import giuseppe
 
 from lookup_tables import thrust_table_bspline, eta_table_bspline_expanded, CLalpha_table_bspline_expanded,\
-    CD0_table_bspline_expanded, temp_table_bspline, dens_table_bspline
+    CD0_table_bspline_expanded, temp_table_bspline, dens_table_bspline, sond_table_bspline
 from giuseppe.utils.examples.atmosphere1976 import Atmosphere1976
 
 
@@ -46,7 +46,8 @@ w = ca.MX.sym('w', 1)
 atm = Atmosphere1976(use_metric=False)
 T = temp_table_bspline(h)
 rho = dens_table_bspline(h)
-a = ca.sqrt(atm.specific_heat_ratio * atm.gas_constant * T)
+a = sond_table_bspline(h)
+# a = ca.sqrt(atm.specific_heat_ratio * atm.gas_constant * T)
 a_func = ca.Function('a', (h,), (a,), ('h',), ('a',))
 M = v / a
 
@@ -79,10 +80,14 @@ ocp.add_state(w, -thrust/Isp)
 
 # Inequality Constraints
 eps_h = ca.MX.sym('eps_h', 1)
+nh_min = ca.MX.sym('nh_min', 1)
+h_max = ca.MX.sym('h_max', 1)
 
-h_min = -1.9e3
-h_max = 69e3
-ocp.add_constant(eps_h, 1e-1)
+nh_min_val = 1.9e3
+h_max_val = 69e3
+ocp.add_constant(eps_h, 1e-3)
+ocp.add_constant(nh_min, nh_min_val)
+ocp.add_constant(h_max, h_max_val)
 
 alpha_max = ca.MX.sym('alpha_max', 1)
 eps_alpha = ca.MX.sym('eps_alpha', 1)
@@ -92,9 +97,9 @@ ocp.add_constant(eps_alpha, 1e-3)
 
 ocp.add_inequality_constraint(
         'path', h,
-        lower_limit=h_min, upper_limit=h_max,
+        lower_limit=-nh_min, upper_limit=h_max,
         regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffPenaltyConstraintHandler(
-                regulator=eps_h / (h_max - h_min)))
+                regulator=eps_h / h_max))
 # ocp.add_inequality_constraint(
 #         'path', alpha,
 #         lower_limit=-alpha_max, upper_limit=alpha_max,
@@ -157,7 +162,7 @@ ocp.set_cost(0, 0, t / t_ref)
 # Compilation
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(adiff_dual, max_nodes=100, node_buffer=10)
 
 if __name__ == "__main__":
     # Guess Generation (overwrites the terminal conditions in order to converge)
@@ -173,10 +178,12 @@ if __name__ == "__main__":
 
     # Continuations (from guess BCs to desired BCs)
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_linear_series(50, {'v_f': 500})
+    cont.add_linear_series(50, {'v_f': 500, 'h_f': 1_000})
+    cont.add_logarithmic_series(100, {'eps_h': 1e-6, 'nh_min': 1e-3})
     cont.add_linear_series(50, {'h_f': 10_000, 'v_f': a_func(65_600), 'gam_f': 35 * np.pi/180})
-    cont.add_linear_series(50, {'h_f': 65_600.0})
+    cont.add_linear_series(100, {'h_f': 65_600.0})
     cont.add_linear_series(50, {'gam_f': 0})
+
     sol_set = cont.run_continuation()
 
     # Save Solution

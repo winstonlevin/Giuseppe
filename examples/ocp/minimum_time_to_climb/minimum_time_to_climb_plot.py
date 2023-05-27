@@ -5,7 +5,7 @@ import numpy as np
 
 from giuseppe.utils.examples import Atmosphere1976
 
-from minimum_time_to_climb import S, adiff_dual
+# from minimum_time_to_climb import S, adiff_dual
 from lookup_tables import thrust_table_bspline, eta_table_bspline_expanded, CLalpha_table_bspline_expanded,\
     CD0_table_bspline_expanded, temp_table_bspline, dens_table_bspline
 
@@ -30,6 +30,7 @@ elif DATA == 2:
 r2d = 180 / np.pi
 d2r = np.pi / 180
 
+S = 530
 h = sol.x[0, :]
 V = sol.x[1, :]
 alpha = sol.u[0, :]
