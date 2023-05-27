@@ -118,12 +118,12 @@ data_CD0 = np.array((0.013, 0.013, 0.013, 0.014, 0.031, 0.041, 0.039, 0.036, 0.0
 data_eta = np.array((0.54, 0.54, 0.54, 0.75, 0.79, 0.78, 0.89, 0.93, 0.93))
 
 CLalpha_table_bspline = ca.interpolant('CLalpha_table', 'bspline', (M_grid_aero,), data_CLalpha)
-CD0_table_bspline = ca.interpolant('CLalpha_table', 'bspline', (M_grid_aero,), data_CD0)
-eta_table_bspline = ca.interpolant('CLalpha_table', 'bspline', (M_grid_aero,), data_eta)
+CD0_table_bspline = ca.interpolant('CD0_table', 'bspline', (M_grid_aero,), data_CD0)
+eta_table_bspline = ca.interpolant('eta_table', 'bspline', (M_grid_aero,), data_eta)
 
 CLalpha_table_linear = ca.interpolant('CLalpha_table', 'linear', (M_grid_aero,), data_CLalpha)
-CD0_table_linear = ca.interpolant('CLalpha_table', 'linear', (M_grid_aero,), data_CD0)
-eta_table_linear = ca.interpolant('CLalpha_table', 'linear', (M_grid_aero,), data_eta)
+CD0_table_linear = ca.interpolant('CD0_table', 'linear', (M_grid_aero,), data_CD0)
+eta_table_linear = ca.interpolant('eta_table', 'linear', (M_grid_aero,), data_eta)
 
 CLalpha_bspline = CLalpha_table_bspline(M)
 CD0_bspline = CD0_table_bspline(M)
