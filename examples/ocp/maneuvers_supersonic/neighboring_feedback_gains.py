@@ -32,13 +32,13 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
 h = ca.MX.sym('h')
 v = ca.MX.sym('v')
 gam = ca.MX.sym('gam')
-x = ca.vcat((h, x, v, gam))
+x = ca.vcat((h, v, gam))
 
 # Costates
 lam_h = ca.MX.sym('lam_h')
 lam_v = ca.MX.sym('lam_v')
 lam_gam = ca.MX.sym('lam_gam')
-lam = ca.vcat((lam_h, lam_x, lam_v, lam_gam))
+lam = ca.vcat((lam_h, lam_v, lam_gam))
 
 # Control
 alpha = ca.MX.sym('alpha', 1)
@@ -50,6 +50,7 @@ eta = k_dict['eta']
 mu = k_dict['mu']
 Re = k_dict['Re']
 m = x_dict['m'][0]
+lam_x = lam_dict['xn'][0] * k_dict['x_ref']
 
 # Atmosphere and Aerodynamics
 a = sped_table(h)
@@ -65,18 +66,21 @@ drag = qdyn * s_ref * (cd0 + eta * cla * alpha ** 2)
 
 # Equations of Motion
 dh_dt = v * ca.sin(gam)
-dx_dt = v * ca.cos(gam)
 dv_dt = drag / m - g * ca.sin(gam)
 dgam_dt = lift / (m * v) - g / v * ca.cos(gam)
 
-f = ca.vcat((dh_dt, dx_dt, dv_dt, dgam_dt))
+f = ca.vcat((dh_dt, dv_dt, dgam_dt))
 
 # Linearization of EoM
 A = ca.jacobian(f, x)
 B = ca.jacobian(f, u)
 
+# Path Cost (instead of x dynamics)
+dx_dt = v * ca.cos(gam)
+L = dx_dt * lam_x
+
 # Hamiltonian and Partial Derivatives
-ham = lam.T @ f
+ham = L + lam.T @ f
 
 Hx = ca.jacobian(ham, x)
 Hu = ca.jacobian(ham, u)
@@ -98,25 +102,22 @@ N_fun = ca.Function('Q', (x, lam, u), (N,), ('x', 'lam', 'u'), ('N',))
 # Generate Interpolators for K based on E ------------------------------------------------------------------------------
 e_vals = np.empty(sol.t.shape)
 k_h_vals = np.empty(sol.t.shape)
-k_x_vals = np.empty(sol.t.shape)
 k_v_vals = np.empty(sol.t.shape)
 k_gam_vals = np.empty(sol.t.shape)
 
 for idx in range(len(sol.t)):
     h_idx = x_dict['h'][idx]
-    xn_idx = x_dict['xn'][idx]
     v_idx = x_dict['v'][idx]
     gam_idx = x_dict['gam'][idx]
-    x_idx = np.vstack((h_idx, xn_idx, v_idx, gam_idx))
+    x_idx = np.vstack((h_idx, v_idx, gam_idx))
 
     g_idx = mu / (Re + h_idx) ** 2
     e_idx = g_idx * h_idx + 0.5 * v_idx ** 2
 
     lam_h_idx = lam_dict['h'][idx] * k_dict['h_ref']
-    lam_x_idx = lam_dict['xn'][idx] * k_dict['x_ref']
     lam_v_idx = lam_dict['v'][idx] * k_dict['v_ref']
     lam_gam_idx = lam_dict['gam'][idx] * k_dict['gam_ref']
-    lam_idx = np.vstack((lam_h_idx, lam_x_idx, lam_v_idx, lam_gam_idx))
+    lam_idx = np.vstack((lam_h_idx, lam_v_idx, lam_gam_idx))
 
     u_idx = np.vstack((u_dict['alpha'][idx],))
 
@@ -131,11 +132,9 @@ for idx in range(len(sol.t)):
 
     e_vals[idx] = e_idx
     k_h_vals[idx] = K_idx[0, 0]
-    k_x_vals[idx] = K_idx[0, 1]
-    k_v_vals[idx] = K_idx[0, 2]
-    k_gam_vals[idx] = K_idx[0, 3]
+    k_v_vals[idx] = K_idx[0, 1]
+    k_gam_vals[idx] = K_idx[0, 2]
 
 k_h_interp = sp.interpolate.pchip(e_vals, k_h_vals)
-k_x_interp = sp.interpolate.pchip(e_vals, k_x_vals)
 k_v_interp = sp.interpolate.pchip(e_vals, k_v_vals)
 k_gam_interp = sp.interpolate.pchip(e_vals, k_gam_vals)
