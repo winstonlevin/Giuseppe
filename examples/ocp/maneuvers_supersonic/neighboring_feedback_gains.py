@@ -30,14 +30,12 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
 
 # States
 h = ca.MX.sym('h')
-x = ca.MX.sym('x')
 v = ca.MX.sym('v')
 gam = ca.MX.sym('gam')
 x = ca.vcat((h, x, v, gam))
 
 # Costates
 lam_h = ca.MX.sym('lam_h')
-lam_x = ca.MX.sym('lam_x')
 lam_v = ca.MX.sym('lam_v')
 lam_gam = ca.MX.sym('lam_gam')
 lam = ca.vcat((lam_h, lam_x, lam_v, lam_gam))
@@ -97,24 +95,47 @@ Q_fun = ca.Function('Q', (x, lam, u), (Q,), ('x', 'lam', 'u'), ('Q',))
 R_fun = ca.Function('Q', (x, lam, u), (R,), ('x', 'lam', 'u'), ('R',))
 N_fun = ca.Function('Q', (x, lam, u), (N,), ('x', 'lam', 'u'), ('N',))
 
-idx = 0
+# Generate Interpolators for K based on E ------------------------------------------------------------------------------
+e_vals = np.empty(sol.t.shape)
+k_h_vals = np.empty(sol.t.shape)
+k_x_vals = np.empty(sol.t.shape)
+k_v_vals = np.empty(sol.t.shape)
+k_gam_vals = np.empty(sol.t.shape)
 
-h_idx = x_dict['h'][idx]
-xn_idx = x_dict['xn'][idx]
-v_idx = x_dict['v'][idx]
-gam_idx = x_dict['gam'][idx]
-x_idx = np.vstack((h_idx, xn_idx, v_idx, gam_idx))
+for idx in range(len(sol.t)):
+    h_idx = x_dict['h'][idx]
+    xn_idx = x_dict['xn'][idx]
+    v_idx = x_dict['v'][idx]
+    gam_idx = x_dict['gam'][idx]
+    x_idx = np.vstack((h_idx, xn_idx, v_idx, gam_idx))
 
-g_idx = mu / (Re + h_idx) ** 2
-e_idx = g_idx * h_idx + 0.5 * v_idx ** 2
+    g_idx = mu / (Re + h_idx) ** 2
+    e_idx = g_idx * h_idx + 0.5 * v_idx ** 2
 
-lam_idx = np.vstack((lam_dict['h'][idx], lam_dict['xn'][idx], lam_dict['v'][idx], lam_dict['gam'][idx]))
-u_idx = np.vstack((u_dict['alpha'][idx],))
+    lam_h_idx = lam_dict['h'][idx] * k_dict['h_ref']
+    lam_x_idx = lam_dict['xn'][idx] * k_dict['x_ref']
+    lam_v_idx = lam_dict['v'][idx] * k_dict['v_ref']
+    lam_gam_idx = lam_dict['gam'][idx] * k_dict['gam_ref']
+    lam_idx = np.vstack((lam_h_idx, lam_x_idx, lam_v_idx, lam_gam_idx))
 
-A_idx = np.asarray(A_fun(x_idx, lam_idx, u_idx))
-B_idx = np.asarray(B_fun(x_idx, lam_idx, u_idx))
-Q_idx = np.asarray(Q_fun(x_idx, lam_idx, u_idx))
-R_idx = np.asarray(R_fun(x_idx, lam_idx, u_idx))
-N_idx = np.asarray(N_fun(x_idx, lam_idx, u_idx))
+    u_idx = np.vstack((u_dict['alpha'][idx],))
 
-P_idx = sp.linalg.solve_continuous_are(A_idx, B_idx, Q_idx, R_idx, s=N_idx)
+    A_idx = np.asarray(A_fun(x_idx, lam_idx, u_idx))
+    B_idx = np.asarray(B_fun(x_idx, lam_idx, u_idx))
+    Q_idx = np.asarray(Q_fun(x_idx, lam_idx, u_idx))
+    R_idx = np.asarray(R_fun(x_idx, lam_idx, u_idx))
+    N_idx = np.asarray(N_fun(x_idx, lam_idx, u_idx))
+
+    P_idx = sp.linalg.solve_continuous_are(A_idx, B_idx, Q_idx, R_idx, s=N_idx)
+    K_idx = sp.linalg.solve(R_idx, B_idx.T @ P_idx + N_idx.T)
+
+    e_vals[idx] = e_idx
+    k_h_vals[idx] = K_idx[0, 0]
+    k_x_vals[idx] = K_idx[0, 1]
+    k_v_vals[idx] = K_idx[0, 2]
+    k_gam_vals[idx] = K_idx[0, 3]
+
+k_h_interp = sp.interpolate.pchip(e_vals, k_h_vals)
+k_x_interp = sp.interpolate.pchip(e_vals, k_x_vals)
+k_v_interp = sp.interpolate.pchip(e_vals, k_v_vals)
+k_gam_interp = sp.interpolate.pchip(e_vals, k_gam_vals)
