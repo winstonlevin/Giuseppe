@@ -60,6 +60,7 @@ def get_glide_slope(_g0, _m, _s_ref, _eta, _e_vals: Optional[np.array] = None):
 
     _v_vals = np.empty(_e_vals.shape)
     _h_vals = np.empty(_e_vals.shape)
+    _drag_vals = np.empty(_e_vals.shape)
 
     _v_guess = (2 * _e_vals[0]) ** 0.5
 
@@ -67,6 +68,7 @@ def get_glide_slope(_g0, _m, _s_ref, _eta, _e_vals: Optional[np.array] = None):
         _e_i = _e_vals[idx]
         _sol = sp.optimize.minimize(lambda v_i: drag_n1(v_i, _e_i, _g0, _m, _s_ref, _eta), _v_guess)
         _v_vals[idx] = _sol.x[0]
+        _drag_vals[idx] = drag_n1(_v_vals[idx], _e_vals[idx], _g0, _m, _s_ref, _eta)
         _v_guess = _sol.x[0]
         _h_vals[idx] = (_e_i - 0.5 * _v_vals[idx] ** 2) / _g0
 
@@ -75,9 +77,11 @@ def get_glide_slope(_g0, _m, _s_ref, _eta, _e_vals: Optional[np.array] = None):
     _e_vals = _e_vals[_valid_idces]
     _v_vals = _v_vals[_valid_idces]
     _h_vals = _h_vals[_valid_idces]
+    _drag_vals = _drag_vals[_valid_idces]
 
     h_interp = sp.interpolate.pchip(_e_vals, _h_vals)
     v_interp = sp.interpolate.pchip(_e_vals, _v_vals)
+    drag_interp = sp.interpolate.pchip(_e_vals, _drag_vals)
     h_interp_v = sp.interpolate.pchip(_v_vals, _h_vals)
 
     _gam_vals = np.empty(_e_vals.shape)
@@ -89,4 +93,4 @@ def get_glide_slope(_g0, _m, _s_ref, _eta, _e_vals: Optional[np.array] = None):
 
     gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
 
-    return h_interp, v_interp, gam_interp
+    return h_interp, v_interp, gam_interp, drag_interp

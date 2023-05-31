@@ -94,13 +94,14 @@ r2d = 180 / np.pi
 g0 = auxiliaries[0]['g0']
 
 aux_ref = auxiliaries[0]
-h_interp, v_interp, gam_interp = get_glide_slope(aux_ref['g0'], aux_ref['m'][0], aux_ref['s_ref'], aux_ref['eta'])
+h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(aux_ref['g0'], aux_ref['m'][0], aux_ref['s_ref'], aux_ref['eta'])
 
 for aux in auxiliaries:
     aux['dh'] = aux['h'] - h_interp(aux['e'])
     aux['dv'] = aux['v'] - v_interp(aux['e'])
     aux['dgam'] = aux['gam'] - gam_interp(aux['e'])
     aux['dalp'] = aux['alpha'] - aux['alpha_mg']
+    aux['ddrag'] = (aux['drag'] - drag_interp(aux['e'])) / aux['weight']
 
 t_label = 'Time [s]'
 
@@ -242,22 +243,23 @@ if PLOT_AUXILIARY:
 
 
 # COMPARE TO GLIDE SLOPE
-y_labs = [r'$h - h^*$ [ft]', r'$V - V^*$ [ft/s]', r'$\gamma - \gamma^*$ [deg]', r'$\alpha - \alpha_W$ [deg]']
-y_keys = ['dh', 'dv', 'dgam', 'dalp']
-y_mult = np.array((1., 1., r2d, r2d))
+y_labs = [r'$h - h^*$ [ft]', r'$V - V^*$ [ft/s]', r'$\gamma - \gamma^*$ [deg]', r'$\alpha - \alpha_W$ [deg]', r'$D - D^*$ [g]']
+y_keys = ['dh', 'dv', 'dgam', 'dalp', 'ddrag']
+y_mult = np.array((1., 1., r2d, r2d, 1.))
+n_vals = len(y_keys)
 
 fig_perturbation = plt.figure()
 axes_perturbation = []
 
-for idx in range(4):
-    axes_perturbation.append(fig_perturbation.add_subplot(4, 1, idx + 1))
+for idx, (ylab, ykey, ymult) in enumerate(zip(y_labs, y_keys, y_mult)):
+    axes_perturbation.append(fig_perturbation.add_subplot(n_vals, 1, idx + 1))
     ax = axes_perturbation[-1]
     ax.grid()
     ax.set_xlabel(t_label)
-    ax.set_ylabel(y_labs[idx])
+    ax.set_ylabel(ylab)
 
     for jdx, aux in enumerate(auxiliaries):
-        ax.plot(aux['t'], aux[y_keys[idx]] * y_mult[idx], color=cols_gradient(jdx))
+        ax.plot(aux['t'], aux[ykey] * ymult, color=cols_gradient(jdx))
 
 
 fig_perturbation.tight_layout()

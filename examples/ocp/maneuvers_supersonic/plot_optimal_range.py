@@ -64,6 +64,13 @@ alpha_opt = lam_dict['gam'] / (2 * k_dict['eta'] * x_dict['v'] * lam_dict['v'])
 ld_mg = cl_alpha * alpha_mg / (cd0 + eta * cl_alpha * alpha_mg ** 2)
 ld_max = cl_alpha * alpha_ld / (cd0 + eta * cl_alpha * alpha_ld ** 2)
 
+# Gam to minimize drag : L = W cos(gam)
+gam_mg = np.arccos(
+    (
+        (qdyn * s_ref)**2 * cl_alpha * cd0 / (2 * eta * weight ** 2)
+    ) ** (1/3)
+)
+
 ke = 0.5 * x_dict['v']**2
 qdyn_min_drag = (eta * weight**2. / (s_ref**2 * cd0)) ** 0.5
 ke_min_drag = qdyn_min_drag / rho
@@ -87,6 +94,10 @@ for idx, state in enumerate(list(sol.x)):
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, state * ymult[idx])
+
+ax_gam = axes_states[4]
+ax_gam.plot(sol.t, gam_mg, 'k--', label='min. drag')
+ax_gam.legend()
 
 fig_states.suptitle(title_str)
 fig_states.tight_layout()
