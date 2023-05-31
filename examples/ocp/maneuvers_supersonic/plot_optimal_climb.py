@@ -20,6 +20,21 @@ else:
         sols = pickle.load(f)
         sol = sols[-1]
 
+# Create Dicts
+k_dict = {}
+x_dict = {}
+lam_dict = {}
+u_dict = {}
+
+for key, val in zip(sol.annotations.constants, sol.k):
+    k_dict[key] = val
+
+for key, x_val, lam_val in zip(sol.annotations.states, list(sol.x), list(sol.lam)):
+    x_dict[key] = x_val
+    lam_dict[key] = lam_val
+
+for key, val in zip(sol.annotations.controls, list(sol.u)):
+    u_dict[key] = val
 
 # Constants
 r2d = 180 / np.pi
@@ -63,7 +78,7 @@ fig_u.tight_layout()
 
 # PLOT COSTATES
 ylabs = (r'$\lambda_{h}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$', r'$\lambda_{m}$')
-ymult = np.array((1., 1., 1., 1.))
+ymult = np.array((k_dict['h_ref'], k_dict['v_ref'], k_dict['gam_ref'], k_dict['m_ref']))
 fig_costates = plt.figure()
 axes_costates = []
 
