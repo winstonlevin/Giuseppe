@@ -27,6 +27,7 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
 
 # Construct simplified feedback state (h, V, gam) ----------------------------------------------------------------------
+idx_feedback = (0, 2, 3)
 
 # States
 h = ca.MX.sym('h')
@@ -34,8 +35,11 @@ xn = ca.MX.sym('xn')
 v = ca.MX.sym('v')
 gam = ca.MX.sym('gam')
 
-x = ca.vcat((h, xn, v, gam))
-x_feedback = ca.vcat((h, v, gam))
+x_tuple = (h, xn, v, gam)
+x = ca.vcat(x_tuple)
+x_feedback = ca.vcat([])
+for idx in idx_feedback:
+    x_feedback = ca.vcat((x_feedback, x_tuple[idx]))
 
 # Costates
 lam_h = ca.MX.sym('lam_h')
@@ -73,8 +77,11 @@ dxn_dt = v * ca.cos(gam)
 dv_dt = drag / m - g * ca.sin(gam)
 dgam_dt = lift / (m * v) - g / v * ca.cos(gam)
 
-f = ca.vcat((dh_dt, dxn_dt, dv_dt, dgam_dt))
-f_feedback = ca.vcat((dh_dt, dv_dt, dgam_dt))
+f_tuple = (dh_dt, dxn_dt, dv_dt, dgam_dt)
+f = ca.vcat(f_tuple)
+f_feedback = ca.vcat([])
+for idx in idx_feedback:
+    f_feedback = ca.vcat((f_feedback, f_tuple[idx]))
 
 # Linearization of EoM
 A = ca.jacobian(f_feedback, x_feedback)
@@ -83,6 +90,7 @@ B = ca.jacobian(f_feedback, u)
 # Hamiltonian and Partial Derivatives
 ham = lam.T @ f
 
+lam_dot = -ca.jacobian(ham, x).T
 Hx = ca.jacobian(ham, x_feedback)
 Hu = ca.jacobian(ham, u)
 Hxx = ca.jacobian(Hx, x_feedback)
@@ -93,12 +101,31 @@ Q = Hxx
 R = Huu
 N = Hxu
 
+Rinv_NT = ca.solve(R, N.T)
+Rinv_BT = ca.solve(R, B.T)
+Q_aug = Q - N @ Rinv_NT
+A_aug = A - B @ Rinv_NT
+
 P = ca.MX.sym('P', A.shape)
-dPdtgo = A.T @ P + P @ A - (P @ B + N) @ ca.solve(R, B.T @ P + N.T) + Q  # -dP/dt
+dP_dt = -(Q_aug + P @ A_aug + A_aug.T @ P - P @ B @ Rinv_BT @ P)
+# dP_dt = -(A.T @ P + P @ A - (P @ B + N) @ ca.solve(R, B.T @ P + N.T) + Q)
 K = ca.solve(R, B.T @ P + N.T)
 
+# Optimal Control Law (Analytical Solution to Hu = 0)
+alpha_opt = lam_gam / (lam_v * 2 * eta * v)
+
 # Convert Expressions to Functions for Riccati Differential Equation
-dPdtgo_fun = ca.Function('dPdtgo', (P, x, lam, u), (dPdtgo,), ('P', 'x', 'lam', 'u'), ('dPdtgo',))
+ctrl_law = ca.Function('u', (x, lam), (alpha_opt,), ('x', 'lam'), ('alpha',))
+dx_dt = ca.Function('f', (x, u), (f,), ('x', 'u'), ('dx_dt',))
+dlam_dt = ca.Function('flam', (x, lam, u), (lam_dot,), ('x', 'lam', 'u'), ('dlam_dt',))
+
+A_fun = ca.Function('A', (x, lam, u), (A,), ('x', 'lam', 'u'), ('A',))
+B_fun = ca.Function('B', (x, lam, u), (B,), ('x', 'lam', 'u'), ('B',))
+Q_fun = ca.Function('Q', (x, lam, u), (Q,), ('x', 'lam', 'u'), ('Q',))
+R_fun = ca.Function('R', (x, lam, u), (R,), ('x', 'lam', 'u'), ('R',))
+N_fun = ca.Function('N', (x, lam, u), (N,), ('x', 'lam', 'u'), ('N',))
+
+dP_dt_fun = ca.Function('dPdt', (P, x, lam, u), (dP_dt,), ('P', 'x', 'lam', 'u'), ('dPdt',))
 K_fun = ca.Function('K', (P, x, lam, u), (K,), ('P', 'x', 'lam', 'u'), ('K',))
 
 # Generate Interpolators for K based on E ------------------------------------------------------------------------------
@@ -117,13 +144,16 @@ lam_xn_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['xn'] * 
 lam_v_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['v'] * k_dict['v_ref']))
 lam_gam_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['gam'] * k_dict['gam_ref']))
 
+# lam_h_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['h']))
+# lam_xn_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['xn']))
+# lam_v_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['v']))
+# lam_gam_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['gam']))
+
 alpha_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(u_dict['alpha']))
 
 g = k_dict['mu'] / (k_dict['Re'] + x_dict['h']) ** 2
 e = x_dict['h'] * g + 0.5 * x_dict['v'] ** 2
 ego = np.flip(e)
-
-_shape_P = P.shape
 
 
 def get_state(_tgo):
@@ -133,24 +163,93 @@ def get_state(_tgo):
     return _x, _lam, _u
 
 
-def dp_dtgo(_tgo, _p_flat):
+shape_P = P.shape
+idx_lam0 = x.numel()
+idx_p0 = 2 * x.numel()
+
+
+def dx_lam_p_dt(_t, _x_lam_p):
     # These equations of motion are to integrate p from tf (tgo = 0) to t0 (tgo = tf).
     # The Riccati differentiation equation is:
     # dP/dtgo = -dP/dt = A'P + PA - (PB + N) R^-1 (B'P + N') + Q
-    _p = _p_flat.reshape(_shape_P)
-    _x, _lam, _u = get_state(_tgo)
-    _dp_dtgo = np.asarray(dPdtgo_fun(_p, _x, _lam, _u))
-    return _dp_dtgo.reshape((-1,))
+    _x = _x_lam_p[0:idx_lam0]
+    _lam = _x_lam_p[idx_lam0:idx_p0]
+    _p = _x_lam_p[idx_p0:].reshape(shape_P)
+    _u = np.asarray(ctrl_law(_x, _lam))
+
+    _dx_dt = np.asarray(dx_dt(_x, _u)).flatten()
+    _dlam_dt = np.asarray(dlam_dt(_x, _lam, _u)).flatten()
+    _dp_dt = np.asarray(dP_dt_fun(_p, _x, _lam, _u)).flatten()
+
+    if np.max(np.abs(_dp_dt)) > 1e7:
+        print(f'dP/dt(t = {_t}):')
+        print(_dp_dt)
+        print(f'\n')
+
+    return np.concatenate((_dx_dt, _dlam_dt, _dp_dt))
 
 
-# TODO - fix "Required step size is less than spacing between numbers"
-P0 = np.zeros(_shape_P)
-ivp_sol = sp.integrate.solve_ivp(dp_dtgo, sol.t[((0, -1),)], P0.flatten(), t_eval=np.flip(tgo))
+# Start at final time with known P(tf) and integrate backwards
+# Initialize with P(tf) = 0 [Since Phi_xx = 0]
+P_idx = np.zeros(shape_P)
+P_vec_idx = P_idx.flatten()
 
-for idx, (tgo, p_flat) in enumerate(zip(ivp_sol.t, ivp_sol.y)):
-    P_idx = p_flat.reshape(_shape_P)
-    x_idx, lam_idx, u_idx = get_state(tgo)
-    K_idx = np.asarray(K_fun(P_idx, x_idx, lam_idx, u_idx))
+idx_t0 = 0
+idx_tf = len(sol.t) - 1
+
+# t_start = 550
+# t_end = 650
+# t_idces = np.where(np.logical_and(sol.t > t_start, sol.t < t_end))
+# idx_t0 = t_idces[0][0]
+# idx_tf = t_idces[0][-1]
+
+num_t = 1 + idx_tf - idx_t0
+
+K_mat = np.empty((x_feedback.numel(), num_t))
+
+for idx in range(num_t):
+    idx_tgo = idx_tf - (idx_t0 + idx)
+    x_idx = np.array((x_dict['h'][idx_tgo],
+                      x_dict['xn'][idx_tgo],
+                      x_dict['v'][idx_tgo],
+                      x_dict['gam'][idx_tgo]))
+    lam_idx = np.array((lam_dict['h'][idx_tgo],
+                        lam_dict['xn'][idx_tgo],
+                        lam_dict['v'][idx_tgo],
+                        lam_dict['gam'][idx_tgo]))
+    # lam_idx = np.array((lam_dict['h'][idx_tgo] * k_dict['h_ref'],
+    #                     lam_dict['xn'][idx_tgo] * k_dict['x_ref'],
+    #                     lam_dict['v'][idx_tgo] * k_dict['v_ref'],
+    #                     lam_dict['gam'][idx_tgo] * k_dict['gam_ref']))
+    y_idx = np.concatenate((x_idx, lam_idx, P_vec_idx))
+    u_idx = np.array((u_dict['alpha'][idx_tgo],))
+    K_mat[:, idx_tgo] = np.asarray(K_fun(P_idx, x_idx, lam_idx, u_idx))
+
+    tspan = (sol.t[idx_tgo], sol.t[idx_tgo - 1])
+
+    ivp_sol = sp.integrate.solve_ivp(dx_lam_p_dt, tspan, y_idx)
+
+    xf = ivp_sol.y[:idx_lam0, -1]
+    lamf = ivp_sol.y[idx_lam0:idx_p0, -1]
+    Pf = ivp_sol.y[idx_p0:, -1].reshape(shape_P)
+    uf = ctrl_law(xf, lamf)
+    Af = A_fun(xf, lamf, uf)
+    Bf = B_fun(xf, lamf, uf)
+    Qf = Q_fun(xf, lamf, uf)
+    Rf = R_fun(xf, lamf, uf)
+    dPf = dP_dt_fun(Pf, xf, lamf, uf)
+
+    if not ivp_sol.success:
+        print('Integration Failed!')
+        break
+
+    P_vec_idx = ivp_sol.y[idx_p0:, -1]
+    P_idx = P_vec_idx.reshape(shape_P)
+
+# for idx, (tgo, p_flat) in enumerate(zip(ivp_sol.t, ivp_sol.y.T)):
+#     P_idx = p_flat.reshape(_shape_P)
+#     x_idx, lam_idx, u_idx = get_state(tgo)
+#     K_idx = np.asarray(K_fun(P_idx, x_idx, lam_idx, u_idx))
 
 # k_v_vals = np.empty(sol.t.shape)
 # k_gam_vals = np.empty(sol.t.shape)
