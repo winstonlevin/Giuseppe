@@ -35,7 +35,7 @@ v = ca.MX.sym('v')
 gam = ca.MX.sym('gam')
 
 x = ca.vcat((h, xn, v, gam))
-x_feedback = ca.vcat((v, gam))
+x_feedback = ca.vcat((h, v, gam))
 
 # Costates
 lam_h = ca.MX.sym('lam_h')
@@ -74,7 +74,7 @@ dv_dt = drag / m - g * ca.sin(gam)
 dgam_dt = lift / (m * v) - g / v * ca.cos(gam)
 
 f = ca.vcat((dh_dt, dxn_dt, dv_dt, dgam_dt))
-f_feedback = ca.vcat((dv_dt, dgam_dt))
+f_feedback = ca.vcat((dh_dt, dv_dt, dgam_dt))
 
 # Linearization of EoM
 A = ca.jacobian(f_feedback, x_feedback)
@@ -93,79 +93,84 @@ Q = Hxx
 R = Huu
 N = Hxu
 
-# Convert Expressions to Functions for LQR
-A_fun = ca.Function('A', (x, lam, u), (A,), ('x', 'lam', 'u'), ('A',))
-B_fun = ca.Function('B', (x, lam, u), (B,), ('x', 'lam', 'u'), ('B',))
-Q_fun = ca.Function('Q', (x, lam, u), (Q,), ('x', 'lam', 'u'), ('Q',))
-R_fun = ca.Function('Q', (x, lam, u), (R,), ('x', 'lam', 'u'), ('R',))
-N_fun = ca.Function('Q', (x, lam, u), (N,), ('x', 'lam', 'u'), ('N',))
+P = ca.MX.sym('P', A.shape)
+dPdtgo = A.T @ P + P @ A - (P @ B + N) @ ca.solve(R, B.T @ P + N.T) + Q  # -dP/dt
+K = ca.solve(R, B.T @ P + N.T)
+
+# Convert Expressions to Functions for Riccati Differential Equation
+dPdtgo_fun = ca.Function('dPdtgo', (P, x, lam, u), (dPdtgo,), ('P', 'x', 'lam', 'u'), ('dPdtgo',))
+K_fun = ca.Function('K', (P, x, lam, u), (K,), ('P', 'x', 'lam', 'u'), ('K',))
 
 # Generate Interpolators for K based on E ------------------------------------------------------------------------------
-e_vals = np.empty(sol.t.shape)
 
-alp_glide_vals = np.empty(sol.t.shape)
-v_glide_vals = np.empty(sol.t.shape)
-gam_glide_vals = np.empty(sol.t.shape)
+# Interpolate the state based on time-to-go tgo
+tf = sol.t[-1]
+tgo = tf - sol.t
 
-k_v_vals = np.empty(sol.t.shape)
-k_gam_vals = np.empty(sol.t.shape)
+h_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(x_dict['h']))
+xn_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(x_dict['xn']))
+v_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(x_dict['v']))
+gam_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(x_dict['gam']))
+
+lam_h_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['h'] * k_dict['h_ref']))
+lam_xn_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['xn'] * k_dict['x_ref']))
+lam_v_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['v'] * k_dict['v_ref']))
+lam_gam_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['gam'] * k_dict['gam_ref']))
+
+alpha_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(u_dict['alpha']))
+
+g = k_dict['mu'] / (k_dict['Re'] + x_dict['h']) ** 2
+e = x_dict['h'] * g + 0.5 * x_dict['v'] ** 2
+ego = np.flip(e)
+
+_shape_P = P.shape
 
 
-for idx in range(len(sol.t)):
-    # Start at last idx (minimum energy) for monotonically increasing sequence.
-    idx_rev = -1 - idx
-    h_idx = x_dict['h'][idx_rev]
-    xn_idx = x_dict['xn'][idx_rev]
-    v_idx = x_dict['v'][idx_rev]
-    gam_idx = x_dict['gam'][idx_rev]
-    x_idx = np.vstack((h_idx, xn_idx, v_idx, gam_idx))
+def get_state(_tgo):
+    _x = np.vstack((h_interp_tgo(_tgo), xn_interp_tgo(_tgo), v_interp_tgo(_tgo), gam_interp_tgo(_tgo)))
+    _lam = np.vstack((lam_h_interp_tgo(_tgo), lam_xn_interp_tgo(_tgo), lam_v_interp_tgo(_tgo), lam_gam_interp_tgo(_tgo)))
+    _u = np.vstack((alpha_interp_tgo(_tgo),))
+    return _x, _lam, _u
 
-    g_idx = mu / (Re + h_idx) ** 2
-    e_idx = g_idx * h_idx + 0.5 * v_idx ** 2
 
-    lam_h_idx = lam_dict['h'][idx_rev] * k_dict['h_ref']
-    lam_xn_idx = lam_dict['xn'][idx_rev] * k_dict['x_ref']
-    lam_v_idx = lam_dict['v'][idx_rev] * k_dict['v_ref']
-    lam_gam_idx = lam_dict['gam'][idx_rev] * k_dict['gam_ref']
-    lam_idx = np.vstack((lam_h_idx, lam_xn_idx, lam_v_idx, lam_gam_idx))
+def dp_dtgo(_tgo, _p_flat):
+    # These equations of motion are to integrate p from tf (tgo = 0) to t0 (tgo = tf).
+    # The Riccati differentiation equation is:
+    # dP/dtgo = -dP/dt = A'P + PA - (PB + N) R^-1 (B'P + N') + Q
+    _p = _p_flat.reshape(_shape_P)
+    _x, _lam, _u = get_state(_tgo)
+    _dp_dtgo = np.asarray(dPdtgo_fun(_p, _x, _lam, _u))
+    return _dp_dtgo.reshape((-1,))
 
-    alp_idx = u_dict['alpha'][idx_rev]
-    u_idx = np.vstack((alp_idx,))
 
-    A_idx = np.asarray(A_fun(x_idx, lam_idx, u_idx))
-    B_idx = np.asarray(B_fun(x_idx, lam_idx, u_idx))
-    Q_idx = np.asarray(Q_fun(x_idx, lam_idx, u_idx))
-    R_idx = np.asarray(R_fun(x_idx, lam_idx, u_idx))
-    N_idx = np.asarray(N_fun(x_idx, lam_idx, u_idx))
+# TODO - fix "Required step size is less than spacing between numbers"
+P0 = np.zeros(_shape_P)
+ivp_sol = sp.integrate.solve_ivp(dp_dtgo, sol.t[((0, -1),)], P0.flatten(), t_eval=np.flip(tgo))
 
-    P_idx = sp.linalg.solve_continuous_are(A_idx, B_idx, Q_idx, R_idx, s=N_idx)
-    K_idx = sp.linalg.solve(R_idx, B_idx.T @ P_idx + N_idx.T)
+for idx, (tgo, p_flat) in enumerate(zip(ivp_sol.t, ivp_sol.y)):
+    P_idx = p_flat.reshape(_shape_P)
+    x_idx, lam_idx, u_idx = get_state(tgo)
+    K_idx = np.asarray(K_fun(P_idx, x_idx, lam_idx, u_idx))
 
-    e_vals[idx] = e_idx
+# k_v_vals = np.empty(sol.t.shape)
+# k_gam_vals = np.empty(sol.t.shape)
 
-    v_glide_vals[idx] = v_idx
-    gam_glide_vals[idx] = gam_idx
-    alp_glide_vals[idx] = alp_idx
-
-    k_v_vals[idx] = K_idx[0, 0]
-    k_gam_vals[idx] = K_idx[0, 1]
-
-v_glide_interp = sp.interpolate.pchip(e_vals, v_glide_vals)
-gam_glide_interp = sp.interpolate.pchip(e_vals, gam_glide_vals)
-alp_glide_interp = sp.interpolate.pchip(e_vals, alp_glide_vals)
-
-k_v_interp = sp.interpolate.pchip(e_vals, k_v_vals)
-k_gam_interp = sp.interpolate.pchip(e_vals, k_gam_vals)
-
-interp_dict = {
-    'v': v_glide_interp,
-    'gam': gam_glide_interp,
-    'alp': alp_glide_interp,
-    'k_v': k_v_interp,
-    'k_gam': k_gam_interp
-}
-
-# Control Law: alp = alp(e) - Kv(e) * (V - V(e)) - Kgam(e) * (gam - gam(e))
-
-with open('neighboring_feedback_dict_range.data', 'wb') as file:
-    pickle.dump(interp_dict, file)
+# v_glide_interp = sp.interpolate.pchip(e_vals, v_glide_vals)
+# gam_glide_interp = sp.interpolate.pchip(e_vals, gam_glide_vals)
+# alp_glide_interp = sp.interpolate.pchip(e_vals, alp_glide_vals)
+#
+# k_v_interp = sp.interpolate.pchip(e_vals, k_v_vals)
+# k_gam_interp = sp.interpolate.pchip(e_vals, k_gam_vals)
+#
+# interp_dict = {
+#     'v': v_glide_interp,
+#     'gam': gam_glide_interp,
+#     'alp': alp_glide_interp,
+#     'k_v': k_v_interp,
+#     'k_gam': k_gam_interp
+# }
+#
+# # Control Law: alp = alp(e) - Kv(e) * (V - V(e)) - Kgam(e) * (gam - gam(e))
+#
+# with open('neighboring_feedback_dict_range.data', 'wb') as file:
+#     pickle.dump(interp_dict, file)
