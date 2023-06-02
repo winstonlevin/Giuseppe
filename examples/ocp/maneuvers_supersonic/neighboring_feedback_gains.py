@@ -102,10 +102,14 @@ N_fun = ca.Function('Q', (x, lam, u), (N,), ('x', 'lam', 'u'), ('N',))
 
 # Generate Interpolators for K based on E ------------------------------------------------------------------------------
 e_vals = np.empty(sol.t.shape)
-k_v_vals = np.empty(sol.t.shape)
-k_gam_vals = np.empty(sol.t.shape)
+
+alp_glide_vals = np.empty(sol.t.shape)
 v_glide_vals = np.empty(sol.t.shape)
 gam_glide_vals = np.empty(sol.t.shape)
+
+k_v_vals = np.empty(sol.t.shape)
+k_gam_vals = np.empty(sol.t.shape)
+
 
 for idx in range(len(sol.t)):
     # Start at last idx (minimum energy) for monotonically increasing sequence.
@@ -125,7 +129,8 @@ for idx in range(len(sol.t)):
     lam_gam_idx = lam_dict['gam'][idx_rev] * k_dict['gam_ref']
     lam_idx = np.vstack((lam_h_idx, lam_xn_idx, lam_v_idx, lam_gam_idx))
 
-    u_idx = np.vstack((u_dict['alpha'][idx_rev],))
+    alp_idx = u_dict['alpha'][idx_rev]
+    u_idx = np.vstack((alp_idx,))
 
     A_idx = np.asarray(A_fun(x_idx, lam_idx, u_idx))
     B_idx = np.asarray(B_fun(x_idx, lam_idx, u_idx))
@@ -137,22 +142,30 @@ for idx in range(len(sol.t)):
     K_idx = sp.linalg.solve(R_idx, B_idx.T @ P_idx + N_idx.T)
 
     e_vals[idx] = e_idx
+
     v_glide_vals[idx] = v_idx
     gam_glide_vals[idx] = gam_idx
+    alp_glide_vals[idx] = alp_idx
+
     k_v_vals[idx] = K_idx[0, 0]
     k_gam_vals[idx] = K_idx[0, 1]
 
 v_glide_interp = sp.interpolate.pchip(e_vals, v_glide_vals)
 gam_glide_interp = sp.interpolate.pchip(e_vals, gam_glide_vals)
+alp_glide_interp = sp.interpolate.pchip(e_vals, alp_glide_vals)
+
 k_v_interp = sp.interpolate.pchip(e_vals, k_v_vals)
 k_gam_interp = sp.interpolate.pchip(e_vals, k_gam_vals)
 
 interp_dict = {
     'v': v_glide_interp,
     'gam': gam_glide_interp,
+    'alp': alp_glide_interp,
     'k_v': k_v_interp,
     'k_gam': k_gam_interp
 }
+
+# Control Law: alp = alp(e) - Kv(e) * (V - V(e)) - Kgam(e) * (gam - gam(e))
 
 with open('neighboring_feedback_dict_range.data', 'wb') as file:
     pickle.dump(interp_dict, file)

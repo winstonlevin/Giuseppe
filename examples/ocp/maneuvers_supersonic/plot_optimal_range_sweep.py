@@ -6,6 +6,7 @@ import matplotlib as mpl
 
 from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_table, temp_table, atm
 from glide_slope import get_glide_slope
+from neighboring_feedback_gains import interp_dict as noc_interp_dict
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -15,7 +16,7 @@ gradient = mpl.colormaps['viridis'].colors
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 PLOT_REFERENCE = True
-DATA = 'velocity'  # {altitude, velocity, crossrange}
+DATA = 'altitude'  # {altitude, velocity, crossrange}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
@@ -80,6 +81,12 @@ for idx, sol in enumerate(sols):
         * np.cos(auxiliaries[idx]['gam']) / np.cos(auxiliaries[idx]['phi'])
     auxiliaries[idx]['alpha_ld'] = \
         (auxiliaries[idx]['cd0'] / (auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'])) ** 0.5
+    auxiliaries[idx]['alpha_noc'] = \
+        noc_interp_dict['alp'](auxiliaries[idx]['e']) \
+        - noc_interp_dict['k_v'](auxiliaries[idx]['e']) \
+        * (auxiliaries[idx]['v'] - noc_interp_dict['v'](auxiliaries[idx]['e'])) \
+        - noc_interp_dict['k_gam'](auxiliaries[idx]['e']) \
+        * (auxiliaries[idx]['gam'] - noc_interp_dict['gam'](auxiliaries[idx]['e']))
     auxiliaries[idx]['ld_max'] = \
         auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_ld'] \
         / (auxiliaries[idx]['cd0']
@@ -147,11 +154,13 @@ for idx, lab in enumerate(ylabs):
 
         if idx == 0 and PLOT_REFERENCE:
             if jdx == 0:
-                ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', label='Max L/D', color=cols_gradient(jdx))
-                ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', label=r'$n = 1$', color=cols_gradient(jdx))
+                # ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', label='Max L/D', color=cols_gradient(jdx))
+                # ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', label=r'$n = 1$', color=cols_gradient(jdx))
+                ax.plot(sol.t, aux['alpha_noc'] * ymult[idx], '*', label=r'NOC', color=cols_gradient(jdx))
             else:
-                ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', color=cols_gradient(jdx))
-                ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', color=cols_gradient(jdx))
+                # ax.plot(sol.t, aux['alpha_ld'] * ymult[idx], ':', color=cols_gradient(jdx))
+                # ax.plot(sol.t, aux['alpha_mg'] * ymult[idx], '--', color=cols_gradient(jdx))
+                ax.plot(sol.t, aux['alpha_noc'] * ymult[idx], '*', color=cols_gradient(jdx))
 
 if PLOT_REFERENCE:
     axes_u[0].legend()
