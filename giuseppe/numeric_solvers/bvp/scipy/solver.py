@@ -52,7 +52,11 @@ class SciPySolver:
 
         self.prob: SciPyBVP = SciPyBVP(prob, use_jit_compile=use_jit_compile)
 
-    def solve(self, guess: Solution, constants: Optional[np.ndarray] = None) -> Solution:
+    def solve(self, guess: Solution, constants: Optional[np.ndarray] = None,
+              tol: Optional[float] = None, bc_tol: Optional[float] = None,
+              max_nodes: Optional[int] = None, node_buffer: Optional[int] = None,
+              verbose: Optional[Union[bool, int]] = None
+        ) -> Solution:
         """
         Solve BVP (or dualized OCP) with instance of ScipySolveBVP
 
@@ -62,7 +66,16 @@ class SciPySolver:
             previous solution (or approximate solution) to serve as guess for BVP solver
         constants : np.ndarray, optional
             array of constants which define the problem numerically, if not given solver will use constants from guess
-
+        tol : float, optional
+            override solver default tolerance
+        bc_tol : float, optional
+            override solver default boundary value tolerance
+        max_nodes : int, optional
+            overide solver default maximum nodes
+        node_buffer : int, optional
+            override solver default node buffer
+        verbose : bool or int, optional
+            override solver default verbosity
         Returns
         -------
         solution : Solution
@@ -76,14 +89,26 @@ class SciPySolver:
             constants = guess.k
 
         constants = np.asarray(constants)
-        max_nodes = max(self.max_nodes, len(tau_guess) + self.node_buffer)
+
+        if max_nodes is None:
+            max_nodes = self.max_nodes
+        if node_buffer is None:
+            node_buffer = self.node_buffer
+        if tol is None:
+            tol = self.tol
+        if bc_tol is None:
+            bc_tol = self.bc_tol
+        if verbose is None:
+            verbose = self.verbose
+
+        max_nodes = max(max_nodes, len(tau_guess) + node_buffer)
 
         try:
             sol: _scipy_bvp_sol = solve_bvp(
                     lambda tau, x, p: self.prob.compute_dynamics(tau, x, p, constants),
                     lambda x0, xf, p: self.prob.compute_boundary_conditions(x0, xf, p, constants),
                     tau_guess, x_guess, p_guess,
-                    tol=self.tol, bc_tol=self.bc_tol, max_nodes=max_nodes, verbose=self.verbose
+                    tol=tol, bc_tol=bc_tol, max_nodes=max_nodes, verbose=verbose
             )
         except RuntimeError as error:
             warn(error.args[0])
