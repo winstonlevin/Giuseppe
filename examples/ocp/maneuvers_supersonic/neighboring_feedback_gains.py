@@ -51,6 +51,7 @@ lam = ca.vcat((lam_h, lam_xn, lam_v, lam_gam))
 # Control
 alpha = ca.MX.sym('alpha', 1)
 u = alpha
+eps_u = ca.MX.sym('eps_h', 1)
 
 # Constants
 s_ref = k_dict['s_ref']
@@ -88,7 +89,7 @@ A = ca.jacobian(f_feedback, x_feedback)
 B = ca.jacobian(f_feedback, u)
 
 # Hamiltonian and Partial Derivatives
-ham = lam.T @ f
+ham = lam.T @ f + eps_u * alpha ** 2
 
 lam_dot = -ca.jacobian(ham, x).T
 Hx = ca.jacobian(ham, x_feedback)
@@ -121,54 +122,21 @@ dlam_dt = ca.Function('flam', (x, lam, u), (lam_dot,), ('x', 'lam', 'u'), ('dlam
 
 A_fun = ca.Function('A', (x, lam, u), (A,), ('x', 'lam', 'u'), ('A',))
 B_fun = ca.Function('B', (x, lam, u), (B,), ('x', 'lam', 'u'), ('B',))
-Q_fun = ca.Function('Q', (x, lam, u), (Q,), ('x', 'lam', 'u'), ('Q',))
-R_fun = ca.Function('R', (x, lam, u), (R,), ('x', 'lam', 'u'), ('R',))
-N_fun = ca.Function('N', (x, lam, u), (N,), ('x', 'lam', 'u'), ('N',))
+Q_fun = ca.Function('Q', (x, lam, u, eps_u), (Q,), ('x', 'lam', 'u', 'eps_u'), ('Q',))
+R_fun = ca.Function('R', (x, lam, u, eps_u), (R,), ('x', 'lam', 'u', 'eps_u'), ('R',))
+N_fun = ca.Function('N', (x, lam, u, eps_u), (N,), ('x', 'lam', 'u', 'eps_u'), ('N',))
 
-dP_dt_fun = ca.Function('dPdt', (P, x, lam, u), (dP_dt,), ('P', 'x', 'lam', 'u'), ('dPdt',))
-K_fun = ca.Function('K', (P, x, lam, u), (K,), ('P', 'x', 'lam', 'u'), ('K',))
+dP_dt_fun = ca.Function('dPdt', (P, x, lam, u, eps_u), (dP_dt,), ('P', 'x', 'lam', 'u', 'eps_u'), ('dPdt',))
+K_fun = ca.Function('K', (P, x, lam, u, eps_u), (K,), ('P', 'x', 'lam', 'u', 'eps_u'), ('K',))
 
 # Generate Interpolators for K based on E ------------------------------------------------------------------------------
-
-# Interpolate the state based on time-to-go tgo
-tf = sol.t[-1]
-tgo = tf - sol.t
-
-h_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(x_dict['h']))
-xn_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(x_dict['xn']))
-v_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(x_dict['v']))
-gam_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(x_dict['gam']))
-
-lam_h_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['h'] * k_dict['h_ref']))
-lam_xn_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['xn'] * k_dict['x_ref']))
-lam_v_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['v'] * k_dict['v_ref']))
-lam_gam_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['gam'] * k_dict['gam_ref']))
-
-# lam_h_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['h']))
-# lam_xn_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['xn']))
-# lam_v_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['v']))
-# lam_gam_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(lam_dict['gam']))
-
-alpha_interp_tgo = sp.interpolate.pchip(np.flip(tgo), np.flip(u_dict['alpha']))
-
-g = k_dict['mu'] / (k_dict['Re'] + x_dict['h']) ** 2
-e = x_dict['h'] * g + 0.5 * x_dict['v'] ** 2
-ego = np.flip(e)
-
-
-def get_state(_tgo):
-    _x = np.vstack((h_interp_tgo(_tgo), xn_interp_tgo(_tgo), v_interp_tgo(_tgo), gam_interp_tgo(_tgo)))
-    _lam = np.vstack((lam_h_interp_tgo(_tgo), lam_xn_interp_tgo(_tgo), lam_v_interp_tgo(_tgo), lam_gam_interp_tgo(_tgo)))
-    _u = np.vstack((alpha_interp_tgo(_tgo),))
-    return _x, _lam, _u
-
 
 shape_P = P.shape
 idx_lam0 = x.numel()
 idx_p0 = 2 * x.numel()
 
 
-def dx_lam_p_dt(_t, _x_lam_p):
+def dx_lam_p_dt(_t, _x_lam_p, _eps_u):
     # These equations of motion are to integrate p from tf (tgo = 0) to t0 (tgo = tf).
     # The Riccati differentiation equation is:
     # dP/dtgo = -dP/dt = A'P + PA - (PB + N) R^-1 (B'P + N') + Q
@@ -179,12 +147,12 @@ def dx_lam_p_dt(_t, _x_lam_p):
 
     _dx_dt = np.asarray(dx_dt(_x, _u)).flatten()
     _dlam_dt = np.asarray(dlam_dt(_x, _lam, _u)).flatten()
-    _dp_dt = np.asarray(dP_dt_fun(_p, _x, _lam, _u)).flatten()
+    _dp_dt = np.asarray(dP_dt_fun(_p, _x, _lam, _u, _eps_u)).flatten()
 
-    if np.max(np.abs(_dp_dt)) > 1e7:
-        print(f'dP/dt(t = {_t}):')
-        print(_dp_dt)
-        print(f'\n')
+    # if np.max(np.abs(_dp_dt)) > 1e7:
+    #     print(f'dP/dt(t = {_t}):')
+    #     print(_dp_dt)
+    #     print(f'\n')
 
     return np.concatenate((_dx_dt, _dlam_dt, _dp_dt))
 
@@ -205,7 +173,19 @@ idx_tf = len(sol.t) - 1
 
 num_t = 1 + idx_tf - idx_t0
 
+idx_tgo = idx_tf - (idx_t0 + 0)
+xf = np.array((x_dict['h'][idx_tgo],
+               x_dict['xn'][idx_tgo],
+               x_dict['v'][idx_tgo],
+               x_dict['gam'][idx_tgo]))
+
+lamf = np.array((lam_dict['h'][idx_tgo],
+                 lam_dict['xn'][idx_tgo],
+                 lam_dict['v'][idx_tgo],
+                 lam_dict['gam'][idx_tgo]))
+
 K_mat = np.empty((x_feedback.numel(), num_t))
+eps_u_idx = 0
 
 for idx in range(num_t):
     idx_tgo = idx_tf - (idx_t0 + idx)
@@ -217,17 +197,20 @@ for idx in range(num_t):
                         lam_dict['xn'][idx_tgo],
                         lam_dict['v'][idx_tgo],
                         lam_dict['gam'][idx_tgo]))
+
+    print(f'SSE(x - xf) = {np.sum((x_idx - xf)**2)}')
+    print(f'SSE(lam - lamf) = {np.sum((lam_idx - lamf) ** 2)}')
     # lam_idx = np.array((lam_dict['h'][idx_tgo] * k_dict['h_ref'],
     #                     lam_dict['xn'][idx_tgo] * k_dict['x_ref'],
     #                     lam_dict['v'][idx_tgo] * k_dict['v_ref'],
     #                     lam_dict['gam'][idx_tgo] * k_dict['gam_ref']))
     y_idx = np.concatenate((x_idx, lam_idx, P_vec_idx))
     u_idx = np.array((u_dict['alpha'][idx_tgo],))
-    K_mat[:, idx_tgo] = np.asarray(K_fun(P_idx, x_idx, lam_idx, u_idx))
+    K_mat[:, idx_tgo] = np.asarray(K_fun(P_idx, x_idx, lam_idx, u_idx, eps_u_idx))
 
     tspan = (sol.t[idx_tgo], sol.t[idx_tgo - 1])
 
-    ivp_sol = sp.integrate.solve_ivp(dx_lam_p_dt, tspan, y_idx)
+    ivp_sol = sp.integrate.solve_ivp(lambda _t, _x_lam_p: dx_lam_p_dt(_t, _x_lam_p, eps_u_idx), tspan, y_idx)
 
     xf = ivp_sol.y[:idx_lam0, -1]
     lamf = ivp_sol.y[idx_lam0:idx_p0, -1]
@@ -235,9 +218,13 @@ for idx in range(num_t):
     uf = ctrl_law(xf, lamf)
     Af = A_fun(xf, lamf, uf)
     Bf = B_fun(xf, lamf, uf)
-    Qf = Q_fun(xf, lamf, uf)
-    Rf = R_fun(xf, lamf, uf)
-    dPf = dP_dt_fun(Pf, xf, lamf, uf)
+    Qf = Q_fun(xf, lamf, uf, eps_u_idx)
+    Rf = R_fun(xf, lamf, uf, eps_u_idx)
+    Nf = N_fun(xf, lamf, uf, eps_u_idx)
+    dPf = dP_dt_fun(Pf, xf, lamf, uf, eps_u_idx)
+
+    # print(f'flam_min[Q(t={sol.t[idx_tgo]})]:')
+    # print(np.min(np.linalg.eigvals(Qf)))
 
     if not ivp_sol.success:
         print('Integration Failed!')

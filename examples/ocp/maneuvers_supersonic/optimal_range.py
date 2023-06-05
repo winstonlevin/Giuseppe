@@ -129,7 +129,7 @@ m0 = ca.MX.sym('m0')
 m0_val = 32138.594625382884 / g0
 
 # Base initial conditions off glide slope
-h_interp, v_interp, gam_interp = get_glide_slope(g0, m0_val, s_ref_val, eta_val)
+h_interp, v_interp, gam_interp, _ = get_glide_slope(g0, m0_val, s_ref_val, eta_val)
 
 energy0 = g0 * 65_600. + 0.5 * (2.5 * atm.speed_of_sound(65_600.)) ** 2
 h0_val = h_interp(energy0)
@@ -232,6 +232,9 @@ with open('seed_sol_range.data', 'wb') as file:
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(100, {'hf': hf_val, 'vf': vf_val, 'gamf': gamf_val})
 sol_set = cont.run_continuation()
+
+
+sol_set.solutions[-1] = num_solver.solve(sol_set.solutions[-1], bc_tol=1e-15)
 
 # Save Solution
 sol_set.save('sol_set_range.data')
