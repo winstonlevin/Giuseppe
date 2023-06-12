@@ -183,7 +183,7 @@ if __name__ == "__main__":
     cont.add_linear_series(50, {'h_f': 10_000, 'v_f': a_func(65_600), 'gam_f': 35 * np.pi/180})
     cont.add_linear_series(100, {'h_f': 65_600.0})
     cont.add_linear_series(50, {'gam_f': 0})
-    cont.add_logarithmic_series(100, {'h_0': 1e-6, 'eps_h': 1e-9})
+    cont.add_logarithmic_series(100, {'h_0': 1e-6, 'eps_h': 1e-13})
 
     sol_set = cont.run_continuation()
 

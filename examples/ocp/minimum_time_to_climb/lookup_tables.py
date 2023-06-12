@@ -112,10 +112,10 @@ diff_thrust_fun_linear = ca.Function('diff_thrust', (M, h),
                                      (ca.jacobian(thrust_linear, M), ca.jacobian(thrust_linear, h)),
                                      ('v', 'h'), ('dT_dv', 'dT_dh'))
 
-M_grid_aero = np.array((0, 0.4, 0.8, 0.9, 1.0, 1.2, 1.4, 1.6, 1.8))
-data_CLalpha = np.array((3.44, 3.44, 3.44, 3.58, 4.44, 3.44, 3.01, 2.86, 2.44))
-data_CD0 = np.array((0.013, 0.013, 0.013, 0.014, 0.031, 0.041, 0.039, 0.036, 0.035))
-data_eta = np.array((0.54, 0.54, 0.54, 0.75, 0.79, 0.78, 0.89, 0.93, 0.93))
+M_grid_aero = np.array((0, 0.2, 0.4, 0.6, 0.7, 0.75, 0.8, 0.9, 1.0, 1.2, 1.4, 1.6, 1.8))
+data_CLalpha = np.array((3.44, 3.44, 3.44, 3.44, 3.44, 3.44, 3.44, 3.58, 4.44, 3.44, 3.01, 2.86, 2.44))
+data_CD0 = np.array((0.013, 0.013, 0.013, 0.013, 0.013, 0.013, 0.013, 0.014, 0.031, 0.041, 0.039, 0.036, 0.035))
+data_eta = np.array((0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.75, 0.79, 0.78, 0.89, 0.93, 0.93))
 
 CLalpha_table_bspline = ca.interpolant('CLalpha_table', 'bspline', (M_grid_aero,), data_CLalpha)
 CD0_table_bspline = ca.interpolant('CD0_table', 'bspline', (M_grid_aero,), data_CD0)
@@ -196,6 +196,23 @@ diff_CD0_fun_bspline_expanded = ca.Function('dCD0_dM', (M,), (ca.jacobian(CD0_bs
                                             ('M',), ('dCD0_dM',))
 diff_eta_fun_bspline_expanded = ca.Function('deta_dM', (M,), (ca.jacobian(eta_bspline_expanded, M),),
                                             ('M',), ('deta_dM',))
+
+# noinspection PyTypeChecker
+np.savetxt('lut_aero_data.csv', np.hstack((M_grid_aero_expanded.reshape((-1, 1)),
+                                           data_CLalpha_expanded.reshape((-1, 1)),
+                                           data_CD0_expanded.reshape((-1, 1)),
+                                           data_eta_expanded.reshape((-1, 1)),)), delimiter=',')
+
+# noinspection PyTypeChecker
+np.savetxt('lut_atm_data.csv', np.hstack((h_grid_atm.reshape((-1, 1)),
+                                           data_dens.reshape((-1, 1)),
+                                           data_sond.reshape((-1, 1)),)), delimiter=',')
+
+# noinspection PyTypeChecker
+np.savetxt('lut_thrust_data.csv', np.vstack((
+    np.hstack((np.zeros(shape=(1, 1)), h_grid_thrust.reshape((1, -1)),)),
+    np.hstack((M_grid_thrust.reshape((-1, 1)), data_thrust,)),
+)))
 
 if __name__ == "__main__":
     from matplotlib import pyplot as plt

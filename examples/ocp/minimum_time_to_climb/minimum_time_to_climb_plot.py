@@ -27,6 +27,9 @@ elif DATA == 2:
     with open('guess.data', 'rb') as file:
         sol = pickle.load(file)
 
+# noinspection PyTypeChecker
+np.savetxt('txuSolution.csv', np.vstack((sol.t.reshape((1, -1)), sol.x, sol.u)), delimiter=',')
+
 r2d = 180 / np.pi
 d2r = np.pi / 180
 
@@ -113,7 +116,7 @@ fig1.tight_layout()
 fig2 = plt.figure(figsize=MED_FIGSIZE)
 
 ax21 = fig2.add_subplot(411)
-ax21.plot(sol.t, LoD)
+ax21.plot(sol.t, abs(LoD))
 ax21.grid()
 ax21.set_ylabel('L/D')
 # ax21.set_xlabel(T_LAB)
