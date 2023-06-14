@@ -8,8 +8,11 @@ class Atmosphere1976:
     def __init__(self, use_metric: bool = True,
                  gravity: Optional[float] = None,
                  earth_radius: Optional[float] = None,
-                 gas_constant: Optional[float] = None
+                 gas_constant: Optional[float] = None,
+                 boundary_thickness: Optional[float] = None,
                  ):
+
+        self.boundary_thickness = boundary_thickness
 
         self.h_layers = np.array((-610, 11_000, 20_000, 32_000, 47_000, 51_000, 71_000, 84_852))  # m
         self.lapse_layers = np.array((-6.5, 0, 1, 2.8, 0, -2.8, -2, 0)) * 1e-3  # K/m
@@ -61,6 +64,33 @@ class Atmosphere1976:
 
         self.specific_heat_ratio = 1.4
         self.build_layers()
+
+        if self.boundary_thickness is not None:
+            h_sym = ca.SX.sym('h')
+            temperature_expr, pressure_expr, density_expr = self.get_ca_atm_expr(h_sym)
+
+            # Create 5th order polynomial to create atm model with continuous 2nd derivatives
+            num_poly_coeffs = 6
+            num_atm_layers = len(self.h_layers)
+            num_boundary_layers = num_atm_layers - 1
+            self.boundary_T_constants = np.empty((num_poly_coeffs, num_atm_layers + num_boundary_layers))
+            self.boundary_T_constants[:] = np.nan
+            idx = 1  # skip first idx
+            while idx < len(self.h_layers) - 1:
+                # Get altitude boundary
+                altitude0 = self.h_layers[idx] - 0.5 * self.boundary_thickness
+                altitude1 = self.h_layers[idx] + 0.5 * self.boundary_thickness
+
+                # Insert boundary layer base at idx
+                self.h_layers = np.insert(self.h_layers, idx, altitude0)
+                self.lapse_layers = np.insert(self.lapse_layers, idx, np.nan)
+                self.T_layers = np.insert(self.T_layers, idx, np.nan)
+                self.P_layers = np.insert(self.P_layers, idx, np.nan)
+                self.rho_layers = np.insert(self.rho_layers, idx, np.nan)
+                self.boundary_T_constants[:, idx] = self.fit_boundary_layer(
+                    temperature_expr, h_sym, altitude0, altitude1
+                )
+
 
     def isothermal_layer(self, altitude, altitude_0, temperature_0, pressure_0, density_0):
         temperature = temperature_0
@@ -177,6 +207,34 @@ class Atmosphere1976:
         speed_of_sound = np.sqrt(self.specific_heat_ratio * self.gas_constant * temperature)
         return speed_of_sound
 
+    def fit_boundary_layer(self, f: ca.SX, h: ca.SX, h0: float, h1: float):
+        # Fit coefficients for a fifth-order polynomial of the form:
+        # p = C5 * h^5 + ... + C0 * h^0
+        # Return C = [C5, C4, ..., C0]
+        fh = ca.jacobian(f, h)
+        fhh = ca.jacobian(fh, h)
+        f_fun = ca.Function('f', (h,), (f,))
+        fh_fun = ca.Function('fh', (h,), (fh,))
+        fhh_fun = ca.Function('fhh', (h,), (fhh,))
+
+        output = np.asarray((
+            f_fun(h0), fh_fun(h0), fhh_fun(h0),
+            f_fun(h1), fh_fun(h1), fhh_fun(h1)
+        )).reshape((-1, 1))
+
+        design_matrix = np.array((
+            (h0 ** 5, h0 ** 4, h0 ** 3, h0 ** 2, h0, 1.),
+            (5. * h0 ** 4, 4. * h0 ** 3, 3. * h0 ** 2, 2. * h0, 1., 0.),
+            (20. * h0 ** 3, 12. * h0 ** 2, 6. * h0, 2., 0., 0.),
+            (h1 ** 5, h1 ** 4, h1 ** 3, h1 ** 2, h1, 1.),
+            (5. * h1 ** 4, 4. * h1 ** 3, 3. * h1 ** 2, 2. * h1, 1., 0.),
+            (20. * h1 ** 3, 12. * h1 ** 2, 6. * h1, 2., 0., 0.),
+        ))
+
+        coefficients = np.linalg.solve(design_matrix, output)
+
+        return coefficients
+
 
 class CasidiFunction(ca.Callback):
     def __init__(self, eval_func, func_name: str = 'func', n_in: int = 1, n_out: int = 1,
@@ -219,7 +277,7 @@ if __name__ == "__main__":
     mu = 0.14076539e17
     g0 = mu / re**2
 
-    atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0)
+    atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0, boundary_thickness=1000)
     density_1976 = np.empty(shape=altitudes.shape)
     layer_1976 = list()
 
