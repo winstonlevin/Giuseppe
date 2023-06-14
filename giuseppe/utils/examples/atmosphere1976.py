@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, Tuple
 
 import numpy as np
 import casadi as ca
@@ -75,11 +75,24 @@ class Atmosphere1976:
             num_boundary_layers = num_atm_layers - 1
             self.boundary_T_constants = np.empty((num_poly_coeffs, num_atm_layers + num_boundary_layers))
             self.boundary_T_constants[:] = np.nan
-            idx = 1  # skip first idx
-            while idx < len(self.h_layers) - 1:
+            self.boundary_P_constants = self.boundary_T_constants.copy()
+            self.boundary_rho_constants = self.boundary_T_constants.copy()
+
+            # indices where the boundary layers will be
+            idces = np.arange(1, num_atm_layers + num_boundary_layers, 2)
+            for idx in idces:  # skip last idx (no boundary)
                 # Get altitude boundary
                 altitude0 = self.h_layers[idx] - 0.5 * self.boundary_thickness
                 altitude1 = self.h_layers[idx] + 0.5 * self.boundary_thickness
+                coeffs_T, output_T = self.fit_boundary_layer(
+                    temperature_expr, h_sym, altitude0, altitude1
+                )
+                coeffs_P, output_P = self.fit_boundary_layer(
+                    pressure_expr, h_sym, altitude0, altitude1
+                )
+                coeffs_rho, output_rho = self.fit_boundary_layer(
+                    density_expr, h_sym, altitude0, altitude1
+                )
 
                 # Insert boundary layer base at idx
                 self.h_layers = np.insert(self.h_layers, idx, altitude0)
@@ -87,10 +100,18 @@ class Atmosphere1976:
                 self.T_layers = np.insert(self.T_layers, idx, np.nan)
                 self.P_layers = np.insert(self.P_layers, idx, np.nan)
                 self.rho_layers = np.insert(self.rho_layers, idx, np.nan)
-                self.boundary_T_constants[:, idx] = self.fit_boundary_layer(
-                    temperature_expr, h_sym, altitude0, altitude1
+                self.boundary_T_constants[:, idx] = coeffs_T.flatten()
+                self.boundary_P_constants[:, idx] = coeffs_P.flatten()
+                self.boundary_rho_constants[:, idx] = coeffs_rho.flatten()
+                self.layer_names.insert(
+                    idx, self.layer_names[idx-1] + '-' + self.layer_names[idx] + ' Boundary'
                 )
 
+                # Modify boundary layer at next idx to shift up by boundary layer
+                self.h_layers[idx + 1] = altitude1
+                self.T_layers[idx + 1] = output_T[3]
+                self.P_layers[idx + 1] = output_P[3]
+                self.rho_layers[idx + 1] = output_rho[3]
 
     def isothermal_layer(self, altitude, altitude_0, temperature_0, pressure_0, density_0):
         temperature = temperature_0
@@ -175,13 +196,17 @@ class Atmosphere1976:
 
         return self.layer_names[layer_idx]
 
-    def get_ca_atm_expr(self, altitude_geometric: Union[ca.SX, ca.MX]):
+    def get_ca_atm_expr(self, altitude_geometric: Union[ca.SX, ca.MX]) -> Tuple[Union[ca.SX, ca.MX],
+                                                                                Union[ca.SX, ca.MX],
+                                                                                Union[ca.SX, ca.MX]]:
         altitude_geopotential = self.geometric2geopotential(altitude_geometric)
         layer_idx = ca.sum1(altitude_geopotential >= self.h_layers) - 1
 
-        temperature = 0
-        pressure = 0
-        density = 0
+        type_h = type(altitude_geometric)
+
+        temperature = type_h(0)
+        pressure = type_h(0)
+        density = type_h(0)
         for idx, lapse_rate in enumerate(self.lapse_layers):
             if lapse_rate == 0:
                 temperature_i, pressure_i, density_i = self.isothermal_layer(altitude=altitude_geopotential,
@@ -207,15 +232,19 @@ class Atmosphere1976:
         speed_of_sound = np.sqrt(self.specific_heat_ratio * self.gas_constant * temperature)
         return speed_of_sound
 
-    def fit_boundary_layer(self, f: ca.SX, h: ca.SX, h0: float, h1: float):
+    @staticmethod
+    def fit_boundary_layer(f: ca.SX, h: ca.SX, h0: float, h1: float):
         # Fit coefficients for a fifth-order polynomial of the form:
-        # p = C5 * h^5 + ... + C0 * h^0
-        # Return C = [C5, C4, ..., C0]
+        # p = C5 * [(h - h0)/dh]^5 + ... + C0 * [(h - h0)/dh]^0
+        # Return C = [C0, C1, ..., C5]
         fh = ca.jacobian(f, h)
         fhh = ca.jacobian(fh, h)
         f_fun = ca.Function('f', (h,), (f,))
         fh_fun = ca.Function('fh', (h,), (fh,))
         fhh_fun = ca.Function('fhh', (h,), (fhh,))
+
+        dh = h1 - h0
+        dh2 = dh**2
 
         output = np.asarray((
             f_fun(h0), fh_fun(h0), fhh_fun(h0),
@@ -223,17 +252,17 @@ class Atmosphere1976:
         )).reshape((-1, 1))
 
         design_matrix = np.array((
-            (h0 ** 5, h0 ** 4, h0 ** 3, h0 ** 2, h0, 1.),
-            (5. * h0 ** 4, 4. * h0 ** 3, 3. * h0 ** 2, 2. * h0, 1., 0.),
-            (20. * h0 ** 3, 12. * h0 ** 2, 6. * h0, 2., 0., 0.),
-            (h1 ** 5, h1 ** 4, h1 ** 3, h1 ** 2, h1, 1.),
-            (5. * h1 ** 4, 4. * h1 ** 3, 3. * h1 ** 2, 2. * h1, 1., 0.),
-            (20. * h1 ** 3, 12. * h1 ** 2, 6. * h1, 2., 0., 0.),
+            (1, 0, 0, 0, 0, 0),
+            (0, 1/dh, 0, 0, 0, 0),
+            (0, 0, 2/dh2, 0, 0, 0),
+            (1, 1, 1, 1, 1, 1),
+            (0, 1/dh, 2/dh, 3/dh, 4/dh, 5/dh),
+            (0, 0, 2/dh2, 6/dh2, 12/dh2, 20/dh2)
         ))
 
         coefficients = np.linalg.solve(design_matrix, output)
 
-        return coefficients
+        return coefficients, output
 
 
 class CasidiFunction(ca.Callback):
