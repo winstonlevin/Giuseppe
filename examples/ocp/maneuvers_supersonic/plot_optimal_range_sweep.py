@@ -6,6 +6,7 @@ import matplotlib as mpl
 
 from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_table, temp_table, atm
 from glide_slope import get_glide_slope
+from asymptotic_expansion import glide_asymptotic_expansion
 # from neighboring_feedback_gains import interp_dict as noc_interp_dict
 
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -95,6 +96,29 @@ for idx, sol in enumerate(sols):
         auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_mg'] \
         / (auxiliaries[idx]['cd0']
            + auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_mg'] ** 2)
+
+    auxiliaries[idx]['load_asymptotic'] = np.empty(sol.t.shape)
+
+    s_ref = auxiliaries[idx]['s_ref']
+    eta = auxiliaries[idx]['eta']
+
+    if idx == 0:
+        aux_ref = auxiliaries[0]
+        h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(aux_ref['g0'], aux_ref['m'][0], aux_ref['s_ref'],
+                                                                      aux_ref['eta'])
+
+    auxiliaries[idx]['h_glide'] = h_interp(auxiliaries[idx]['e'])
+    auxiliaries[idx]['dh'] = auxiliaries[idx]['h'] - auxiliaries[idx]['h_glide']
+    auxiliaries[idx]['dv'] = auxiliaries[idx]['v'] - v_interp(auxiliaries[idx]['e'])
+    auxiliaries[idx]['dgam'] = auxiliaries[idx]['gam'] - gam_interp(auxiliaries[idx]['e'])
+    auxiliaries[idx]['dalp'] = auxiliaries[idx]['alpha'] - auxiliaries[idx]['alpha_mg']
+    auxiliaries[idx]['ddrag'] = (auxiliaries[idx]['drag'] - drag_interp(auxiliaries[idx]['e'])) / auxiliaries[idx]['weight']
+
+    for jdx, (e, h, gam, h_glide, m, g) in enumerate(zip(
+            auxiliaries[idx]['e'], auxiliaries[idx]['h'], auxiliaries[idx]['gam'], auxiliaries[idx]['h_glide'],
+            auxiliaries[idx]['m'], auxiliaries[idx]['g']
+    )):
+        auxiliaries[idx]['load_asymptotic'][jdx] = glide_asymptotic_expansion(e, h, gam, h_glide, m, g, s_ref, eta)
 
 
 r2d = 180 / np.pi
@@ -236,9 +260,13 @@ if PLOT_AUXILIARY:
                 ax_ld.plot(sol.t, aux['ld_mg'], '--', label='n = 1', color=cols_gradient(idx))
                 ax_ld.plot(sol.t, aux['ld_max'], ':', label='Max L/D', color=cols_gradient(idx))
 
+                ax_lift.plot(sol.t, aux['load_asymptotic'], '--', label='SPM', color=cols_gradient(idx))
+
             else:
                 ax_ld.plot(sol.t, aux['ld_mg'], '--', color=cols_gradient(idx))
                 ax_ld.plot(sol.t, aux['ld_max'], ':', color=cols_gradient(idx))
+
+                ax_lift.plot(sol.t, aux['load_asymptotic'], '--', color=cols_gradient(idx))
 
     if PLOT_REFERENCE:
         ax_ld.legend()
