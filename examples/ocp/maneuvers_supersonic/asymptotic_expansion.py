@@ -1,3 +1,4 @@
+from typing import Optional
 from warnings import warn
 import numpy as np
 
@@ -16,7 +17,7 @@ def get_accel_parameters(e, h, m, g, s_ref, eta):
     return ad0, adl
 
 
-def find_root_depressed_cubic(x0, c1, c0, max_iter: int = 100, tol: float = 1e-6):
+def find_root_depressed_cubic(x0, c1, c0, max_iter: int = 100, tol: float = 1e-6, x_tol: float = 1e-16):
     # Find the real root for x**3 + c1x + c0 = 0
     x = x0
 
@@ -26,36 +27,35 @@ def find_root_depressed_cubic(x0, c1, c0, max_iter: int = 100, tol: float = 1e-6
 
         x = x0 - f / fp
 
-        if abs(x - x0) < tol:
+        if abs(f) < tol:
+            break
+        elif abs(x - x0) < x_tol:
             break
 
     return x
 
 
-def glide_asymptotic_expansion(e, h, gam, h_glide, m, g, s_ref, eta):
+def glide_asymptotic_expansion(e, h, gam, h_glide, m, g, s_ref, eta, gam0: Optional[float] = None):
     ad0, adl = get_accel_parameters(e, h, m, g, s_ref, eta)
     ad0_glide, adl_glide = get_accel_parameters(e, h_glide, m, g, s_ref, eta)
 
-    radicand_gam = (ad0_glide - ad0 + adl_glide - adl) / adl
-
-    # if any(radicand_gam < 0):
-    #     warn('radicand_gam < 0! Setting gam1 = 0')
-    #     gam1 = 0
-    # else:
-    #     gam1 = np.sign(h_glide - h) * np.arcsin(radicand_gam ** 0.5)
-
     c1 = -(2 * adl + ad0) / adl
     c0 = (ad0_glide + adl_glide) / adl
-    cgam1 = find_root_depressed_cubic(1., c1, c0)
 
-    if cgam1 > 1:
-        cgam1 = 1
-        warn('cos(gam1) > 1! Setting cos(gam1) = 1')
-    elif cgam1 < 0:
-        cgam1 = 0
-        warn('cos(gam1) < 0! Setting cos(gam1) = 0')
+    if gam0 is None:
+        gam0 = 0.
 
-    gam1 = np.arccos(cgam1)
+    cgam_sols = np.roots((1., 0., float(c1), float(c0)))
+    cgam_sols_feasible = cgam_sols[np.where(
+        np.logical_and(np.isreal(cgam_sols), np.logical_and(cgam_sols > -1., cgam_sols < 1.))
+    )]
+
+    if len(cgam_sols_feasible) > 0:
+        cgam1 = cgam_sols_feasible[np.abs(cgam_sols_feasible - np.cos(gam0)).argmin()]
+        gam1 = np.arccos(abs(cgam1)) * np.sign(h_glide - h) * np.sign(cgam1)
+    else:
+        warn('No feasible solutions! Setting gam1 = gam0')
+        gam1 = gam0
 
     lam_h = -np.tan(gam1) + 2 * adl * np.sin(gam1) / (ad0_glide + adl_glide)
 
@@ -69,4 +69,4 @@ def glide_asymptotic_expansion(e, h, gam, h_glide, m, g, s_ref, eta):
     else:
         load_factor = np.cos(gam) + np.sign(gam1 - gam) * radicand_u ** 0.5
 
-    return load_factor
+    return load_factor, gam1

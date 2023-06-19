@@ -108,18 +108,47 @@ for idx, sol in enumerate(sols):
                                                                       aux_ref['eta'])
 
     auxiliaries[idx]['h_glide'] = h_interp(auxiliaries[idx]['e'])
+    auxiliaries[idx]['v_glide'] = v_interp(auxiliaries[idx]['e'])
+    auxiliaries[idx]['rho_glide'] = np.asarray(dens_table(auxiliaries[idx]['h_glide'])).flatten()
+    auxiliaries[idx]['qdyn_glide'] = 0.5 * auxiliaries[idx]['rho_glide'] * auxiliaries[idx]['v_glide'] ** 2
+    auxiliaries[idx]['cd0_glide'] = np.asarray(cd0_table(auxiliaries[idx]['mach']), dtype=float).flatten()
+    auxiliaries[idx]['cl_alpha_glide'] = np.asarray(cl_alpha_table(auxiliaries[idx]['mach']), dtype=float).flatten()
+    auxiliaries[idx]['AD0_glide'] = (auxiliaries[idx]['qdyn_glide'] * auxiliaries[idx]['s_ref']
+                                     * auxiliaries[idx]['cd0_glide']) / auxiliaries[idx]['weight']
+    auxiliaries[idx]['ADL_glide'] = auxiliaries[idx]['eta'] * auxiliaries[idx]['weight'] / (
+        auxiliaries[idx]['qdyn_glide'] * auxiliaries[idx]['s_ref'] * auxiliaries[idx]['cl_alpha_glide']
+    )
+
+
     auxiliaries[idx]['dh'] = auxiliaries[idx]['h'] - auxiliaries[idx]['h_glide']
-    auxiliaries[idx]['dv'] = auxiliaries[idx]['v'] - v_interp(auxiliaries[idx]['e'])
+    auxiliaries[idx]['dv'] = auxiliaries[idx]['v'] - auxiliaries[idx]['v_glide']
     auxiliaries[idx]['dgam'] = auxiliaries[idx]['gam'] - gam_interp(auxiliaries[idx]['e'])
     auxiliaries[idx]['dalp'] = auxiliaries[idx]['alpha'] - auxiliaries[idx]['alpha_mg']
     auxiliaries[idx]['ddrag'] = (auxiliaries[idx]['drag'] - drag_interp(auxiliaries[idx]['e'])) / auxiliaries[idx]['weight']
 
-    for jdx, (e, h, gam, h_glide, m, g) in enumerate(zip(
-            auxiliaries[idx]['e'], auxiliaries[idx]['h'], auxiliaries[idx]['gam'], auxiliaries[idx]['h_glide'],
-            auxiliaries[idx]['m'], auxiliaries[idx]['g']
-    )):
-        auxiliaries[idx]['load_asymptotic'][jdx] = glide_asymptotic_expansion(e, h, gam, h_glide, m, g, s_ref, eta)
+    gam0 = 0.
+    # for jdx, (e, h, gam, h_glide, m, g) in enumerate(zip(
+    #         auxiliaries[idx]['e'], auxiliaries[idx]['h'], auxiliaries[idx]['gam'], auxiliaries[idx]['h_glide'],
+    #         auxiliaries[idx]['m'], auxiliaries[idx]['g']
+    # )):
+    #     auxiliaries[idx]['load_asymptotic'][jdx], gam0 = glide_asymptotic_expansion(
+    #         e, h, gam, h_glide, m, g, s_ref, eta, gam0=gam0
+    #     )
 
+    auxiliaries[idx]['AD0'] = (auxiliaries[idx]['qdyn'] * auxiliaries[idx]['s_ref']
+                               * auxiliaries[idx]['cd0']) / auxiliaries[idx]['weight']
+    auxiliaries[idx]['ADL'] = auxiliaries[idx]['eta'] * auxiliaries[idx]['weight'] / (
+        auxiliaries[idx]['qdyn'] * auxiliaries[idx]['s_ref'] * auxiliaries[idx]['cl_alpha']
+    )
+
+    _sin2_gami1 = auxiliaries[idx]['v_glide'] / auxiliaries[idx]['v'] * (
+        auxiliaries[idx]['AD0_glide'] + auxiliaries[idx]['ADL_glide']
+    ) - (auxiliaries[idx]['AD0'] + auxiliaries[idx]['ADL']) / auxiliaries[idx]['ADL']
+    auxiliaries[idx]['gam_i1'] = np.arcsin(_sin2_gami1 ** 0.5)
+
+    auxiliaries[idx]['load_asymptotic'] = np.cos(auxiliaries[idx]['gam'])/3. + (
+        np.cos(auxiliaries[idx]['gam'])**2. / 9. + 4. / 3. + 4. * np.sin(auxiliaries[idx]['gam'])**2.
+    ) ** 0.5
 
 r2d = 180 / np.pi
 g0 = auxiliaries[0]['g0']
@@ -156,6 +185,10 @@ for idx, lab in enumerate(ylabs):
 
 if PLOT_REFERENCE:
     axes_states[4].plot(aux_ref['t'], gam_interp(aux_ref['e']) * ymult[4], 'k--', label='Glide Slope')
+
+    for idx, aux in enumerate(auxiliaries):
+        axes_states[4].plot(aux['t'], aux['gam_i1'] * ymult[4], ':', color=cols_gradient(idx))
+
     axes_states[4].legend()
 
 fig_states.tight_layout()
