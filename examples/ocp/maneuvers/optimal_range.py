@@ -29,7 +29,7 @@ ocp.add_control(phi)
 h = ca.MX.sym('h', 1)
 xn = ca.MX.sym('xn', 1)
 xe = ca.MX.sym('xe', 1)
-v = ca.MX.sym('v', 1)
+e = ca.MX.sym('e', 1)
 gam = ca.MX.sym('gam', 1)
 psi = ca.MX.sym('psi', 1)
 m = ca.MX.sym('m', 1)
@@ -43,21 +43,35 @@ Re = ca.MX.sym('Re')
 
 eta_val = 1.0
 s_ref_val = 500.
+mu_val = 1.4076539e16
+Re_val = 20902900.
 
 ocp.add_constant(Isp, 2800.0)
 ocp.add_constant(s_ref, s_ref_val)
 ocp.add_constant(eta, eta_val)
-ocp.add_constant(mu, 1.4076539e16)
-ocp.add_constant(Re, 20902900)
+ocp.add_constant(mu, mu_val)
+ocp.add_constant(Re, Re_val)
 
-g0 = 1.4076539e16 / 20902900 ** 2
+g0 = mu_val / Re_val ** 2
 g = mu / (Re + h) ** 2
-# g = g0
+
+v = (2 * (e - g * h)) ** 0.5
+
+
+def eh2v(_e, _h):
+    _g = mu_val / (Re_val + _h) ** 2
+    _v = (2 * (_e - _h * _g)) ** 0.5
+    return _v
+
+
+def vh2e(_v, _h):
+    _g = mu_val / (Re_val + _h) ** 2
+    _e = _g * _h + 0.5 * _v ** 2
+    return _e
+
 
 # Look-Up Tables & Atmospheric Expressions
 a = sped_table(h)
-# T = temp_table(h)
-# a = ca.sqrt(atm.specific_heat_ratio * atm.gas_constant * T)
 
 rho = dens_table(h)
 
@@ -80,14 +94,14 @@ drag = qdyn * s_ref * cd
 ocp.add_state(h, v * ca.sin(gam))
 ocp.add_state(xn, v * ca.cos(gam) * ca.cos(psi))
 ocp.add_state(xe, v * ca.cos(gam) * ca.sin(psi))
-ocp.add_state(v, (thrust * ca.cos(alpha) - drag) / m - g * ca.sin(gam))
+ocp.add_state(e, v * (thrust * ca.cos(alpha) - drag) / m)
 ocp.add_state(gam, (thrust * ca.sin(alpha) + lift) * ca.cos(phi) / (m * v) - g / v * ca.cos(gam))
 ocp.add_state(psi, (thrust * ca.sin(alpha) + lift) * ca.sin(phi) / (m * v * ca.cos(gam)))
 ocp.add_state(m, -thrust / (Isp * g0))
 
 # Reference Values
 t_ref = ca.MX.sym('t_ref')
-v_ref = ca.MX.sym('v_ref')
+e_ref = ca.MX.sym('e_ref')
 gam_ref = ca.MX.sym('gam_ref')
 psi_ref = ca.MX.sym('psi_ref')
 h_ref = ca.MX.sym('h_ref')
@@ -101,11 +115,12 @@ psi_ref_val = 90 * d2r
 h_ref_val = 65_600. / 2.
 x_ref_val = v_ref_val * t_ref_val
 m_ref_val = (34_200. / g0) / 2.
+e_ref_val = g0 * h_ref_val + 0.5 * v_ref_val ** 2
 
 ocp.add_constant(t_ref, t_ref_val)
 ocp.add_constant(h_ref, h_ref_val)
 ocp.add_constant(x_ref, x_ref_val)
-ocp.add_constant(v_ref, v_ref_val)
+ocp.add_constant(e_ref, e_ref_val)
 ocp.add_constant(gam_ref, gam_ref_val)
 ocp.add_constant(psi_ref, psi_ref_val)
 ocp.add_constant(m_ref, m_ref_val)
@@ -119,7 +134,7 @@ ocp.set_cost(0, 0, -(xn * ca.cos(terminal_angle) - xe * ca.sin(terminal_angle)) 
 h0 = ca.MX.sym('h0')
 xn0 = ca.MX.sym('xn0')
 xe0 = ca.MX.sym('xd0')
-v0 = ca.MX.sym('v0')
+e0 = ca.MX.sym('e0')
 gam0 = ca.MX.sym('gam0')
 psi0 = ca.MX.sym('psi0')
 m0 = ca.MX.sym('m0')
@@ -131,23 +146,22 @@ m0_val = 32138.594625382884 / g0
 # Base initial conditions off glide slope
 h_interp, v_interp, gam_interp, _ = get_glide_slope(g0, m0_val, s_ref_val, eta_val)
 
-energy0 = g0 * 65_600. + 0.5 * (2.5 * atm.speed_of_sound(65_600.)) ** 2
-h0_val = h_interp(energy0)
-v0_val = v_interp(energy0)
-gam0_val = gam_interp(energy0)
+e0_val = vh2e(2.5 * atm.speed_of_sound(65_600.), 65_600.)
+h0_val = h_interp(e0_val)
+gam0_val = gam_interp(e0_val)
 
 
 def ctrl_law(_t, _x, _p, _k):
     # Unpack state
     _h = _x[0]
-    _v = _x[3]
+    _e = _x[3]
     _gam = _x[4]
     _m = _x[6]
 
+    _v = (2 * (_e - g0 * _h)) ** 0.5
     _qdyn = 0.5 * float(dens_table(_h)) * _v ** 2
     _mach = _v / float(sped_table(_h))
     _cla = float(cl_alpha_table(_mach))
-    _e = g0 * _h + 0.5 * _v ** 2
     _gam_glide = float(gam_interp(_e))
     _tau = 0.1
 
@@ -157,15 +171,15 @@ def ctrl_law(_t, _x, _p, _k):
     return np.array((_alp, _phi))
 
 
-energyf = 0.5 * (0.7 * atm.speed_of_sound(0.)) ** 2
-hf_val = h_interp(energyf)
-vf_val = v_interp(energyf)
-gamf_val = gam_interp(energyf)
+ef_val = vh2e(0.7 * atm.speed_of_sound(0.), 0.)
+hf_val = h_interp(ef_val)
+vf_val = v_interp(ef_val)
+gamf_val = gam_interp(ef_val)
 
 ocp.add_constant(h0, h0_val)
 ocp.add_constant(xn0, 0.)
 ocp.add_constant(xe0, 0.)
-ocp.add_constant(v0, v0_val)
+ocp.add_constant(e0, e0_val)
 ocp.add_constant(gam0, gam0_val)
 ocp.add_constant(psi0, 0.)
 ocp.add_constant(m0, m0_val)
@@ -174,21 +188,21 @@ ocp.add_constraint(location='initial', expr=t / t_ref)
 ocp.add_constraint(location='initial', expr=(h - h0) / h_ref)
 ocp.add_constraint(location='initial', expr=(xn - xn0) / x_ref)
 ocp.add_constraint(location='initial', expr=(xe - xe0) / x_ref)
-ocp.add_constraint(location='initial', expr=(v - v0) / v_ref)
+ocp.add_constraint(location='initial', expr=(e - e0) / e_ref)
 ocp.add_constraint(location='initial', expr=(gam - gam0) / gam_ref)
 ocp.add_constraint(location='initial', expr=(psi - psi0) / psi_ref)
 ocp.add_constraint(location='initial', expr=(m - m0) / m_ref)
 
 hf = ca.MX.sym('hf')
-vf = ca.MX.sym('vf')
+ef = ca.MX.sym('ef')
 gamf = ca.MX.sym('gamf')
 
 ocp.add_constant(hf, 0.)
-ocp.add_constant(vf, 0.38 * atm.speed_of_sound(0.))
+ocp.add_constant(ef, ef_val)
 ocp.add_constant(gamf, 0.)
 
 ocp.add_constraint(location='terminal', expr=(h - hf) / h_ref)
-ocp.add_constraint(location='terminal', expr=(v - vf) / v_ref)
+ocp.add_constraint(location='terminal', expr=(e - ef) / e_ref)
 ocp.add_constraint(location='terminal', expr=(gam - gamf) / gam_ref)
 # ocp.add_constraint(location='terminal', expr=(ca.atan2(xe, xn)) / psi_ref)
 
@@ -216,7 +230,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     adiff_dual,
-    control=ctrl_law(0., np.array((h0_val, 0., 0., v0_val, gam0_val, 0., m0_val)), None, None),
+    control=ctrl_law(0., np.array((h0_val, 0., 0., e0_val, gam0_val, 0., m0_val)), None, None),
     t_span=30)
 
 with open('guess_range.data', 'wb') as file:
@@ -230,7 +244,7 @@ with open('seed_sol_range.data', 'wb') as file:
 
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(100, {'hf': hf_val, 'vf': vf_val, 'gamf': gamf_val})
+cont.add_linear_series(100, {'hf': hf_val, 'ef': vh2e(vf_val, hf_val), 'gamf': gamf_val})
 sol_set = cont.run_continuation()
 
 
@@ -241,13 +255,13 @@ sol_set.save('sol_set_range.data')
 
 # Sweep Altitudes
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
+cont.add_linear_series(100, {'h0': 40_000., 'e0': vh2e(3 * atm.speed_of_sound(40_000.), 40_000.)})
 sol_set_altitude = cont.run_continuation()
 sol_set_altitude.save('sol_set_range_altitude.data')
 
 # Sweep Velocities
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-cont.add_linear_series(100, {'v0': 0.5 * atm.speed_of_sound(40_000.)})
+cont.add_linear_series(100, {'e0': vh2e(0.5 * atm.speed_of_sound(40_000.), 40_000.)})
 sol_set_altitude = cont.run_continuation()
 sol_set_altitude.save('sol_set_range_velocity.data')
 

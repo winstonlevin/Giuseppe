@@ -47,41 +47,42 @@ s_ref = k_dict['s_ref']
 eta = k_dict['eta']
 
 g = k_dict['mu'] / (k_dict['Re'] + x_dict['h']) ** 2
+v = (2 * (x_dict['e'] - g * x_dict['h'])) ** 0.5
 weight = x_dict['m'] * g
 
-mach = np.asarray(x_dict['v'] / (atm.specific_heat_ratio * atm.gas_constant * temp_table(x_dict['h'])) ** 0.5).flatten()
+mach = np.asarray(v / (atm.specific_heat_ratio * atm.gas_constant * temp_table(x_dict['h'])) ** 0.5).flatten()
 rho = np.asarray(dens_table(x_dict['h'])).flatten()
 
 cl_alpha = np.asarray(cl_alpha_table(mach), dtype=float).flatten()
 cd0 = np.asarray(cd0_table(mach), dtype=float).flatten()
 
-qdyn = 0.5 * rho * x_dict['v'] ** 2
+qdyn = 0.5 * rho * v ** 2
 lift = qdyn * s_ref * cl_alpha * u_dict['alpha']
 drag = qdyn * s_ref * (cd0 + eta * cl_alpha * u_dict['alpha'] ** 2)
 alpha_mg = weight / (qdyn * s_ref * cl_alpha) * np.cos(x_dict['gam']) / np.cos(u_dict['phi'])
 alpha_ld = (cd0 / (k_dict['eta'] * cl_alpha)) ** 0.5
-alpha_opt = lam_dict['gam'] / (2 * k_dict['eta'] * x_dict['v'] * lam_dict['v'])
+alpha_opt = lam_dict['gam'] / (2 * k_dict['eta'] * v**2 * lam_dict['e'])
 ld_mg = cl_alpha * alpha_mg / (cd0 + eta * cl_alpha * alpha_mg ** 2)
 ld_max = cl_alpha * alpha_ld / (cd0 + eta * cl_alpha * alpha_ld ** 2)
 
 # Gam to minimize drag : L = W cos(gam)
-ke = 0.5 * x_dict['v']**2
+ke = 0.5 * v**2
 qdyn_min_drag = (eta * weight**2. / (s_ref**2 * cd0)) ** 0.5
 ke_min_drag = qdyn_min_drag / rho
 pe = g * x_dict['h']
-e = ke + pe
 
 t_label = 'Time [s]'
 title_str = f'Cost(Ang. ={k_dict["terminal_angle"]}) = {sol.cost * k_dict["x_ref"]},' \
             f'\nDownrange = {x_dict["xn"][-1]}, Crossrange = {x_dict["xe"][-1]}'
 
 # PLOT STATES
-ylabs = (r'$h$ [ft]', r'$x_N$ [ft]', r'$x_E$ [ft]', r'$V$ [ft/s]', r'$\gamma$ [deg]', r'$\psi$ [deg]', r'$m$ [lbm]')
-ymult = np.array((1., 1., 1., 1., r2d, r2d, g0))
+ylabs = (r'$h$ [ft]', r'$x_N$ [ft]', r'$x_E$ [ft]',
+         r'$E$ [ft$^2$/s$^2$]', r'$\gamma$ [deg]', r'$\psi$ [deg]', r'$m$ [lbm]', r'$V$ [ft/s]')
+ymult = np.array((1., 1., 1., 1., r2d, r2d, g0, 1.))
 fig_states = plt.figure()
 axes_states = []
 
-for idx, state in enumerate(list(sol.x)):
+for idx, state in enumerate(list(np.vstack((sol.x, v)))):
     axes_states.append(fig_states.add_subplot(2, 4, idx + 1))
     ax = axes_states[-1]
     ax.grid()
@@ -125,7 +126,7 @@ if PLOT_COSTATE:
         r'$\lambda_{m}$'
     )
     ymult = np.array((k_dict['h_ref'], k_dict['x_ref'], k_dict['x_ref'],
-                      k_dict['v_ref'], k_dict['gam_ref'], k_dict['psi_ref'], k_dict['m_ref']))
+                      k_dict['e_ref'], k_dict['gam_ref'], k_dict['psi_ref'], k_dict['m_ref']))
     fig_costates = plt.figure()
     axes_costates = []
 
@@ -171,7 +172,7 @@ if PLOT_AUXILIARY:
     ax_e.plot(sol.t, ke, color=col[0], label='KE')
     ax_e.plot(sol.t, pe, color=col[1], label='PE')
     # ax_e.plot(sol.t, ke_min_drag, '--', color=col[0], label=r'KE($D_{min}$)')
-    ax_e.plot(sol.t, e, 'k', label='E = KE + PE')
+    ax_e.plot(sol.t, x_dict['e'], 'k', label='E = KE + PE')
     ax_e.grid()
     ax_e.set_xlabel(t_label)
     ax_e.set_ylabel(r'Energy [ft$^2$/s$^2$]')
