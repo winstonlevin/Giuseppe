@@ -48,21 +48,20 @@ s_ref = k_dict['s_ref']
 eta = k_dict['eta']
 
 g = k_dict['mu'] / (k_dict['Re'] + x_dict['h']) ** 2
-v = (2 * (x_dict['e'] - g * x_dict['h'])) ** 0.5
 weight = x_dict['m'] * g
 
-mach = np.asarray(v / (atm.specific_heat_ratio * atm.gas_constant * temp_table(x_dict['h'])) ** 0.5).flatten()
+mach = np.asarray(x_dict['v'] / (atm.specific_heat_ratio * atm.gas_constant * temp_table(x_dict['h'])) ** 0.5).flatten()
 rho = np.asarray(dens_table(x_dict['h'])).flatten()
 
 cl_alpha = np.asarray(cl_alpha_table(mach), dtype=float).flatten()
 cd0 = np.asarray(cd0_table(mach), dtype=float).flatten()
 
-qdyn = 0.5 * rho * v ** 2
+qdyn = 0.5 * rho * x_dict['v'] ** 2
 lift = qdyn * s_ref * cl_alpha * u_dict['alpha']
 drag = qdyn * s_ref * (cd0 + eta * cl_alpha * u_dict['alpha'] ** 2)
 alpha_mg = weight / (qdyn * s_ref * cl_alpha) * np.cos(x_dict['gam']) / np.cos(u_dict['phi'])
 alpha_ld = (cd0 / (k_dict['eta'] * cl_alpha)) ** 0.5
-alpha_opt = lam_dict['gam'] / (2 * k_dict['eta'] * v**2 * lam_dict['e'])
+alpha_opt = lam_dict['gam'] / (2 * k_dict['eta'] * x_dict['v'] * lam_dict['v'])
 ld_mg = cl_alpha * alpha_mg / (cd0 + eta * cl_alpha * alpha_mg ** 2)
 ld_max = cl_alpha * alpha_ld / (cd0 + eta * cl_alpha * alpha_ld ** 2)
 
@@ -70,7 +69,7 @@ ld_max = cl_alpha * alpha_ld / (cd0 + eta * cl_alpha * alpha_ld ** 2)
 h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(g0, x_dict['m'][0], k_dict['s_ref'],
                                                               k_dict['eta'])
 
-ke = 0.5 * v**2
+ke = 0.5 * x_dict['v']**2
 pe = g * x_dict['h']
 e = ke + pe
 h_glide = h_interp(e)
@@ -84,13 +83,13 @@ title_str = f'Cost(Ang. ={k_dict["terminal_angle"]}) = {sol.cost * k_dict["x_ref
 
 # PLOT STATES
 ylabs = (r'$h$ [ft]', r'$x_N$ [ft]', r'$x_E$ [ft]',
-         r'$E$ [ft$^2$/s$^2$]', r'$\gamma$ [deg]', r'$\psi$ [deg]', r'$m$ [lbm]', r'$V$ [ft/s]')
+         r'$V$ [ft$^2$/s$^2$]', r'$\gamma$ [deg]', r'$\psi$ [deg]', r'$m$ [lbm]', r'$E$ [ft/s]')
 ymult = np.array((1., 1., 1., 1., r2d, r2d, g0, 1.))
-yaux = (h_glide, None, None, None, gam_glide, None, None, v_glide)
+yaux = (h_glide, None, None, v_glide, gam_glide, None, None, None)
 fig_states = plt.figure()
 axes_states = []
 
-for idx, state in enumerate(list(np.vstack((sol.x, v)))):
+for idx, state in enumerate(list(np.vstack((sol.x, e)))):
     axes_states.append(fig_states.add_subplot(2, 4, idx + 1))
     ax = axes_states[-1]
     ax.grid()
@@ -135,14 +134,14 @@ if PLOT_COSTATE:
     ylabs = (
         r'$\lambda_{h}$', r'$\lambda_{x_N}$', r'$\lambda_{x_E}$',
         r'$\lambda_{V}$', r'$\lambda_{\gamma}$', r'$\lambda_{\psi}$',
-        r'$\lambda_{m}$'
+        r'$\lambda_{m}$', r'$\lambda_{E}$'
     )
     ymult = np.array((k_dict['h_ref'], k_dict['x_ref'], k_dict['x_ref'],
-                      k_dict['e_ref'], k_dict['gam_ref'], k_dict['psi_ref'], k_dict['m_ref']))
+                      k_dict['v_ref'], k_dict['gam_ref'], k_dict['psi_ref'], k_dict['m_ref'], k_dict['v_ref']))
     fig_costates = plt.figure()
     axes_costates = []
 
-    for idx, costate in enumerate(list(sol.lam)):
+    for idx, costate in enumerate(list(np.vstack((sol.lam, x_dict['v'] * lam_dict['v'])))):
         axes_costates.append(fig_costates.add_subplot(2, 4, idx + 1))
         ax = axes_costates[-1]
         ax.grid()
@@ -184,7 +183,7 @@ if PLOT_AUXILIARY:
     ax_e.plot(sol.t, ke, color=col[0], label='KE')
     ax_e.plot(sol.t, pe, color=col[1], label='PE')
     # ax_e.plot(sol.t, ke_min_drag, '--', color=col[0], label=r'KE($D_{min}$)')
-    ax_e.plot(sol.t, x_dict['e'], 'k', label='E = KE + PE')
+    ax_e.plot(sol.t, e, 'k', label='E = KE + PE')
     ax_e.grid()
     ax_e.set_xlabel(t_label)
     ax_e.set_ylabel(r'Energy [ft$^2$/s$^2$]')

@@ -119,7 +119,6 @@ for idx, sol in enumerate(sols):
         auxiliaries[idx]['qdyn_glide'] * auxiliaries[idx]['s_ref'] * auxiliaries[idx]['cl_alpha_glide']
     )
 
-
     auxiliaries[idx]['dh'] = auxiliaries[idx]['h'] - auxiliaries[idx]['h_glide']
     auxiliaries[idx]['dv'] = auxiliaries[idx]['v'] - auxiliaries[idx]['v_glide']
     auxiliaries[idx]['dgam'] = auxiliaries[idx]['gam'] - gam_interp(auxiliaries[idx]['e'])
