@@ -3,7 +3,11 @@ import casadi as ca
 
 from giuseppe.utils.examples import Atmosphere1976
 
-atm = Atmosphere1976(use_metric=False)
+mu = 1.4076539e16
+Re = 20902900.
+g0 = mu / Re ** 2
+
+atm = Atmosphere1976(use_metric=False, earth_radius=Re, gravity=g0, boundary_thickness=1_000.)
 lut_data = {
     'M': np.array((0., 0.4, 0.8, 1.2, 1.6, 2., 2.4, 2.8, 3.2)),
     'h': 1e3 * np.array((-2., 0., 5., 15., 25., 35., 45., 55., 65., 75., 85., 95., 105.)),

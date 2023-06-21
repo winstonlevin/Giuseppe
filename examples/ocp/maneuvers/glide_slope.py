@@ -2,7 +2,7 @@ import numpy as np
 import scipy as sp
 from typing import Optional
 
-from lookup_tables import cl_alpha_table, cd0_table, atm, dens_table, temp_table, sped_table
+from lookup_tables import cl_alpha_table, cd0_table, atm
 
 
 # For consistency, use LUT values for speed of sound and density

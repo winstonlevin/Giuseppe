@@ -7,7 +7,7 @@ import pickle
 
 import giuseppe
 
-from lookup_tables import thrust_table, cl_alpha_table, cd0_table, temp_table, sped_table, dens_table, atm
+from lookup_tables import thrust_table, cl_alpha_table, cd0_table, atm, mu as mu_val, Re as Re_val
 from glide_slope import get_glide_slope, alpha_n1
 
 d2r = np.pi / 180
@@ -43,8 +43,6 @@ Re = ca.MX.sym('Re')
 
 eta_val = 1.0
 s_ref_val = 500.
-mu_val = 1.4076539e16
-Re_val = 20902900.
 
 ocp.add_constant(Isp, 2800.0)
 ocp.add_constant(s_ref, s_ref_val)
@@ -71,10 +69,8 @@ def vh2e(_v, _h):
 
 
 # Look-Up Tables & Atmospheric Expressions
-a = sped_table(h)
-
-rho = dens_table(h)
-
+a = atm.get_ca_speed_of_sound_expr(h)
+_, __, rho = atm.get_ca_atm_expr(h)
 
 M = v / a
 
@@ -158,15 +154,17 @@ def ctrl_law(_t, _x, _p, _k):
     _gam = _x[4]
     _m = _x[6]
 
-    _v = (2 * (_e - g0 * _h)) ** 0.5
-    _qdyn = 0.5 * float(dens_table(_h)) * _v ** 2
-    _mach = _v / float(sped_table(_h))
+    _g = mu_val / (Re_val + _h) ** 2
+    _v = (2 * (_e - _g * _h)) ** 0.5
+
+    _qdyn = 0.5 * atm.density(_h) * _v ** 2
+    _mach = _v / atm.speed_of_sound(_h)
     _cla = float(cl_alpha_table(_mach))
     _gam_glide = float(gam_interp(_e))
     _tau = 0.1
 
     # Control Law: dgam = (gam_glide - gam) / tau
-    _alp = (g0 / _v * np.cos(_gam) + (_gam_glide - _gam) / _tau) * _m * _v / (_qdyn * s_ref_val * _cla)
+    _alp = (_g / _v * np.cos(_gam) + (_gam_glide - _gam) / _tau) * _m * _v / (_qdyn * s_ref_val * _cla)
     _phi = 0.0
     return np.array((_alp, _phi))
 
@@ -230,8 +228,8 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     adiff_dual,
-    control=ctrl_law(0., np.array((h0_val, 0., 0., e0_val, gam0_val, 0., m0_val)), None, None),
-    t_span=30)
+    control=ctrl_law,
+    t_span=30, abs_tol=1e-2, rel_tol=1e-2)
 
 with open('guess_range.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -244,7 +242,7 @@ with open('seed_sol_range.data', 'wb') as file:
 
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(100, {'hf': hf_val, 'ef': vh2e(vf_val, hf_val), 'gamf': gamf_val})
+cont.add_linear_series(10, {'hf': hf_val, 'ef': vh2e(vf_val, hf_val), 'gamf': gamf_val})
 sol_set = cont.run_continuation()
 
 
