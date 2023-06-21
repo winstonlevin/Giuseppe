@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib as mpl
 
 from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_table, temp_table, atm
+from glide_slope import get_glide_slope
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -65,11 +66,17 @@ alpha_opt = lam_dict['gam'] / (2 * k_dict['eta'] * v**2 * lam_dict['e'])
 ld_mg = cl_alpha * alpha_mg / (cd0 + eta * cl_alpha * alpha_mg ** 2)
 ld_max = cl_alpha * alpha_ld / (cd0 + eta * cl_alpha * alpha_ld ** 2)
 
-# Gam to minimize drag : L = W cos(gam)
+# Glide Slope
+h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(g0, x_dict['m'][0], k_dict['s_ref'],
+                                                              k_dict['eta'])
+
 ke = 0.5 * v**2
-qdyn_min_drag = (eta * weight**2. / (s_ref**2 * cd0)) ** 0.5
-ke_min_drag = qdyn_min_drag / rho
 pe = g * x_dict['h']
+e = ke + pe
+h_glide = h_interp(e)
+v_glide = v_interp(e)
+gam_glide = gam_interp(e)
+
 
 t_label = 'Time [s]'
 title_str = f'Cost(Ang. ={k_dict["terminal_angle"]}) = {sol.cost * k_dict["x_ref"]},' \
@@ -79,6 +86,7 @@ title_str = f'Cost(Ang. ={k_dict["terminal_angle"]}) = {sol.cost * k_dict["x_ref
 ylabs = (r'$h$ [ft]', r'$x_N$ [ft]', r'$x_E$ [ft]',
          r'$E$ [ft$^2$/s$^2$]', r'$\gamma$ [deg]', r'$\psi$ [deg]', r'$m$ [lbm]', r'$V$ [ft/s]')
 ymult = np.array((1., 1., 1., 1., r2d, r2d, g0, 1.))
+yaux = (h_glide, None, None, None, gam_glide, None, None, v_glide)
 fig_states = plt.figure()
 axes_states = []
 
@@ -89,6 +97,10 @@ for idx, state in enumerate(list(np.vstack((sol.x, v)))):
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, state * ymult[idx])
+
+    if yaux[idx] is not None:
+        ax.plot(sol.t, yaux[idx] * ymult[idx], 'k--', label='Glide Slope')
+        ax.legend()
 
 fig_states.suptitle(title_str)
 fig_states.tight_layout()
