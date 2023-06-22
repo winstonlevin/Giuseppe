@@ -58,6 +58,7 @@ def alpha_n1(_v, _h, _g0, _m, _s_ref):
     return _alpha
 
 
+# TODO -- Refactor to calculate h*, V* via Hamiltonian: d(H)/dh = 0 @ glide slope for L = -dx/dt, x = [E, h, gam]'
 def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
                     _e_vals: Optional[np.array] = None,
                     _h_min: float = 0., _h_max: float = np.inf, _mach_max: float = np.inf):
@@ -106,13 +107,13 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
     for idx, (_e_val, _h_val, _v_val) in enumerate(zip(_e_vals, _h_vals, _v_vals)):
         if idx < idx_last:
             if np.sign(_e_vals[idx + 1] - _e_val) == _e_direction \
-                and np.sign(_v_vals[idx + 1] - _v_val) != -_e_direction \
-                and np.sign(_h_vals[idx + 1] - _h_val) != -_e_direction:
+                    and np.sign(_v_vals[idx + 1] - _v_val) != -_e_direction \
+                    and np.sign(_h_vals[idx + 1] - _h_val) != -_e_direction:
                 _valid_idces.append(idx)
         else:
             if np.sign(_e_val - _e_vals[idx - 1]) == _e_direction \
-                and np.sign(_v_val - _v_vals[idx - 1]) != -_e_direction \
-                and np.sign(_h_val - _h_vals[idx - 1]) != -_e_direction:
+                    and np.sign(_v_val - _v_vals[idx - 1]) != -_e_direction \
+                    and np.sign(_h_val - _h_vals[idx - 1]) != -_e_direction:
                 _valid_idces.append(idx)
 
     _e_vals = _e_vals[_valid_idces]
