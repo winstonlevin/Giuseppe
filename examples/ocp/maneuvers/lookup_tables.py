@@ -30,12 +30,23 @@ lut_data['Theta'] = np.asarray([atm.temperature(alt) for alt in lut_data['h']])
 lut_data['a'] = np.asarray([atm.speed_of_sound(alt) for alt in lut_data['h']])
 lut_data['rho'] = np.asarray([atm.density(alt) for alt in lut_data['h']])
 
+# Create Look-up Tables
 thrust_table = ca.interpolant('T', 'bspline', (lut_data['M'], lut_data['h']), lut_data['T'].ravel(order='F'))
 cl_alpha_table = ca.interpolant('CLalpha', 'bspline', (lut_data['M'],), lut_data['CLalpha'])
 cd0_table = ca.interpolant('CD0', 'bspline', (lut_data['M'],), lut_data['CD0'])
 temp_table = ca.interpolant('T', 'bspline', (lut_data['h'],), lut_data['Theta'])
 sped_table = ca.interpolant('a', 'bspline', (lut_data['h'],), lut_data['a'])
 dens_table = ca.interpolant('rho', 'bspline', (lut_data['h'],), lut_data['rho'])
+
+# Create conditional CasADi functions
+h_SX = ca.SX.sym('h', 1)
+sped_expr = atm.get_ca_speed_of_sound_expr(h_SX)
+temp_expr, pres_expr, dens_expr = atm.get_ca_atm_expr(h_SX)
+
+sped_fun = ca.Function('a', (h_SX,), (sped_expr,), ('h',), ('a',))
+temp_fun = ca.Function('T', (h_SX,), (temp_expr,), ('h',), ('T',))
+pres_fun = ca.Function('P', (h_SX,), (pres_expr,), ('h',), ('P',))
+dens_fun = ca.Function('rho', (h_SX,), (dens_expr,), ('h',), ('rho',))
 
 if __name__ == '__main__':
     from matplotlib import cm, pyplot as plt

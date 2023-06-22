@@ -1,13 +1,10 @@
 import pickle
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy as sp
 import matplotlib as mpl
 
-from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_table, temp_table, atm
+from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_fun, sped_fun, lut_data
 from glide_slope import get_glide_slope
-from asymptotic_expansion import glide_asymptotic_expansion
-# from neighboring_feedback_gains import interp_dict as noc_interp_dict
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -17,7 +14,7 @@ gradient = mpl.colormaps['viridis'].colors
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 PLOT_REFERENCE = True
-DATA = 'altitude'  # {altitude, velocity, crossrange}
+DATA = 'velocity'  # {altitude, velocity, crossrange}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
@@ -55,11 +52,9 @@ for idx, sol in enumerate(sols):
     auxiliaries[idx]['weight'] = auxiliaries[idx]['m'] * auxiliaries[idx]['g']
 
     auxiliaries[idx]['mach'] = np.asarray(
-        auxiliaries[idx]['v'] / (atm.specific_heat_ratio
-                                 * atm.gas_constant
-                                 * temp_table(auxiliaries[idx]['h'])) ** 0.5
+        auxiliaries[idx]['v'] / np.asarray(sped_fun(auxiliaries[idx]['h'])).flatten()
     ).flatten()
-    auxiliaries[idx]['rho'] = np.asarray(dens_table(auxiliaries[idx]['h'])).flatten()
+    auxiliaries[idx]['rho'] = np.asarray(dens_fun(auxiliaries[idx]['h'])).flatten()
 
     auxiliaries[idx]['cl_alpha'] = np.asarray(cl_alpha_table(auxiliaries[idx]['mach']), dtype=float).flatten()
     auxiliaries[idx]['cd0'] = np.asarray(cd0_table(auxiliaries[idx]['mach']), dtype=float).flatten()
@@ -82,12 +77,6 @@ for idx, sol in enumerate(sols):
         * np.cos(auxiliaries[idx]['gam']) / np.cos(auxiliaries[idx]['phi'])
     auxiliaries[idx]['alpha_ld'] = \
         (auxiliaries[idx]['cd0'] / (auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'])) ** 0.5
-    # auxiliaries[idx]['alpha_noc'] = \
-    #     noc_interp_dict['alp'](auxiliaries[idx]['e']) \
-    #     - noc_interp_dict['k_v'](auxiliaries[idx]['e']) \
-    #     * (auxiliaries[idx]['v'] - noc_interp_dict['v'](auxiliaries[idx]['e'])) \
-    #     - noc_interp_dict['k_gam'](auxiliaries[idx]['e']) \
-    #     * (auxiliaries[idx]['gam'] - noc_interp_dict['gam'](auxiliaries[idx]['e']))
     auxiliaries[idx]['ld_max'] = \
         auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_ld'] \
         / (auxiliaries[idx]['cd0']
@@ -97,6 +86,12 @@ for idx, sol in enumerate(sols):
         / (auxiliaries[idx]['cd0']
            + auxiliaries[idx]['eta'] * auxiliaries[idx]['cl_alpha'] * auxiliaries[idx]['alpha_mg'] ** 2)
 
+    auxiliaries[idx]['AD0'] = (auxiliaries[idx]['qdyn'] * auxiliaries[idx]['s_ref']
+                               * auxiliaries[idx]['cd0']) / auxiliaries[idx]['weight']
+    auxiliaries[idx]['ADL'] = auxiliaries[idx]['eta'] * auxiliaries[idx]['weight'] / (
+        auxiliaries[idx]['qdyn'] * auxiliaries[idx]['s_ref'] * auxiliaries[idx]['cl_alpha']
+    )
+
     auxiliaries[idx]['load_asymptotic'] = np.empty(sol.t.shape)
 
     s_ref = auxiliaries[idx]['s_ref']
@@ -104,15 +99,19 @@ for idx, sol in enumerate(sols):
 
     if idx == 0:
         aux_ref = auxiliaries[0]
-        h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(aux_ref['g0'], aux_ref['m'][0], aux_ref['s_ref'],
-                                                                      aux_ref['eta'])
+        h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(
+            aux_ref['mu'], aux_ref['Re'], aux_ref['m'][0], aux_ref['s_ref'], aux_ref['eta'],
+            _e_vals=aux_ref['e'], _h_min=0., _h_max=np.max(lut_data['h']), _mach_max=np.max(lut_data['M'])
+        )
 
-    auxiliaries[idx]['h_glide'] = h_interp(auxiliaries[idx]['e'])
     auxiliaries[idx]['v_glide'] = v_interp(auxiliaries[idx]['e'])
-    auxiliaries[idx]['rho_glide'] = np.asarray(dens_table(auxiliaries[idx]['h_glide'])).flatten()
+    auxiliaries[idx]['h_glide'] = (auxiliaries[idx]['e'] - 0.5 * auxiliaries[idx]['v_glide']**2) / auxiliaries[idx]['g']
+    auxiliaries[idx]['rho_glide'] = np.asarray(dens_fun(auxiliaries[idx]['h_glide'])).flatten()
     auxiliaries[idx]['qdyn_glide'] = 0.5 * auxiliaries[idx]['rho_glide'] * auxiliaries[idx]['v_glide'] ** 2
-    auxiliaries[idx]['cd0_glide'] = np.asarray(cd0_table(auxiliaries[idx]['mach']), dtype=float).flatten()
-    auxiliaries[idx]['cl_alpha_glide'] = np.asarray(cl_alpha_table(auxiliaries[idx]['mach']), dtype=float).flatten()
+    auxiliaries[idx]['mach_glide'] = auxiliaries[idx]['v_glide'] \
+                                     / np.asarray(sped_fun(auxiliaries[idx]['h_glide'])).flatten()
+    auxiliaries[idx]['cd0_glide'] = np.asarray(cd0_table(auxiliaries[idx]['mach_glide']), dtype=float).flatten()
+    auxiliaries[idx]['cl_alpha_glide'] = np.asarray(cl_alpha_table(auxiliaries[idx]['mach_glide']), dtype=float).flatten()
     auxiliaries[idx]['AD0_glide'] = (auxiliaries[idx]['qdyn_glide'] * auxiliaries[idx]['s_ref']
                                      * auxiliaries[idx]['cd0_glide']) / auxiliaries[idx]['weight']
     auxiliaries[idx]['ADL_glide'] = auxiliaries[idx]['eta'] * auxiliaries[idx]['weight'] / (
@@ -125,42 +124,18 @@ for idx, sol in enumerate(sols):
     auxiliaries[idx]['dalp'] = auxiliaries[idx]['alpha'] - auxiliaries[idx]['alpha_mg']
     auxiliaries[idx]['ddrag'] = (auxiliaries[idx]['drag'] - drag_interp(auxiliaries[idx]['e'])) / auxiliaries[idx]['weight']
 
-    gam0 = 0.
-    # for jdx, (e, h, gam, h_glide, m, g) in enumerate(zip(
-    #         auxiliaries[idx]['e'], auxiliaries[idx]['h'], auxiliaries[idx]['gam'], auxiliaries[idx]['h_glide'],
-    #         auxiliaries[idx]['m'], auxiliaries[idx]['g']
-    # )):
-    #     auxiliaries[idx]['load_asymptotic'][jdx], gam0 = glide_asymptotic_expansion(
-    #         e, h, gam, h_glide, m, g, s_ref, eta, gam0=gam0
-    #     )
+    _cgam = np.cos(auxiliaries[idx]['gam'])
+    _b = (
+             auxiliaries[idx]['AD0'] + auxiliaries[idx]['ADL'] * _cgam**2
+             - _cgam * (auxiliaries[idx]['AD0_glide'] + auxiliaries[idx]['ADL_glide'])
+         ) / auxiliaries[idx]['ADL']
 
-    auxiliaries[idx]['AD0'] = (auxiliaries[idx]['qdyn'] * auxiliaries[idx]['s_ref']
-                               * auxiliaries[idx]['cd0']) / auxiliaries[idx]['weight']
-    auxiliaries[idx]['ADL'] = auxiliaries[idx]['eta'] * auxiliaries[idx]['weight'] / (
-        auxiliaries[idx]['qdyn'] * auxiliaries[idx]['s_ref'] * auxiliaries[idx]['cl_alpha']
-    )
-
-    _sin2_gami1 = auxiliaries[idx]['v_glide'] / auxiliaries[idx]['v'] * (
-        auxiliaries[idx]['AD0_glide'] + auxiliaries[idx]['ADL_glide']
-    ) - (auxiliaries[idx]['AD0'] + auxiliaries[idx]['ADL']) / auxiliaries[idx]['ADL']
-    auxiliaries[idx]['gam_i1'] = np.arcsin(_sin2_gami1 ** 0.5)
-
-    auxiliaries[idx]['load_asymptotic'] = np.cos(auxiliaries[idx]['gam'])/3. + (
-        np.cos(auxiliaries[idx]['gam'])**2. / 9. + 4. / 3. + 4. * np.sin(auxiliaries[idx]['gam'])**2.
+    auxiliaries[idx]['load_asymptotic'] = _cgam + np.sign(auxiliaries[idx]['h_glide'] - auxiliaries[idx]['h']) * (
+        np.maximum(_b, 0)
     ) ** 0.5
 
 r2d = 180 / np.pi
 g0 = auxiliaries[0]['g0']
-
-aux_ref = auxiliaries[0]
-h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(aux_ref['g0'], aux_ref['m'][0], aux_ref['s_ref'], aux_ref['eta'])
-
-for aux in auxiliaries:
-    aux['dh'] = aux['h'] - h_interp(aux['e'])
-    aux['dv'] = aux['v'] - v_interp(aux['e'])
-    aux['dgam'] = aux['gam'] - gam_interp(aux['e'])
-    aux['dalp'] = aux['alpha'] - aux['alpha_mg']
-    aux['ddrag'] = (aux['drag'] - drag_interp(aux['e'])) / aux['weight']
 
 t_label = 'Time [s]'
 
@@ -184,10 +159,6 @@ for idx, lab in enumerate(ylabs):
 
 if PLOT_REFERENCE:
     axes_states[4].plot(aux_ref['t'], gam_interp(aux_ref['e']) * ymult[4], 'k--', label='Glide Slope')
-
-    for idx, aux in enumerate(auxiliaries):
-        axes_states[4].plot(aux['t'], aux['gam_i1'] * ymult[4], ':', color=cols_gradient(idx))
-
     axes_states[4].legend()
 
 fig_states.tight_layout()
