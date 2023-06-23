@@ -7,8 +7,8 @@ import pickle
 
 import giuseppe
 
-from lookup_tables import thrust_table, cl_alpha_table, cd0_table, atm, mu as mu_val, Re as Re_val
-from glide_slope import get_glide_slope, alpha_n1
+from lookup_tables import thrust_table, cl_alpha_table, cd0_table, atm, mu as mu_val, Re as Re_val, lut_data
+from glide_slope import get_glide_slope
 
 d2r = np.pi / 180
 
@@ -137,7 +137,9 @@ m0 = ca.MX.sym('m0')
 m0_val = 32138.594625382884 / g0
 
 # Base initial conditions off glide slope
-h_interp, v_interp, gam_interp, _ = get_glide_slope(g0, m0_val, s_ref_val, eta_val)
+h_interp, v_interp, gam_interp, _ = get_glide_slope(mu_val, Re_val, m0_val, s_ref_val, eta_val,
+                                                    _h_min=0., _h_max=np.max(lut_data['h']),
+                                                    _mach_max=np.max(lut_data['M']))
 
 e0_val = vh2e(2.5 * atm.speed_of_sound(65_600.), 65_600.)
 v0_val = v_interp(e0_val)
