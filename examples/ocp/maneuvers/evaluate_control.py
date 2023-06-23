@@ -14,8 +14,8 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARISON = 'max_range'
-AOA_LAW = 'max_ld'  # {weight, max_ld, energy_climb, 0}
-ROLL_LAW = '0'  # {0}
+AOA_LAW = 'energy_climb'  # {weight, max_ld, energy_climb, 0}
+ROLL_LAW = 'regulator'  # {0, regulator}
 THRUST_LAW = '0'  # {0, min, max}
 
 if COMPARISON == 'max_range':
@@ -77,6 +77,10 @@ mach_min = 0.1
 mach_max = max(lut_data['M']) - 0.1
 gam_max = 85 * np.pi / 180
 gam_min = -gam_max
+e_min = np.min(e_opt)
+
+# CONTROL GAINS
+phi_regulation_gain = 1
 
 
 # ---- DYNAMICS & CONTROL LAWS -----------------------------------------------------------------------------------------
@@ -122,23 +126,31 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
 
     # Conditions are glide slope
     _e = 0.5 * _x[3]**2 + _g * _x[0]
-    _h_glide = h_interp(_e)
+    _h_glide = saturate(h_interp(_e), h_min, h_max)
     _g_glide = _k_dict['mu'] / (_x[0] + _k_dict['Re']) ** 2
-    _v_glide = (2 * (_e - _h_glide * _g_glide)) ** 0.5
-    _mach_glide = saturate(_v_glide / atm.speed_of_sound(_h_glide), mach_min, mach_max)
+    _a_glide = atm.speed_of_sound(_h_glide)
+    _v_glide = (max(2 * (_e - _h_glide * _g_glide), _a_glide * mach_min)) ** 0.5
+    _mach_glide = saturate(_v_glide / _a_glide, mach_min, mach_max)
     _qdyn_glide = 0.5 * atm.density(_h_glide) * _v_glide ** 2
     _weight_glide = _x[6] * _g_glide
     _ad0_glide, _adl_glide = drag_accel(_qdyn_glide, _mach_glide, _weight_glide, _k_dict)
 
     # Energy climb to achieve glide slope
-    _cgam = np.cos(_x[4])
+    _cgam = 1.0
+    # _cgam = np.cos(_x[4])
     _radicand = (_ad0 + _adl * _cgam**2 - _cgam * (_ad0_glide + _adl_glide)) / _adl
-    _load_factor = _cgam + np.sign(_h_glide - _x[0]) * (max(_radicand, 0)) ** 0.5
+    _load_factor = np.cos(_x[4]) + np.sign(_h_glide - _x[0]) * (max(_radicand, 0)) ** 0.5
 
     # Convert Load Factor to AOA
     _alpha = _weight * _load_factor / float(_qdyn * _k_dict['s_ref'] * cl_alpha_table(_mach))
     _alpha = saturate(_alpha, alpha_min, alpha_max)
     return _alpha
+
+
+def phi_regulator(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+    _phi = -phi_regulation_gain * (_x[5])
+    _phi = saturate(_phi, phi_min, phi_max)
+    return _phi
 
 
 def generate_ctrl_law() -> Callable:
@@ -153,6 +165,8 @@ def generate_ctrl_law() -> Callable:
 
     if ROLL_LAW == '0':
         _roll_ctrl = generate_constant_ctrl(0.)
+    elif ROLL_LAW == 'regulator':
+        _roll_ctrl = phi_regulator
 
     if THRUST_LAW == '0':
         _thrust_ctrl = generate_constant_ctrl(0.)
@@ -225,9 +239,14 @@ def generate_termination_events(_ctrl_law, _p_dict, _k_dict):
     def max_fpa_event(_t: float, _x: np.array) -> float:
         return gam_max - _x[4]
 
+    def min_e_event(_t: float, _x: np.array) -> float:
+        _e = _k_dict['mu'] / (_k_dict['Re'] + _x[0])**2 * _x[0] + 0.5 * _x[3]**2
+        return _e - e_min
+
     events = [min_altitude_event, max_altitude_event,
               min_mach_event, max_mach_event,
-              min_fpa_event, max_fpa_event]
+              min_fpa_event, max_fpa_event,
+              min_e_event]
 
     for idx, event in enumerate(events):
         event.terminal = True
@@ -259,7 +278,7 @@ x = ivp_sol.y
 
 # ---- PLOTTING --------------------------------------------------------------------------------------------------------
 t_label = r'$t$ [s]'
-title_str = f'Range = {100 * x[0, -1] / sol.x[0, -1]:.2}% Optimal'
+title_str = f'Range = {100 * x[1, -1] / sol.x[1, -1]:.2f}% Optimal'
 
 r2d = 180 / np.pi
 g0 = k_dict['mu'] / k_dict['Re'] ** 2
