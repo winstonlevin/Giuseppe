@@ -14,11 +14,11 @@ gradient = mpl.colormaps['viridis'].colors
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 PLOT_REFERENCE = True
-DATA = 'velocity'  # {altitude, velocity, crossrange}
+DATA = 'altitude'  # {altitude, velocity, crossrange}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
-    sols = [sols[0], sols[25], sols[50], sols[-1]]
+    # sols = [sols[0], sols[25], sols[50], sols[-1]]
     # sols = [sols[0]]
 
 # Process Data

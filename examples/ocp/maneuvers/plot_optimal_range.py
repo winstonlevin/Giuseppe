@@ -66,8 +66,8 @@ ld_mg = cl_alpha * alpha_mg / (cd0 + eta * cl_alpha * alpha_mg ** 2)
 ld_max = cl_alpha * alpha_ld / (cd0 + eta * cl_alpha * alpha_ld ** 2)
 
 # Glide Slope
-h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(g0, x_dict['m'][0], k_dict['s_ref'],
-                                                              k_dict['eta'])
+h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(k_dict['mu'], k_dict['Re'], x_dict['m'][0],
+                                                              k_dict['s_ref'], k_dict['eta'])
 
 ke = 0.5 * x_dict['v']**2
 pe = g * x_dict['h']

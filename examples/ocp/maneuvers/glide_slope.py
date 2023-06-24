@@ -150,18 +150,24 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
     for idx in range(len(_v_vals)):
         _e_i = _e_vals[idx]
 
-        _h_max_i = min(_e_i / _g_max, _h_max)
+        _h_max_i = min((_e_i - 0.5 * (_mach_min * atm.speed_of_sound(_h_guess))**2) / _g_max, _h_max)
         _h_min_i = max((_e_i - 0.5 * (_mach_max * atm.speed_of_sound(_h_guess))**2) / _g_min, _h_min)
 
         if _h_min_i > _h_max_i:
             _h_i = _h_max_i
         else:
-            _nlp_dict = {'x': _h_sym, 'f': _h_sym, 'g': ca.vcat((_h_sym, _mach_fun(_h_sym, _e_i), _dham_dh_fun(_h_sym, _e_i)))}
+            _nlp_dict = {'x': _h_sym, 'f': _dham_dh_fun(_h_sym, _e_i)**2, 'g': ca.vcat((_h_sym, _mach_fun(_h_sym, _e_i)))}
             _nlp_solver = ca.nlpsol('Hh0', 'ipopt', _nlp_dict)
 
             block_print()
-            _nlp_sol = _nlp_solver(x0=_h_guess, lbg=(_h_min, _mach_min, 0), ubg=(_h_max_i, _mach_max, 0))
+            _nlp_sol = _nlp_solver(x0=_h_guess, lbg=(_h_min, _mach_min), ubg=(_h_max_i, _mach_max))
             enable_print()
+            # _nlp_dict = {'x': _h_sym, 'f': _h_sym, 'g': ca.vcat((_h_sym, _mach_fun(_h_sym, _e_i), _dham_dh_fun(_h_sym, _e_i)))}
+            # _nlp_solver = ca.nlpsol('Hh0', 'ipopt', _nlp_dict)
+            #
+            # block_print()
+            # _nlp_sol = _nlp_solver(x0=_h_guess, lbg=(_h_min, _mach_min, 0), ubg=(_h_max_i, _mach_max, 0))
+            # enable_print()
             _h_i = float(min(max(_h_min, _nlp_sol['x']), _h_max_i))
 
         _h_vals[idx] = _h_i

@@ -138,8 +138,9 @@ m0_val = 32138.594625382884 / g0
 
 # Base initial conditions off glide slope
 h_interp, v_interp, gam_interp, _ = get_glide_slope(mu_val, Re_val, m0_val, s_ref_val, eta_val,
-                                                    _h_min=0., _h_max=np.max(lut_data['h']),
-                                                    _mach_max=np.max(lut_data['M']))
+                                                    _h_min=0., _h_max=np.max(lut_data['h']) - 1e3,
+                                                    _mach_min=np.min(lut_data['M']) + 0.25,
+                                                    _mach_max=np.max(lut_data['M']) - 0.25)
 
 e0_val = vh2e(2.5 * atm.speed_of_sound(65_600.), 65_600.)
 v0_val = v_interp(e0_val)
@@ -242,7 +243,7 @@ with open('seed_sol_range.data', 'wb') as file:
 
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(10, {'hf': hf_val, 'vf': vf_val, 'gamf': gamf_val})
+cont.add_linear_series(15, {'hf': hf_val, 'vf': vf_val, 'gamf': gamf_val})
 sol_set = cont.run_continuation()
 
 
@@ -253,13 +254,13 @@ sol_set.save('sol_set_range.data')
 
 # Sweep Altitudes
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-cont.add_linear_series(100, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
+cont.add_linear_series(15, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
 sol_set_altitude = cont.run_continuation()
 sol_set_altitude.save('sol_set_range_altitude.data')
 
 # Sweep Velocities
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-cont.add_linear_series(100, {'v0': 0.5 * atm.speed_of_sound(40_000.)})
+cont.add_linear_series(15, {'v0': 0.5 * atm.speed_of_sound(40_000.)})
 sol_set_altitude = cont.run_continuation()
 sol_set_altitude.save('sol_set_range_velocity.data')
 
@@ -268,3 +269,14 @@ cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.so
 cont.add_linear_series(179, {'terminal_angle': 180. * d2r})
 sol_set_crossrange = cont.run_continuation()
 sol_set_crossrange.save('sol_set_range_crossrange.data')
+
+# Sweep Flight Envelope
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+cont.add_linear_series(5, {'h0': 75e3, 'v0': 2.5e3, 'gam0': 0.})
+sol_set_gam0 = cont.run_continuation()
+
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set_gam0.solutions[-1]))
+cont.add_linear_series(19, {'h0': 5e3})
+sol_set_sweep_envelop = cont.run_continuation()
+
+#TODO
