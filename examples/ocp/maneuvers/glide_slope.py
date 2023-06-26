@@ -114,16 +114,21 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
     _lam_h_opt = 0
 
     _dham_dh = ca.jacobian(_hamiltonian, _h_sym)
+    _d2ham_dh2 = ca.jacobian(_dham_dh, _h_sym)
+
     _dham_dh_opt = _dham_dh
+    _d2ham_dh2_opt = _d2ham_dh2
     _hamiltonian_opt = _hamiltonian
     for _original_arg, _new_arg in zip(
             (_gam_sym, _u_sym, _lam_e_sym, _lam_gam_sym, _lam_h_sym),
-            (0, 0, _lam_e_opt, _lam_gam_opt, _lam_h_opt)
+            (0, 1., _lam_e_opt, _lam_gam_opt, _lam_h_opt)
     ):
         _dham_dh_opt = ca.substitute(_dham_dh_opt, _original_arg, _new_arg)
+        _d2ham_dh2_opt = ca.substitute(_d2ham_dh2_opt, _original_arg, _new_arg)
         _hamiltonian_opt = ca.substitute(_hamiltonian_opt, _original_arg, _new_arg)
 
     _dham_dh_fun = ca.Function('dH_dh', (_h_sym, _e_sym), (_dham_dh_opt,), ('h', 'E'), ('dH_dh',))
+    _d2ham_dh2_fun = ca.Function('d2H_dh2', (_h_sym, _e_sym), (_d2ham_dh2_opt,), ('h', 'E'), ('d2H_dh2',))
     _hamiltonian_opt_fun = ca.Function('H', (_h_sym, _e_sym), (_hamiltonian_opt,), ('h', 'E'), ('H',))
     _mach_fun = ca.Function('M', (_h_sym, _e_sym), (_mach_sym,), ('h', 'E'), ('M',))
 
@@ -131,9 +136,12 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
     _g_min = _mu / (_Re + _h_max) ** 2
 
     if _e_vals is None:
+        # Space based on altitude range (note: steps not linear w.r.t. h)
+        _n_e_vals = int(np.ceil((_h_max - _h_min)/100.))
+
         _e_min = _g_max * _h_min + 0.5 * (_mach_min * atm.speed_of_sound(_h_min)) ** 2
         _e_max = _g_min * _h_max + 0.5 * (_mach_max * atm.speed_of_sound(_h_max)) ** 2
-        _e_vals = np.linspace(_e_min, _e_max, 1_000)
+        _e_vals = np.linspace(_e_min, _e_max, _n_e_vals)
 
     _e_direction = np.sign(_e_vals[-1] - _e_vals[0])
     if _e_direction < 0:
@@ -147,62 +155,50 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
     _h_guess = _h_min
 
     # The glide slope occurs where the del(Hamiltonian)/delh = 0 for the zeroth-order asymptotic expansion
+    idx = 0
+
     for idx in range(len(_v_vals)):
         _e_i = _e_vals[idx]
 
-        _h_max_i = min((_e_i - 0.5 * (_mach_min * atm.speed_of_sound(_h_guess))**2) / _g_max, _h_max)
-        _h_min_i = max((_e_i - 0.5 * (_mach_max * atm.speed_of_sound(_h_guess))**2) / _g_min, _h_min)
+        _h_min_i = _h_guess  # altitude should be monotonically increasing
 
-        if _h_min_i > _h_max_i:
-            _h_i = _h_max_i
-        else:
-            _nlp_dict = {'x': _h_sym, 'f': _dham_dh_fun(_h_sym, _e_i)**2, 'g': ca.vcat((_h_sym, _mach_fun(_h_sym, _e_i)))}
-            _nlp_solver = ca.nlpsol('Hh0', 'ipopt', _nlp_dict)
+        # Glide slope occures where (in asymptotic expansion) the the Hamiltonian is stationary w.r.t. altitude
+        _fsolve_sol = sp.optimize.fsolve(
+            func=lambda _h_trial: np.asarray(_dham_dh_fun(_h_trial, _e_i)).flatten(),
+            x0=np.asarray((_h_guess,)),
+            fprime=lambda _h_trial: np.asarray(_d2ham_dh2_fun(_h_trial, _e_i)).flatten()
+        )
 
-            block_print()
-            _nlp_sol = _nlp_solver(x0=_h_guess, lbg=(_h_min, _mach_min), ubg=(_h_max_i, _mach_max))
-            enable_print()
-            # _nlp_dict = {'x': _h_sym, 'f': _h_sym, 'g': ca.vcat((_h_sym, _mach_fun(_h_sym, _e_i), _dham_dh_fun(_h_sym, _e_i)))}
-            # _nlp_solver = ca.nlpsol('Hh0', 'ipopt', _nlp_dict)
-            #
-            # block_print()
-            # _nlp_sol = _nlp_solver(x0=_h_guess, lbg=(_h_min, _mach_min, 0), ubg=(_h_max_i, _mach_max, 0))
-            # enable_print()
-            _h_i = float(min(max(_h_min, _nlp_sol['x']), _h_max_i))
+        # Bound altitude
+        _h_i = max(min(float(_fsolve_sol[0]), _h_max), _h_min_i)
 
-        _h_vals[idx] = _h_i
         _g_i = _mu / (_Re + _h_i) ** 2
         _a_i = atm.speed_of_sound(_h_i)
-        _v_i = min(max(_mach_min * _a_i, (2 * (_e_i - _g_i * _h_vals[idx])) ** 0.5), _mach_max * _a_i)
+        _v_i = (2 * (_e_i - _g_i * _h_i)) ** 0.5
+        _mach_i = _v_i / _a_i
+
+        if _mach_i > 3.0:
+            print(f'Mach = {_mach_i}')
+
+        # Ensure velocity is within bounds, i.e. applying bounds does not change energy
+        if _mach_i < _mach_min or _mach_i > _mach_max:
+            break
+
+        # Assign values if valid
+        _h_vals[idx] = _h_i
         _v_vals[idx] = _v_i
-        _e_i_corrected = _g_i * _h_i + 0.5 * _v_i ** 2
-        _e_vals[idx] = _e_i_corrected
-        _drag_vals[idx] = drag_n1(_h_i, _e_i_corrected, _mu, _Re, _m, _s_ref, _eta)
+        _drag_vals[idx] = drag_n1(_h_i, _e_i, _mu, _Re, _m, _s_ref, _eta)
         _h_guess = _h_i
 
-    # Remove values decreasing values (these are artifacts of the temperature interpolant)
-    _valid_idces = []
-    idx_last = len(_e_vals) - 1
-    for idx, (_e_val, _h_val, _v_val) in enumerate(zip(_e_vals, _h_vals, _v_vals)):
-        if idx < idx_last:
-            if np.sign(_e_vals[idx + 1] - _e_val) == _e_direction \
-                    and np.sign(_v_vals[idx + 1] - _v_val) != -_e_direction \
-                    and np.sign(_h_vals[idx + 1] - _h_val) != -_e_direction:
-                _valid_idces.append(idx)
-        else:
-            if np.sign(_e_val - _e_vals[idx - 1]) == _e_direction \
-                    and np.sign(_v_val - _v_vals[idx - 1]) != -_e_direction \
-                    and np.sign(_h_val - _h_vals[idx - 1]) != -_e_direction:
-                _valid_idces.append(idx)
+    # Remove invalid values where energy exceeds altitude/Mach bounds
+    _e_vals = _e_vals[:idx]
+    _h_vals = _h_vals[:idx]
+    _v_vals = _v_vals[:idx]
+    _drag_vals = _drag_vals[:idx]
 
-    _e_vals = _e_vals[_valid_idces]
-    _v_vals = _v_vals[_valid_idces]
-    _h_vals = _h_vals[_valid_idces]
-    _drag_vals = _drag_vals[_valid_idces]
-
-    h_interp = sp.interpolate.pchip(_e_vals, _h_vals)
-    v_interp = sp.interpolate.pchip(_e_vals, _v_vals)
-    drag_interp = sp.interpolate.pchip(_e_vals, _drag_vals)
+    _h_interp = sp.interpolate.pchip(_e_vals, _h_vals)
+    _v_interp = sp.interpolate.pchip(_e_vals, _v_vals)
+    _drag_interp = sp.interpolate.pchip(_e_vals, _drag_vals)
 
     _gam_vals = np.empty(_e_vals.shape)
 
@@ -214,10 +210,97 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
             _h_pert = _h_vals[idx + 1]
         else:
             _v_pert = _v_vals[idx - 1]
-            _h_pert = _v_vals[idx - 1]
+            _h_pert = _h_vals[idx - 1]
         _dh_dv = (_h_val - _h_pert) / (_v_val - _v_pert)
         _gam_vals[idx] = fpa_glide(_h_val, _e_val, _dh_dv, _mu, _Re, _m, _s_ref, _eta)
 
-    gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
+    _gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
 
-    return h_interp, v_interp, gam_interp, drag_interp
+    return _h_interp, _v_interp, _gam_interp, _drag_interp
+
+
+if __name__=='__main__':
+    from matplotlib import pyplot as plt
+    import pickle
+
+    with open('sol_set_range.data', 'rb') as f:
+        sols = pickle.load(f)
+        sol = sols[-1]
+
+    k_dict = {}
+    x_dict = {}
+    lam_dict = {}
+    u_dict = {}
+
+    for key, val in zip(sol.annotations.constants, sol.k):
+        k_dict[key] = val
+    for key, x_val, lam_val in zip(sol.annotations.states, list(sol.x), list(sol.lam)):
+        x_dict[key] = x_val
+        lam_dict[key] = lam_val
+    for key, val in zip(sol.annotations.controls, list(sol.u)):
+        u_dict[key] = val
+
+    h_min = 0.
+    h_max = 130e3
+    g_max = k_dict['mu'] / (k_dict['Re'] + h_min) ** 2
+    g_min = k_dict['mu'] / (k_dict['Re'] + h_max) ** 2
+    mach_min = 0.25
+    mach_max = 3.0
+
+    h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(
+        k_dict['mu'], k_dict['Re'], x_dict['m'][0], k_dict['s_ref'], k_dict['eta'],
+        _h_min=h_min, _h_max=h_max, _mach_min=mach_min, _mach_max=mach_max)
+
+    e_vals = h_interp.x
+    h_vals = h_interp(e_vals)
+    v_vals = v_interp(e_vals)
+    mach_vals = v_vals / np.asarray(sped_fun(h_vals)).flatten()
+    gam_vals = gam_interp(e_vals)
+    drag_vals = drag_interp(e_vals)
+    g_vals = k_dict['mu'] / (k_dict['Re'] + h_vals) ** 2
+    weight_vals = x_dict['m'][0] * g_vals
+
+    # Plot Interpolants
+    e_lab = r'$E$ [ft$^2$/s$^2$]'
+    mach_lab = 'Mach'
+    fig = plt.figure()
+
+    ax_h = fig.add_subplot(221)
+    ax_h.grid()
+    ax_h.set_xlabel(e_lab)
+    ax_h.set_ylabel(r'$h$ [1,000 ft]')
+    ax_h.plot(e_vals, h_vals * 1e-3)
+
+    ax_hv = fig.add_subplot(222)
+    ax_hv.grid()
+    ax_hv.set_xlabel(mach_lab)
+    ax_hv.set_ylabel(r'$h$ [1,000 ft]')
+    ax_hv.plot(mach_vals, h_vals * 1e-3)
+    ax_hv.plot(np.array((mach_min, mach_max)),
+               np.array((h_min, h_min)) * 1e-3,
+               'k--')
+    ax_hv.plot(np.array((mach_max, mach_max)),
+               np.array((h_min, h_max)) * 1e-3,
+               'k--')
+    ax_hv.plot(np.array((mach_max, mach_min)),
+               np.array((h_max, h_max)) * 1e-3,
+               'k--')
+    ax_hv.plot(np.array((mach_min, mach_min)),
+               np.array((h_max, h_min)) * 1e-3,
+               'k--')
+
+    ax_gam = fig.add_subplot(223)
+    ax_gam.grid()
+    ax_gam.set_xlabel(mach_lab)
+    ax_gam.set_ylabel(r'$\gamma$ [deg]')
+    ax_gam.plot(mach_vals, gam_vals * 180/np.pi)
+
+    ax_drag = fig.add_subplot(224)
+    ax_drag.grid()
+    ax_drag.set_xlabel(mach_lab)
+    ax_drag.set_ylabel(r'$D$ [g]')
+    ax_drag.plot(mach_vals, drag_vals / weight_vals)
+
+    fig.tight_layout()
+
+    plt.show()
