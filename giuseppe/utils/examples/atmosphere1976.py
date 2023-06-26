@@ -313,15 +313,6 @@ class Atmosphere1976:
 
         coefficients = np.linalg.solve(design_matrix, output)
 
-        # TODO - remove (validation)
-        x0 = 0
-        x1 = 1
-        f0 = 0
-        f1 = 0
-        for idx, coeff in enumerate(coefficients):
-            f0 += coeff * x0 ** idx
-            f1 += coeff * x1 ** idx
-
         return coefficients, output
 
 

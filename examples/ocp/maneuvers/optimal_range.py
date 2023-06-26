@@ -254,7 +254,7 @@ sol_set.save('sol_set_range.data')
 
 # Sweep Altitudes
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-cont.add_linear_series(15, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
+cont.add_linear_series(25, {'h0': 40_000., 'v0': 3 * atm.speed_of_sound(40_000.)})
 sol_set_altitude = cont.run_continuation()
 sol_set_altitude.save('sol_set_range_altitude.data')
 
@@ -275,8 +275,17 @@ cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.so
 cont.add_linear_series(5, {'h0': 75e3, 'v0': 2.5e3, 'gam0': 0.})
 sol_set_gam0 = cont.run_continuation()
 
+# Cover a grid spaced h in {5, 10, ..., 75} kft, V in {0.5, 1.0, ..., 2.5} kft/s
 cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set_gam0.solutions[-1]))
-cont.add_linear_series(19, {'h0': 5e3})
-sol_set_sweep_envelop = cont.run_continuation()
+cont.add_linear_series(14, {'h0': 5e3})
+cont.add_linear_series(1, {'v0': 2.0e3})
+cont.add_linear_series(14, {'h0': 75e3})
+cont.add_linear_series(1, {'v0': 1.5e3})
+cont.add_linear_series(14, {'h0': 5e3})
+cont.add_linear_series(1, {'v0': 1.0e3})
+cont.add_linear_series(14, {'h0': 75e3})
+cont.add_linear_series(1, {'v0': 0.5e3})
+cont.add_linear_series(14, {'h0': 5e3})
+sol_set_sweep_envelope = cont.run_continuation()
 
 #TODO
