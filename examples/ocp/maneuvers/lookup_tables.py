@@ -50,7 +50,7 @@ pres_fun = ca.Function('P', (h_SX,), (pres_expr,), ('h',), ('P',))
 dens_fun = ca.Function('rho', (h_SX,), (dens_expr,), ('h',), ('rho',))
 
 # Create Conditional Aero Functions
-mach_bl = 0.05
+mach_bl = 0.2
 h_bl = 1e3
 mach_SX = ca.SX.sym('M', 1)
 thrust_expr = create_buffered_2d_linear_interpolator(lut_data['M'], lut_data['h'], lut_data['T'],

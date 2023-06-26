@@ -7,7 +7,7 @@ import pickle
 
 import giuseppe
 
-from lookup_tables import thrust_table, cl_alpha_table, cd0_table, atm, mu as mu_val, Re as Re_val, lut_data
+from lookup_tables import thrust_fun, cl_alpha_fun, cd0_fun, atm, mu as mu_val, Re as Re_val, lut_data
 from glide_slope import get_glide_slope
 
 d2r = np.pi / 180
@@ -74,8 +74,8 @@ M = v / a
 
 # thrust = thrust_table(ca.vertcat(M, h))
 thrust = 0.
-CLalpha = cl_alpha_table(M)
-cd0 = cd0_table(M)
+CLalpha = cl_alpha_fun(M)
+cd0 = cd0_fun(M)
 
 # Aerodynamics
 qdyn = 0.5 * rho * v ** 2
@@ -160,7 +160,7 @@ def ctrl_law(_t, _x, _p, _k):
 
     _qdyn = 0.5 * atm.density(_h) * _v ** 2
     _mach = _v / atm.speed_of_sound(_h)
-    _cla = float(cl_alpha_table(_mach))
+    _cla = float(cl_alpha_fun(_mach))
     _gam_glide = float(gam_interp(_e))
     _tau = 0.1
 

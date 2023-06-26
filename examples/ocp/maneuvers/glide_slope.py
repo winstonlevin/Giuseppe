@@ -6,7 +6,7 @@ import numpy as np
 import scipy as sp
 import casadi as ca
 
-from lookup_tables import cl_alpha_table, cd0_table, atm, dens_fun, sped_fun
+from lookup_tables import cl_alpha_fun, cd0_fun, atm, dens_fun, sped_fun
 
 
 # For consistency, use LUT values for speed of sound and density
@@ -32,8 +32,8 @@ def drag_n1(_h, _e, _mu, _Re, _m, _s_ref, _eta):
     _g = _mu / (_Re + _h)**2
     _v = (2 * (_e - _g * _h)) ** 0.5
     _mach = _v / atm.speed_of_sound(_h)
-    _cd0 = float(cd0_table(_mach))
-    _cla = float(cl_alpha_table(_mach))
+    _cd0 = float(cd0_fun(_mach))
+    _cla = float(cl_alpha_fun(_mach))
     _weight = _m * _g0
     _qdyn = 0.5 * atm.density(_h) * _v**2
 
@@ -56,7 +56,7 @@ def alpha_n1(_v, _h, _g0, _m, _s_ref):
     _rho = density(_h)
     _qdyn = 0.5 * _rho * _v**2
     _mach = _v / atm.speed_of_sound(_h)
-    _cla = float(cl_alpha_table(_mach))
+    _cla = float(cl_alpha_fun(_mach))
     _weight = _m * _g0
     _alpha = _weight / (_qdyn * _s_ref * _cla)
     return _alpha
@@ -95,8 +95,8 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
     _qdyn_sym = 0.5 * dens_fun(_h_sym) * _v_sym ** 2
     _mach_sym = _v_sym / sped_fun(_h_sym)
     _weight_sym = _m * _g_sym
-    _ad0_sym = _qdyn_sym * _s_ref * cd0_table(_mach_sym) / _weight_sym
-    _adl_sym = _eta * _weight_sym / (_qdyn_sym * _s_ref * cl_alpha_table(_mach_sym))
+    _ad0_sym = _qdyn_sym * _s_ref * cd0_fun(_mach_sym) / _weight_sym
+    _adl_sym = _eta * _weight_sym / (_qdyn_sym * _s_ref * cl_alpha_fun(_mach_sym))
 
     # Dynamics
     _dh_dt_sym = _v_sym * ca.sin(_gam_sym)

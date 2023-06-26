@@ -60,6 +60,40 @@ def fit_boundary_layer(f0: ca.SX, f1: ca.SX, x: ca.SX, x0: float, x1: float,
     return coefficients, output
 
 
+def create_conditional_function(expr_list: list[CA_SYM],
+                                break_points: np.array,
+                                independent_var: CA_SYM):
+    expr_type = type(independent_var)
+    ca_zero = expr_type(0.)
+    expr_out = ca_zero
+    idx_last = len(expr_list) - 1
+
+    for idx, expr in enumerate(expr_list):
+        # Switches for conditional function:
+        # expression evaluated between switch0 and switch1
+        # boundary (enforcing 2nd order continuity) evaluated between switch1 and switch2
+        if idx == 0:
+            expr_next = expr_list[idx + 1]
+            switch0 = -ca.inf
+            switch1 = break_points[idx + 1]
+        elif idx == idx_last:
+            expr_next = expr_list[idx_last]
+            switch0 = break_points[idx]
+            switch1 = +ca.inf
+        else:
+            expr_next = expr_list[idx + 1]
+            switch0 = break_points[idx]
+            switch1 = break_points[idx + 1]
+
+        # Add expression and boundary expression to conditional function
+        expr_out = ca.if_else(
+            ca.logic_and(independent_var >= switch0, independent_var <= switch1),
+            expr, expr_out
+        )
+
+    return expr_out
+
+
 def create_buffered_conditional_function(expr_list: list[CA_SYM],
                                          break_points: np.array,
                                          independent_var: CA_SYM,
@@ -123,6 +157,13 @@ def create_buffered_linear_interpolator(x: np.array, y: Union[list[CA_SYM], np.a
         expr_list[idx] = y1 + (y2 - y1) / (x2 - x1) * (independent_var - x1)
     expr_out = create_buffered_conditional_function(expr_list, x, independent_var, boundary_thickness, free_variables)
     return expr_out
+#
+#
+# def create_quintic_hermitian_interpolator(x: np.array, y: Union[list[CA_SYM], np.array],
+#                                           independent_var: CA_SYM):
+#     expr_type = type(independent_var)
+#     expr_list = [expr_type.nan()] * (len(y) - 1)
+#     expr_out = create_conditional_function(expr_list, break_points, independent_var)
 
 
 def create_buffered_2d_linear_interpolator(x: np.array, y: np.array, z: np.array,
