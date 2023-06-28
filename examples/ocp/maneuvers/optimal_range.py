@@ -170,7 +170,7 @@ def ctrl_law(_t, _x, _p, _k):
     return np.array((_alp, _phi))
 
 
-ef_val = vh2e(0.7 * atm.speed_of_sound(0.), 0.)
+ef_val = vh2e(0.6 * atm.speed_of_sound(0.), 0.)
 hf_val = h_interp(ef_val)
 vf_val = v_interp(ef_val)
 gamf_val = gam_interp(ef_val)
@@ -275,17 +275,20 @@ cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.so
 cont.add_linear_series(5, {'h0': 75e3, 'v0': 2.5e3, 'gam0': 0.})
 sol_set_gam0 = cont.run_continuation()
 
-# Cover a grid spaced h in {5, 10, ..., 75} kft, V in {0.5, 1.0, ..., 2.5} kft/s
-cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set_gam0.solutions[-1]))
-cont.add_linear_series(14, {'h0': 5e3})
-cont.add_linear_series(1, {'v0': 2.0e3})
-cont.add_linear_series(14, {'h0': 75e3})
-cont.add_linear_series(1, {'v0': 1.5e3})
-cont.add_linear_series(14, {'h0': 5e3})
-cont.add_linear_series(1, {'v0': 1.0e3})
-cont.add_linear_series(14, {'h0': 75e3})
-cont.add_linear_series(1, {'v0': 0.5e3})
+# Cover a grid spaced h0 in {5, 10, ..., 75} kft, V0 in {1.0, ..., 2.5} kft/s
+last_sol = deepcopy(sol_set_gam0.solutions[-1])
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
 cont.add_linear_series(14, {'h0': 5e3})
 sol_set_sweep_envelope = cont.run_continuation()
 
-#TODO
+for velocity in (2.0e3, 1.5e3, 1.0e3):
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
+    cont.add_linear_series(5, {'v0': velocity})
+    last_sol = cont.run_continuation().solutions[-1]
+
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
+    cont.add_linear_series(14, {'h0': 5e3})
+    new_sol_set = cont.run_continuation()
+    sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
+
+sol_set_sweep_envelope.save('sol_set_range_sweep_envelope.data')

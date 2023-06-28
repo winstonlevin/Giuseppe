@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib as mpl
 
-from lookup_tables import cl_alpha_table, cd0_table, thrust_table, dens_fun, sped_fun, lut_data
+from lookup_tables import cl_alpha_fun, cd0_fun, thrust_fun, dens_fun, sped_fun, lut_data
 from glide_slope import get_glide_slope
 
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -14,7 +14,7 @@ gradient = mpl.colormaps['viridis'].colors
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 PLOT_REFERENCE = True
-DATA = 'altitude'  # {altitude, velocity, crossrange}
+DATA = 'sweep_envelope'  # {altitude, velocity, crossrange, sweep_envelope}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
@@ -56,8 +56,8 @@ for idx, sol in enumerate(sols):
     ).flatten()
     auxiliaries[idx]['rho'] = np.asarray(dens_fun(auxiliaries[idx]['h'])).flatten()
 
-    auxiliaries[idx]['cl_alpha'] = np.asarray(cl_alpha_table(auxiliaries[idx]['mach']), dtype=float).flatten()
-    auxiliaries[idx]['cd0'] = np.asarray(cd0_table(auxiliaries[idx]['mach']), dtype=float).flatten()
+    auxiliaries[idx]['cl_alpha'] = np.asarray(cl_alpha_fun(auxiliaries[idx]['mach']), dtype=float).flatten()
+    auxiliaries[idx]['cd0'] = np.asarray(cd0_fun(auxiliaries[idx]['mach']), dtype=float).flatten()
 
     auxiliaries[idx]['ke'] = 0.5 * auxiliaries[idx]['v'] ** 2
     auxiliaries[idx]['qdyn_min_drag'] = (auxiliaries[idx]['eta'] * auxiliaries[idx]['weight'] ** 2.
@@ -110,8 +110,8 @@ for idx, sol in enumerate(sols):
     auxiliaries[idx]['qdyn_glide'] = 0.5 * auxiliaries[idx]['rho_glide'] * auxiliaries[idx]['v_glide'] ** 2
     auxiliaries[idx]['mach_glide'] = auxiliaries[idx]['v_glide'] \
                                      / np.asarray(sped_fun(auxiliaries[idx]['h_glide'])).flatten()
-    auxiliaries[idx]['cd0_glide'] = np.asarray(cd0_table(auxiliaries[idx]['mach_glide']), dtype=float).flatten()
-    auxiliaries[idx]['cl_alpha_glide'] = np.asarray(cl_alpha_table(auxiliaries[idx]['mach_glide']), dtype=float).flatten()
+    auxiliaries[idx]['cd0_glide'] = np.asarray(cd0_fun(auxiliaries[idx]['mach_glide']), dtype=float).flatten()
+    auxiliaries[idx]['cl_alpha_glide'] = np.asarray(cl_alpha_fun(auxiliaries[idx]['mach_glide']), dtype=float).flatten()
     auxiliaries[idx]['AD0_glide'] = (auxiliaries[idx]['qdyn_glide'] * auxiliaries[idx]['s_ref']
                                      * auxiliaries[idx]['cd0_glide']) / auxiliaries[idx]['weight']
     auxiliaries[idx]['ADL_glide'] = auxiliaries[idx]['eta'] * auxiliaries[idx]['weight'] / (
@@ -124,13 +124,15 @@ for idx, sol in enumerate(sols):
     auxiliaries[idx]['dalp'] = auxiliaries[idx]['alpha'] - auxiliaries[idx]['alpha_mg']
     auxiliaries[idx]['ddrag'] = (auxiliaries[idx]['drag'] - drag_interp(auxiliaries[idx]['e'])) / auxiliaries[idx]['weight']
 
-    _cgam = np.cos(auxiliaries[idx]['gam'])
+    # _cgam = np.cos(auxiliaries[idx]['gam'])
+    _cgam = 1.
     _b = (
              auxiliaries[idx]['AD0'] + auxiliaries[idx]['ADL'] * _cgam**2
              - _cgam * (auxiliaries[idx]['AD0_glide'] + auxiliaries[idx]['ADL_glide'])
          ) / auxiliaries[idx]['ADL']
 
-    auxiliaries[idx]['load_asymptotic'] = _cgam + np.sign(auxiliaries[idx]['h_glide'] - auxiliaries[idx]['h']) * (
+    auxiliaries[idx]['load_asymptotic'] = np.cos(auxiliaries[idx]['gam'])\
+        + np.sign(auxiliaries[idx]['h_glide'] - auxiliaries[idx]['h']) * (
         np.maximum(_b, 0)
     ) ** 0.5
 
