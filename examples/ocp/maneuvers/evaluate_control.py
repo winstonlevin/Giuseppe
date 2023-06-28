@@ -262,7 +262,7 @@ def generate_termination_events(_ctrl_law, _p_dict, _k_dict, _limits_dict):
 # ---- RUN SIM ---------------------------------------------------------------------------------------------------------
 
 n_sols = len(sols)
-ivp_sols_dict = [None] * n_sols
+ivp_sols_dict = [{}] * n_sols
 h0_arr = np.empty((n_sols,))
 v0_arr = np.empty((n_sols,))
 opt_arr = np.empty((n_sols,))
@@ -292,7 +292,7 @@ for idx, sol in enumerate(sols):
     ivp_sols_dict[idx] = {
         't': ivp_sol.t,
         'x': ivp_sol.y,
-        'optimality': ivp_sol.y[1, -1] / sol.x[1, -1]
+        'optimality': ivp_sol.y[1, -1] / x_dict['xn'][-1]
     }
 
     h0_arr[idx] = x_dict['h'][0]
@@ -333,21 +333,39 @@ for idx, lab in enumerate(ylabs):
     ax.set_ylabel(ylabs[idx])
 
     for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
-        ax.plot(sol.t, sol.x[idx, :] * ymult[idx], 'k--')
+        # ax.plot(sol.t, sol.x[idx, :] * ymult[idx], 'k--')
         ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(jdx))
 
 fig_states.suptitle(title_str)
 fig_states.tight_layout()
 
+fig_hv = plt.figure()
+ax_hv = fig_hv.add_subplot(111)
+ax_hv.grid()
+ax_hv.set_xlabel(ylabs[3])
+ax_hv.set_ylabel(ylabs[0])
+
+for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
+    ax_hv.plot(sol.x[3, :] * ymult[3], sol.x[0, :] * ymult[0], 'k--')
+    ax_hv.plot(ivp_sol_dict['x'][3, :] * ymult[3], ivp_sol_dict['x'][0, :] * ymult[0], color=cols_gradient(jdx))
+
+fig_hv.tight_layout()
+
 # PLOT OPTIMALITY ALONG h-V
 if n_sols >= 3:
-    fig_hv = plt.figure()
-    ax_hv = fig_hv.add_subplot(111)
-    ax_hv.grid()
-    mappable = ax_hv.tricontourf(v0_arr, h0_arr, 100*opt_arr, vmin=0., vmax=100., levels=np.arange(0., 105., 5.))
-    ax_hv.plot(v_interp(v_interp.x), h_interp(h_interp.x), 'k--')
+    fig_optimality = plt.figure()
+    ax_optimality = fig_optimality.add_subplot(111)
+    ax_optimality.grid()
+    ax_optimality.set_xlabel(ylabs[3])
+    ax_optimality.set_ylabel(ylabs[0])
+    mappable = ax_optimality.tricontourf(v0_arr, h0_arr, 100*opt_arr, vmin=0., vmax=100., levels=np.arange(0., 105., 5.))
+    ax_optimality.plot(v_interp(v_interp.x), h_interp(h_interp.x), 'k--', label='Glide Slope')
+    ax_optimality.legend()
 
-    fig_hv.colorbar(mappable)
-    fig_hv.tight_layout()
+    ax_optimality.set_xlim(left=np.min(v0_arr), right=np.max(v0_arr))
+    ax_optimality.set_ylim(bottom=np.min(h0_arr), top=np.max(h0_arr))
+
+    fig_optimality.colorbar(mappable, label='% Optimal')
+    fig_optimality.tight_layout()
 
 plt.show()
