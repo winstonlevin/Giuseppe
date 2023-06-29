@@ -108,7 +108,7 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
     _path_cost = -_dxn_dt_sym
     _hamiltonian = _path_cost + _lam_e_sym * _de_dt_sym + _lam_h_sym * _dh_dt_sym + _lam_gam_sym * _dgam_dt_sym
 
-    # First-Order Outer Solution
+    # Zeroth-Order Outer Solution
     _lam_e_opt = -1 / (_g_sym * (_ad0_sym + _adl_sym))
     _lam_gam_opt = 2 * _lam_e_opt * _v_sym ** 2 * _adl_sym
     _lam_h_opt = 0
@@ -217,6 +217,114 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
     _gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
 
     return _h_interp, _v_interp, _gam_interp, _drag_interp
+
+
+def get_glide_slope_neighboring_feedback(_mu, _Re, _m, _s_ref, _eta, _h_interp):
+    # DERIVE GLIDE SLOPE FROM HAMILTONIAN
+    # States
+    _e_sym = ca.MX.sym('e', 1)
+    _h_sym = ca.MX.sym('h', 1)
+    _gam_sym = ca.MX.sym('gam', 1)
+    _lam_e_sym = ca.MX.sym('lam_e', 1)
+    _lam_h_sym = ca.MX.sym('lam_h', 1)
+    _lam_gam_sym = ca.MX.sym('lam_gam', 1)
+
+    # Control (Load Factor)
+    _u_sym = ca.MX.sym('u', 1)
+
+    # Expressions
+    _g_sym = _mu / (_h_sym + _Re) ** 2
+    _v_sym = (2 * (_e_sym - _g_sym * _h_sym)) ** 0.5
+    _qdyn_sym = 0.5 * dens_fun(_h_sym) * _v_sym ** 2
+    _mach_sym = _v_sym / sped_fun(_h_sym)
+    _weight_sym = _m * _g_sym
+    _ad0_sym = _qdyn_sym * _s_ref * cd0_fun(_mach_sym) / _weight_sym
+    _adl_sym = _eta * _weight_sym / (_qdyn_sym * _s_ref * cl_alpha_fun(_mach_sym))
+
+    # Dynamics
+    _dh_dt_sym = _v_sym * ca.sin(_gam_sym)
+    _dxn_dt_sym = _v_sym * ca.cos(_gam_sym)
+    _de_dt_sym = - _g_sym * _v_sym * (_ad0_sym + _adl_sym * _u_sym ** 2)
+    _dgam_dt_sym = _g_sym/_v_sym * (_u_sym - ca.cos(_gam_sym))
+
+    # Hamiltonian
+    _path_cost = -_dxn_dt_sym
+    _hamiltonian = _path_cost + _lam_e_sym * _de_dt_sym + _lam_h_sym * _dh_dt_sym + _lam_gam_sym * _dgam_dt_sym
+
+    # ARE Parameters
+    _x_sym = ca.vcat((_h_sym, _gam_sym))
+    _ham_x = ca.jacobian(_hamiltonian, _x_sym)
+    _ham_u = ca.jacobian(_hamiltonian, _u_sym)
+
+    _ham_xx = ca.jacobian(_ham_x, _x_sym)
+    _ham_xu = ca.jacobian(_ham_x, _u_sym)
+    _ham_uu = ca.jacobian(_ham_u, _u_sym)
+
+    _f = ca.vcat((_dh_dt_sym, _dgam_dt_sym))
+    _f_x = ca.jacobian(_f, _x_sym)
+    _f_u = ca.jacobian(_f, _u_sym)
+
+    A_sym = _f_x
+    B_sym = _f_u
+    Q_sym = _ham_xx
+    N_sym = _ham_xu
+    R_sym = _ham_uu
+
+    # Zeroth-Order Outer Solution
+    _lam_e_opt = -1 / (_g_sym * (_ad0_sym + _adl_sym))
+    _lam_gam_opt = 2 * _lam_e_opt * _v_sym ** 2 * _adl_sym
+    _lam_h_opt = 0
+
+    A_sym_opt = A_sym
+    B_sym_opt = B_sym
+    Q_sym_opt = Q_sym
+    N_sym_opt = N_sym
+    R_sym_opt = R_sym
+
+    for _original_arg, _new_arg in zip(
+            (_gam_sym, _u_sym, _lam_e_sym, _lam_gam_sym, _lam_h_sym),
+            (0, 1., _lam_e_opt, _lam_gam_opt, _lam_h_opt)
+    ):
+        A_sym_opt = ca.substitute(A_sym_opt, _original_arg, _new_arg)
+        B_sym_opt = ca.substitute(B_sym_opt, _original_arg, _new_arg)
+        Q_sym_opt = ca.substitute(Q_sym_opt, _original_arg, _new_arg)
+        N_sym_opt = ca.substitute(N_sym_opt, _original_arg, _new_arg)
+        R_sym_opt = ca.substitute(R_sym_opt, _original_arg, _new_arg)
+
+
+    A_fun = ca.Function('A', (_h_sym, _e_sym), (A_sym_opt,), ('h', 'E'), ('A',))
+    B_fun = ca.Function('B', (_h_sym, _e_sym), (B_sym_opt,), ('h', 'E'), ('B',))
+    Q_fun = ca.Function('Q', (_h_sym, _e_sym), (Q_sym_opt,), ('h', 'E'), ('Q',))
+    N_fun = ca.Function('N', (_h_sym, _e_sym), (N_sym_opt,), ('h', 'E'), ('N',))
+    R_fun = ca.Function('R', (_h_sym, _e_sym), (R_sym_opt,), ('h', 'E'), ('R',))
+
+    _e_vals = _h_interp.x
+    _h_vals = _h_interp(_e_vals)
+
+    _k_h_vals = np.empty(_e_vals.shape)
+    _k_gam_vals = np.empty(_e_vals.shape)
+
+    for idx, (_h_val, _e_val) in enumerate(zip(_h_vals, _e_vals)):
+        _a = np.asarray(A_fun(_h_val, _e_val))
+        _b = np.asarray(B_fun(_h_val, _e_val))
+        _q = np.asarray(Q_fun(_h_val, _e_val))
+        _r = np.asarray(R_fun(_h_val, _e_val))
+        _n = np.asarray(N_fun(_h_val, _e_val))
+        _p = sp.linalg.solve_continuous_are(
+            a=_a,
+            b=_b,
+            q=_q,
+            r=_r,
+            s=_n
+        )
+        _k = np.linalg.solve(_r, _b.T @ _p + _n.T)
+        _k_h_vals[idx] = _k[0, 0]
+        _k_gam_vals[idx] = _k[0, 1]
+
+    _k_h_interp = sp.interpolate.pchip(_e_vals, _k_h_vals)
+    _k_gam_interp = sp.interpolate.pchip(_e_vals, _k_gam_vals)
+
+    return _k_h_interp, _k_gam_interp
 
 
 if __name__=='__main__':

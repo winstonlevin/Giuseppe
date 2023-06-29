@@ -7,7 +7,7 @@ import matplotlib as mpl
 import scipy as sp
 
 from lookup_tables import cl_alpha_fun, cd0_fun, thrust_fun, atm, lut_data
-from glide_slope import get_glide_slope
+from glide_slope import get_glide_slope, get_glide_slope_neighboring_feedback
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -58,6 +58,10 @@ mach_max = np.max(lut_data['M']) - 0.25
 h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(
     k_dict['mu'], k_dict['Re'], x_dict['m'][0], k_dict['s_ref'], k_dict['eta'],
     _h_min=h_min, _h_max=h_max, _mach_min=mach_min, _mach_max=mach_max
+)
+
+k_h_interpolant, k_gam_interpolant = get_glide_slope_neighboring_feedback(
+    k_dict['mu'], k_dict['Re'], x_dict['m'][0], k_dict['s_ref'], k_dict['eta'], h_interp
 )
 
 # CONTROL LIMITS
@@ -127,8 +131,9 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _g = _k_dict['mu'] / (_x[0] + _k_dict['Re']) ** 2
     _weight = _x[6] * _g
     _ad0, _adl = drag_accel(_qdyn, _mach, _weight, _k_dict)
+    _cgam = np.cos(_x[4])
 
-    # Conditions are glide slope
+    # Conditions at glide slope
     _e = 0.5 * _x[3]**2 + _g * _x[0]
     _h_glide = saturate(h_interp(_e), h_min, h_max)
     _g_glide = _k_dict['mu'] / (_x[0] + _k_dict['Re']) ** 2
@@ -140,10 +145,19 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _ad0_glide, _adl_glide = drag_accel(_qdyn_glide, _mach_glide, _weight_glide, _k_dict)
 
     # Energy climb to achieve glide slope
-    _cgam = 1.0
-    # _cgam = np.cos(_x[4])
-    _radicand = (_ad0 + _adl * _cgam**2 - _cgam * (_ad0_glide + _adl_glide)) / _adl
-    _load_factor = np.cos(_x[4]) + np.sign(_h_glide - _x[0]) * (max(_radicand, 0)) ** 0.5
+    _load_factor0 = _cgam
+    # _load_factor0 = 1.
+
+    # # _radicand = (_ad0 + _adl * _cgam ** 2 - (_ad0_glide + _adl_glide) / _cgam) / _adl
+    # _radicand = (_ad0 + _adl - (_ad0_glide + _adl_glide)) / _adl
+    # _load_factor_h = np.sign(_h_glide - _x[0]) * (max(_radicand, 0)) ** 0.5
+
+    _load_factor_h = (_h_glide - _x[0]) * k_h_interpolant(_e)
+
+    # _load_factor_gam = 0.
+    _load_factor_gam = (gam_interp(_e) - _x[4]) * k_gam_interpolant(_e)
+
+    _load_factor = _load_factor0 + _load_factor_h + _load_factor_gam
 
     # Convert Load Factor to AOA
     _alpha = _weight * _load_factor / float(_qdyn * _k_dict['s_ref'] * cl_alpha_fun(_mach))
@@ -349,6 +363,8 @@ for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
     ax_hv.plot(sol.x[3, :] * ymult[3], sol.x[0, :] * ymult[0], 'k--')
     ax_hv.plot(ivp_sol_dict['x'][3, :] * ymult[3], ivp_sol_dict['x'][0, :] * ymult[0], color=cols_gradient(jdx))
 
+ax_hv.plot(v_interp(v_interp.x), h_interp(h_interp.x), 'k', label='Glide Slope', linewidth=2.)
+
 fig_hv.tight_layout()
 
 # PLOT OPTIMALITY ALONG h-V
@@ -358,8 +374,9 @@ if n_sols >= 3:
     ax_optimality.grid()
     ax_optimality.set_xlabel(ylabs[3])
     ax_optimality.set_ylabel(ylabs[0])
-    mappable = ax_optimality.tricontourf(v0_arr, h0_arr, 100*opt_arr, vmin=0., vmax=100., levels=np.arange(0., 105., 5.))
-    ax_optimality.plot(v_interp(v_interp.x), h_interp(h_interp.x), 'k--', label='Glide Slope')
+    mappable = ax_optimality.tricontourf(v0_arr, h0_arr, 100*opt_arr,
+                                         vmin=0., vmax=100., levels=np.arange(0., 101., 1.))
+    ax_optimality.plot(v_interp(v_interp.x), h_interp(h_interp.x), 'k', label='Glide Slope', linewidth=2.)
     ax_optimality.legend()
 
     ax_optimality.set_xlim(left=np.min(v0_arr), right=np.max(v0_arr))
