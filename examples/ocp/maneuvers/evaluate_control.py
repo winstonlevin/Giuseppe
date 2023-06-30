@@ -378,6 +378,7 @@ if n_sols >= 3:
                                          vmin=0., vmax=100., levels=np.arange(0., 101., 1.))
     ax_optimality.plot(v_interp(v_interp.x), h_interp(h_interp.x), 'k', label='Glide Slope', linewidth=2.)
     ax_optimality.legend()
+    ax_optimality.set_title(f'Min. Optimality = {np.min(opt_arr):.2%}')
 
     ax_optimality.set_xlim(left=np.min(v0_arr), right=np.max(v0_arr))
     ax_optimality.set_ylim(bottom=np.min(h0_arr), top=np.max(h0_arr))

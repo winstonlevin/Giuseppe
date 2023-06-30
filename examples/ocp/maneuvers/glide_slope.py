@@ -204,15 +204,15 @@ def get_glide_slope(_mu, _Re, _m, _s_ref, _eta,
 
     idx_last = len(_gam_vals) - 1
 
-    for idx, (_v_val, _e_val, _h_val) in enumerate(zip(_v_vals, _e_vals, _h_vals)):
-        if idx < idx_last:
-            _v_pert = _v_vals[idx + 1]
-            _h_pert = _h_vals[idx + 1]
-        else:
-            _v_pert = _v_vals[idx - 1]
-            _h_pert = _h_vals[idx - 1]
-        _dh_dv = (_h_val - _h_pert) / (_v_val - _v_pert)
-        _gam_vals[idx] = fpa_glide(_h_val, _e_val, _dh_dv, _mu, _Re, _m, _s_ref, _eta)
+    for idx, (_h_val, _e_val, _drag_val) in enumerate(zip(_h_vals, _e_vals, _drag_vals)):
+        if idx == 0:  # Forward difference
+            _dh_dE = (_h_vals[idx + 1] - _h_val) / (_e_vals[idx + 1] - _e_val)
+        elif idx == idx_last:  # Backward difference
+            _dh_dE = (_h_val - _h_vals[idx - 1]) / (_e_val - _e_vals[idx - 1])
+        else:  # Central difference
+            _dh_dE = (_h_vals[idx + 1] - _h_vals[idx - 1]) / (_e_vals[idx + 1] - _e_vals[idx - 1])
+
+        _gam_vals[idx] = - np.sin(_dh_dE * _drag_val / _m)
 
     _gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
 
