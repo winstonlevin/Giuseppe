@@ -109,25 +109,42 @@ sol_set_case2 = cont.run_continuation()
 
 sol_set_case2.save('sol_set_case2.data')
 
-guess_xcon = giuseppe.guess_generation.auto_propagate_guess(
-    comp_ocp_xcon,
-    control=ctrl2reg(np.array((1.0, 0.0))),
-    t_span=0.1, reverse=True, verbose=True
-)
+cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(seed_sol))
+# cont.add_linear_series(30, {'x10': 0.1, 'x20': -0.1, 'om10': -0.45, 'om20': -1.10, 'om1f': 0., 'om2f': 0., 'a': 0.5})
+cont.add_linear_series(30, {'x10': 0.1, 'x20': -0.1, 'om10': -0.45, 'om1f': 0.5, 'om2f': 0., 'a': 0.5})
+sol_set_case1_xfree = cont.run_continuation()
 
-# guess_xcon = deepcopy(sol_set_case2.solutions[25])
-# guess_xcon.k = np.append(guess_xcon.k, guess_xcon.x[2:, -1])  # Add x1f, x2f to constants
-# guess_xcon.nuf = np.append(guess_xcon.nuf, (0., 0.))  # Add adjoints for x1f, x2f
+# guess_xcon = giuseppe.guess_generation.auto_propagate_guess(
+#     comp_ocp_xcon,
+#     control=ctrl2reg(np.array((0.25, 0.0))),
+#     t_span=0.1, reverse=True
+# )
+#
+# with open('guess_xcon.data', 'wb') as f:
+#     pickle.dump(guess_xcon, f)
 #
 # seed_sol_xcon = num_solver_xcon.solve(guess_xcon)
 #
-# cont = giuseppe.continuation.ContinuationHandler(num_solver_xcon, seed_sol_xcon)
-# cont.add_linear_series(25, {'x10': 0.10})
-# cont.add_linear_series(25, {'x1f': 0.})
-# # cont.add_linear_series(25, {'om10': -0.45, 'om20': -1.10})
-# # cont.add_linear_series(25, {'x20': -0.10})
-# # cont.add_linear_series(25, {'om10': -0.45, 'om20': -1.10})
+# if seed_sol_xcon.converged:
+#     print(f'Seed sol IS converged!')
+# else:
+#     print(f'Seed sol is NOT converged!')
 #
-# sol_set_case1 = cont.run_continuation()
-#
-# sol_set_case1.save('sol_set_case1.data')
+# with open('seed_sol.data', 'wb') as f:
+#     pickle.dump(seed_sol_xcon, f)
+
+guess_xcon = deepcopy(sol_set_case1_xfree.solutions[-1])
+guess_xcon.k = np.append(guess_xcon.k, guess_xcon.x[2:, -1])  # Add x1f, x2f to constants
+guess_xcon.nuf = np.append(guess_xcon.nuf, (0., 0.))  # Add adjoints for x1f, x2f
+
+seed_sol_xcon = num_solver_xcon.solve(guess_xcon)
+
+cont = giuseppe.continuation.ContinuationHandler(num_solver_xcon, seed_sol_xcon)
+cont.add_linear_series(100, {'eps_u': 1e-1})
+cont.add_linear_series(100, {'x2f': 0., 'om20': 0.})
+cont.add_linear_series(100, {'x1f': 0., 'om20': -1.1})
+cont.add_logarithmic_series(100, {'eps_u': 1e-6})
+
+sol_set_case1 = cont.run_continuation()
+
+sol_set_case1.save('sol_set_case1.data')
