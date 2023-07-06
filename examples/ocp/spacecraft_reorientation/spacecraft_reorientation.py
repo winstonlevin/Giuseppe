@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 import giuseppe
 import pickle
@@ -12,7 +14,7 @@ ocp.add_state('om2', '-a * om30 * om1 + u2')
 ocp.add_state('x1', 'om30 * x2 + om2 * x1 * x2 + 0.5 * om1 * (1 + x1**2 - x2**2)')
 ocp.add_state('x2', 'om30 * x1 + om1 * x1 * x2 + 0.5 * om2 * (1 + x2**2 - x1**2)')
 
-ocp.add_constant('a', 0.5)
+ocp.add_constant('a', 0.)
 ocp.add_constant('om30', 0.)
 
 # Control
@@ -23,15 +25,15 @@ u_min = -1.
 u_max = 1.
 ocp.add_constant('u_min', u_min)
 ocp.add_constant('u_max', u_max)
-ocp.add_constant('eps_u', 1e0)
+ocp.add_constant('eps_u', 1e-3)
 
 ocp.add_inequality_constraint(
-    'path', 'u1', 'u_min', 'u_max',
+    'control', 'u1', lower_limit='u_min', upper_limit='u_max',
     regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_u', method='sin')
 )
 
 ocp.add_inequality_constraint(
-    'path', 'u2', 'u_min', 'u_max',
+    'control', 'u2', lower_limit='u_min', upper_limit='u_max',
     regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_u', method='sin')
 )
 
@@ -49,20 +51,26 @@ ocp.add_constraint('initial', 'x2 - x20')
 
 ocp.add_constant('om1f', 0.)
 ocp.add_constant('om2f', 0.)
-ocp.add_constant('x1f', 0.)
-ocp.add_constant('x2f', 0.)
 
 ocp.add_constraint('terminal', 'om1 - om1f')
 ocp.add_constraint('terminal', 'om2 - om2f')
-ocp.add_constraint('terminal', 'x1 - x1f')
-ocp.add_constraint('terminal', 'x2 - x2f')
 
 # Cost (Minimum Time)
 ocp.set_cost('0', '0', 't')
 
+# Variant with constrained final state
+ocp_xcon = deepcopy(ocp)
+
+ocp_xcon.add_constant('x1f', 0.)
+ocp_xcon.add_constant('x2f', 0.)
+ocp_xcon.add_constraint('terminal', 'x1 - x1f')
+ocp_xcon.add_constraint('terminal', 'x2 - x2f')
+
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
-    comp_ocp = giuseppe.problems.symbolic.SymDual(ocp, control_method='algebraic').compile()
-    num_solver = giuseppe.numeric_solvers.SciPySolver(comp_ocp, verbose=2, max_nodes=100, node_buffer=10)
+    comp_ocp = giuseppe.problems.symbolic.SymDual(ocp, control_method='differential').compile()
+    comp_ocp_xcon = giuseppe.problems.symbolic.SymDual(ocp_xcon, control_method='differential').compile()
+    num_solver = giuseppe.numeric_solvers.SciPySolver(comp_ocp, verbose=False, max_nodes=100, node_buffer=10)
+    num_solver_xcon = giuseppe.numeric_solvers.SciPySolver(comp_ocp_xcon, verbose=2, max_nodes=100, node_buffer=10)
 
 
 def ctrl2reg(u: np.array) -> np.array:
@@ -75,8 +83,8 @@ def reg2ctrl(u_reg: np.array) -> np.array:
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     comp_ocp,
-    control=ctrl2reg(np.array((1.0, -1.0))),
-    t_span=1.0
+    control=ctrl2reg(np.array((1.0, 0.0))),
+    t_span=0.1
 )
 
 with open('guess.data', 'wb') as f:
@@ -91,3 +99,35 @@ else:
 
 with open('seed_sol.data', 'wb') as f:
     pickle.dump(seed_sol, f)
+
+cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+cont.add_linear_series(25, {'om1f': 1., 'om2f': 2})
+cont.add_linear_series(25, {'om30': -0.3})
+cont.add_logarithmic_series(25, {'eps_u': 1e-6})
+
+sol_set_case2 = cont.run_continuation()
+
+sol_set_case2.save('sol_set_case2.data')
+
+guess_xcon = giuseppe.guess_generation.auto_propagate_guess(
+    comp_ocp_xcon,
+    control=ctrl2reg(np.array((1.0, 0.0))),
+    t_span=0.1, reverse=True, verbose=True
+)
+
+# guess_xcon = deepcopy(sol_set_case2.solutions[25])
+# guess_xcon.k = np.append(guess_xcon.k, guess_xcon.x[2:, -1])  # Add x1f, x2f to constants
+# guess_xcon.nuf = np.append(guess_xcon.nuf, (0., 0.))  # Add adjoints for x1f, x2f
+#
+# seed_sol_xcon = num_solver_xcon.solve(guess_xcon)
+#
+# cont = giuseppe.continuation.ContinuationHandler(num_solver_xcon, seed_sol_xcon)
+# cont.add_linear_series(25, {'x10': 0.10})
+# cont.add_linear_series(25, {'x1f': 0.})
+# # cont.add_linear_series(25, {'om10': -0.45, 'om20': -1.10})
+# # cont.add_linear_series(25, {'x20': -0.10})
+# # cont.add_linear_series(25, {'om10': -0.45, 'om20': -1.10})
+#
+# sol_set_case1 = cont.run_continuation()
+#
+# sol_set_case1.save('sol_set_case1.data')
