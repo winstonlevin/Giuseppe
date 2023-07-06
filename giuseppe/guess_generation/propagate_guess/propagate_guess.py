@@ -211,7 +211,8 @@ def propagate_ocp_guess_from_guess(
     p, k = guess.p, guess.k
 
     if reverse:
-        guess.t = np.flip(guess.t)
+        if t_span[-1] > t_span[0]:
+            t_span = np.flip(t_span)
         initial_states = guess.x[:, -1]
     else:
         initial_states = guess.x[:, 0]
