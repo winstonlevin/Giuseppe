@@ -19,7 +19,7 @@ ROLL_LAW = 'regulator'  # {0, regulator}
 THRUST_LAW = '0'  # {0, min, max}
 
 if COMPARISON == 'max_range':
-    with open('sol_set_range_sweep_envelope.data', 'rb') as f:
+    with open('../sol_set_range_sweep_envelope.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[0]
 

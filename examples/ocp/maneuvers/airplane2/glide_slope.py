@@ -331,7 +331,7 @@ if __name__=='__main__':
     from matplotlib import pyplot as plt
     import pickle
 
-    with open('sol_set_range.data', 'rb') as f:
+    with open('../sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[-1]
 

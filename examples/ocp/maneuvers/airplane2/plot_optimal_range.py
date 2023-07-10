@@ -14,14 +14,14 @@ PLOT_AUXILIARY = True
 DATA = 2
 
 if DATA == 0:
-    with open('guess_range.data', 'rb') as f:
+    with open('../guess_range.data', 'rb') as f:
         sol = pickle.load(f)
         sol.cost = np.nan
 elif DATA == 1:
-    with open('seed_sol_range.data', 'rb') as f:
+    with open('../seed_sol_range.data', 'rb') as f:
         sol = pickle.load(f)
 else:
-    with open('sol_set_range.data', 'rb') as f:
+    with open('../sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[-1]
 

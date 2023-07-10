@@ -1,45 +1,44 @@
 from copy import deepcopy
 
 import numpy as np
-import scipy as sp
 import casadi as ca
 import pickle
 
 import giuseppe
 
-from lookup_tables import thrust_fun, cl_alpha_fun, cd0_fun, atm, mu as mu_val, Re as Re_val, lut_data
+from lookup_tables import cl_alpha_fun, cd0_fun, atm, mu as mu_val, Re as Re_val, lut_data
 from glide_slope import get_glide_slope
 
 d2r = np.pi / 180
 
 
-ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.MX)
+ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.SX)
 
 # Independent Variable
-t = ca.MX.sym('t', 1)
+t = ca.SX.sym('t', 1)
 ocp.set_independent(t)
 
 # Controls
-alpha = ca.MX.sym('alpha', 1)
-phi = ca.MX.sym('phi', 1)
+alpha = ca.SX.sym('alpha', 1)
+phi = ca.SX.sym('phi', 1)
 ocp.add_control(alpha)
 ocp.add_control(phi)
 
 # States
-h = ca.MX.sym('h', 1)
-xn = ca.MX.sym('xn', 1)
-xe = ca.MX.sym('xe', 1)
-v = ca.MX.sym('v', 1)
-gam = ca.MX.sym('gam', 1)
-psi = ca.MX.sym('psi', 1)
-m = ca.MX.sym('m', 1)
+h = ca.SX.sym('h', 1)
+xn = ca.SX.sym('xn', 1)
+xe = ca.SX.sym('xe', 1)
+v = ca.SX.sym('v', 1)
+gam = ca.SX.sym('gam', 1)
+psi = ca.SX.sym('psi', 1)
+m = ca.SX.sym('m', 1)
 
 # Immutable Constant Parameters
-Isp = ca.MX.sym('Isp')
-s_ref = ca.MX.sym('s_ref')
-eta = ca.MX.sym('eta')
-mu = ca.MX.sym('mu')
-Re = ca.MX.sym('Re')
+Isp = ca.SX.sym('Isp')
+s_ref = ca.SX.sym('s_ref')
+eta = ca.SX.sym('eta')
+mu = ca.SX.sym('mu')
+Re = ca.SX.sym('Re')
 
 eta_val = 1.0
 s_ref_val = 500.
@@ -94,13 +93,13 @@ ocp.add_state(psi, (thrust * ca.sin(alpha) + lift) * ca.sin(phi) / (m * v * ca.c
 ocp.add_state(m, -thrust / (Isp * g0))
 
 # Reference Values
-t_ref = ca.MX.sym('t_ref')
-v_ref = ca.MX.sym('v_ref')
-gam_ref = ca.MX.sym('gam_ref')
-psi_ref = ca.MX.sym('psi_ref')
-h_ref = ca.MX.sym('h_ref')
-m_ref = ca.MX.sym('m_ref')
-x_ref = ca.MX.sym('x_ref')
+t_ref = ca.SX.sym('t_ref')
+v_ref = ca.SX.sym('v_ref')
+gam_ref = ca.SX.sym('gam_ref')
+psi_ref = ca.SX.sym('psi_ref')
+h_ref = ca.SX.sym('h_ref')
+m_ref = ca.SX.sym('m_ref')
+x_ref = ca.SX.sym('x_ref')
 
 t_ref_val = 100.
 v_ref_val = (3 * atm.speed_of_sound(65_600.) - 0.38 * atm.speed_of_sound(0.)) / 2
@@ -119,18 +118,18 @@ ocp.add_constant(psi_ref, psi_ref_val)
 ocp.add_constant(m_ref, m_ref_val)
 
 # Cost
-terminal_angle = ca.MX.sym('terminal_angle')  # 0 deg -> max downrange, 90 deg -> max crossrange
+terminal_angle = ca.SX.sym('terminal_angle')  # 0 deg -> max downrange, 90 deg -> max crossrange
 ocp.add_constant(terminal_angle, 0.0)
 ocp.set_cost(0, 0, -(xn * ca.cos(terminal_angle) - xe * ca.sin(terminal_angle)) / x_ref)
 
 # Boundary Conditions
-h0 = ca.MX.sym('h0')
-xn0 = ca.MX.sym('xn0')
-xe0 = ca.MX.sym('xd0')
-v0 = ca.MX.sym('v0')
-gam0 = ca.MX.sym('gam0')
-psi0 = ca.MX.sym('psi0')
-m0 = ca.MX.sym('m0')
+h0 = ca.SX.sym('h0')
+xn0 = ca.SX.sym('xn0')
+xe0 = ca.SX.sym('xd0')
+v0 = ca.SX.sym('v0')
+gam0 = ca.SX.sym('gam0')
+psi0 = ca.SX.sym('psi0')
+m0 = ca.SX.sym('m0')
 
 # h0_val = 65_600.
 # m0_val = 34_200. / g0
@@ -192,9 +191,9 @@ ocp.add_constraint(location='initial', expr=(gam - gam0) / gam_ref)
 ocp.add_constraint(location='initial', expr=(psi - psi0) / psi_ref)
 ocp.add_constraint(location='initial', expr=(m - m0) / m_ref)
 
-hf = ca.MX.sym('hf')
-vf = ca.MX.sym('vf')
-gamf = ca.MX.sym('gamf')
+hf = ca.SX.sym('hf')
+vf = ca.SX.sym('vf')
+gamf = ca.SX.sym('gamf')
 
 ocp.add_constant(hf, 0.)
 ocp.add_constant(vf, vf_val)
@@ -206,9 +205,9 @@ ocp.add_constraint(location='terminal', expr=(gam - gamf) / gam_ref)
 # ocp.add_constraint(location='terminal', expr=(ca.atan2(xe, xn)) / psi_ref)
 
 # Altitude Constraint
-eps_h = ca.MX.sym('eps_h')
-h_min = ca.MX.sym('h_min')
-h_max = ca.MX.sym('h_max')
+eps_h = ca.SX.sym('eps_h')
+h_min = ca.SX.sym('h_min')
+h_max = ca.SX.sym('h_max')
 # ocp.add_constant(eps_h, 1e-1)
 # ocp.add_constant(h_min, 0.)
 ocp.add_constant(eps_h, 1e-7)
@@ -232,12 +231,12 @@ guess = giuseppe.guess_generation.auto_propagate_guess(
     control=ctrl_law(_t=0, _x=(h0_val, 0., 0., v0_val, gam0_val, 0., m0_val), _p=None, _k=adiff_dual.default_values),
     t_span=30)
 
-with open('guess_range.data', 'wb') as file:
+with open('../guess_range.data', 'wb') as file:
     pickle.dump(guess, file)
 
 seed_sol = num_solver.solve(guess)
 
-with open('seed_sol_range.data', 'wb') as file:
+with open('../seed_sol_range.data', 'wb') as file:
     pickle.dump(seed_sol, file)
 
 

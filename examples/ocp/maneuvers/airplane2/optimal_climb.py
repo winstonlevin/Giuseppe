@@ -153,12 +153,12 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 guess = giuseppe.guess_generation.auto_propagate_guess(adiff_dual, control=9 * np.pi/180, t_span=0.1)
 
-with open('guess_climb.data', 'wb') as file:
+with open('../guess_climb.data', 'wb') as file:
     pickle.dump(guess, file)
 
 seed_sol = num_solver.solve(guess)
 
-with open('seed_sol_climb.data', 'wb') as file:
+with open('../seed_sol_climb.data', 'wb') as file:
     pickle.dump(seed_sol, file)
 
 # Continuations (from guess BCs to desired BCs)
