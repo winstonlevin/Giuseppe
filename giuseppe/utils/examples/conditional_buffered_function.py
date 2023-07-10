@@ -5,10 +5,10 @@ import numpy as np
 CA_SYM = Union[ca.SX.sym, ca.MX.sym]
 
 
-def fit_boundary_layer(f0: ca.SX, f1: ca.SX, x: ca.SX, x0: float, x1: float,
+def fit_boundary_layer(f0: CA_SYM, f1: CA_SYM, x: CA_SYM, x0: float, x1: float,
                        free_variables: Optional[Tuple[Union[ca.SX, ca.MX]]] = None):
     # Fit coefficients for a fifth-order polynomial of the form:
-    # p = C0 * [(h - h0)/dh]^0 + ... + C5 * [(h - h0)/dh]^5
+    # p = C0 * [(x - x0)/dh]^0 + ... + C5 * [(x - x0)/dh]^5
     # Return C = [C0, C1, ..., C5]
     dx = x1 - x0
     dx2 = dx ** 2
