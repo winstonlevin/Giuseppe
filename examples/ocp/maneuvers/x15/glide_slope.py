@@ -42,7 +42,7 @@ def enable_print():
 
 def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
                     _h_min: float = 0., _h_max: float = 100e3,
-                    _mach_min: float = 0.25, _mach_max: float = 0.9):
+                    _mach_min: float = 0.25, _mach_max: float = 0.9, independent_var: Optional[str] = 'e'):
 
     # DERIVE GLIDE SLOPE FROM HAMILTONIAN
     # States
@@ -122,12 +122,11 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
     _h_guess = _h_min
 
     # The glide slope occurs where the del(Hamiltonian)/delh = 0 for the zeroth-order asymptotic expansion
-    idx = 0
+    idx0 = 0
+    idxf = 0
 
-    for idx in range(len(_v_vals)):
+    for idx in range(len(_e_vals)):
         _e_i = _e_vals[idx]
-
-        _h_min_i = _h_guess  # altitude should be monotonically increasing
 
         # Glide slope occures where (in asymptotic expansion) the the Hamiltonian is stationary w.r.t. altitude
         _fsolve_sol = sp.optimize.fsolve(
@@ -136,8 +135,14 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
             fprime=lambda _h_trial: np.asarray(_d2ham_dh2_fun(_h_trial, _e_i)).flatten()
         )
 
-        # Bound altitude
+        # Altitude should be monotonically increasing
+        _h_min_i = _h_guess
         _h_i = max(min(float(_fsolve_sol[0]), _h_max), _h_min_i)
+
+        # Altitude should produce nonnegative velocity
+        _g_i = mu / (Re + _h_i) ** 2
+        _h_max_i = min(_e_i / _g_i, _h_max)
+        _h_i = min(_h_i, _h_max_i)
 
         _g_i = mu / (Re + _h_i) ** 2
         _a_i = atm.speed_of_sound(_h_i)
@@ -145,8 +150,13 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
         _mach_i = _v_i / _a_i
 
         # Ensure velocity is within bounds, i.e. applying bounds does not change energy
-        if _mach_i < _mach_min or _mach_i > _mach_max:
+        if _mach_i < _mach_min:
+            idx0 = idx + 1
+            continue
+        elif _mach_i > _mach_max:
             break
+        else:
+            idxf = idx
 
         # Assign values if valid
         _h_vals[idx] = _h_i
@@ -155,14 +165,10 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
         _h_guess = _h_i
 
     # Remove invalid values where energy exceeds altitude/Mach bounds
-    _e_vals = _e_vals[:idx]
-    _h_vals = _h_vals[:idx]
-    _v_vals = _v_vals[:idx]
-    _drag_vals = _drag_vals[:idx]
-
-    _h_interp = sp.interpolate.pchip(_e_vals, _h_vals)
-    _v_interp = sp.interpolate.pchip(_e_vals, _v_vals)
-    _drag_interp = sp.interpolate.pchip(_e_vals, _drag_vals)
+    _e_vals = _e_vals[idx0:idxf+1]
+    _h_vals = _h_vals[idx0:idxf+1]
+    _v_vals = _v_vals[idx0:idxf+1]
+    _drag_vals = _drag_vals[idx0:idxf+1]
 
     _gam_vals = np.empty(_e_vals.shape)
 
@@ -178,7 +184,28 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
 
         _gam_vals[idx] = - np.sin(_dh_dE * _drag_val / _m)
 
-    _gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
+    independent_var_lower = independent_var.lower()
+    if independent_var_lower in ('v', 'velocity'):
+        _h_interp = sp.interpolate.pchip(_v_vals, _h_vals)
+        _v_interp = sp.interpolate.pchip(_v_vals, _e_vals)
+        _drag_interp = sp.interpolate.pchip(_v_vals, _drag_vals)
+        _gam_interp = sp.interpolate.pchip(_v_vals, _gam_vals)
+    elif independent_var_lower in ('m', 'mach'):
+        _mach_vals = _v_vals / np.asarray(sped_fun(_h_vals)).flatten()
+        _h_interp = sp.interpolate.pchip(_mach_vals, _h_vals)
+        _v_interp = sp.interpolate.pchip(_mach_vals, _e_vals)
+        _drag_interp = sp.interpolate.pchip(_mach_vals, _drag_vals)
+        _gam_interp = sp.interpolate.pchip(_mach_vals, _gam_vals)
+    elif independent_var in ('h', 'altitude'):
+        _h_interp = sp.interpolate.pchip(_h_vals, _e_vals)
+        _v_interp = sp.interpolate.pchip(_h_vals, _v_vals)
+        _drag_interp = sp.interpolate.pchip(_h_vals, _drag_vals)
+        _gam_interp = sp.interpolate.pchip(_h_vals, _gam_vals)
+    else:  # Default to Energy
+        _h_interp = sp.interpolate.pchip(_e_vals, _h_vals)
+        _v_interp = sp.interpolate.pchip(_e_vals, _v_vals)
+        _drag_interp = sp.interpolate.pchip(_e_vals, _drag_vals)
+        _gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
 
     return _h_interp, _v_interp, _gam_interp, _drag_interp
 
@@ -299,7 +326,7 @@ if __name__ == '__main__':
     g_max = mu / (Re + h_min) ** 2
     g_min = mu / (Re + h_max) ** 2
     mach_min = 0.25
-    mach_max = 6.0
+    mach_max = 7.0
 
     mass = weight_empty / g0
 

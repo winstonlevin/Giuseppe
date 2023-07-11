@@ -4,6 +4,8 @@ import casadi as ca
 
 from giuseppe.utils.examples import create_buffered_conditional_function, create_buffered_linear_interpolator
 
+r2d = 180 / np.pi
+
 # Data extracted via WebPlot Digitizer from Fig. 8, 10, and 15.
 # https://ntrs.nasa.gov/citations/19660010056
 
@@ -36,9 +38,10 @@ mach_cla = np.array((
     (5.803765939098619, 0.021608687279699237),
 ))
 
+mach_cla[:, 1] = mach_cla[:, 1] * r2d  # Convert CLa [1/deg] to Cla [1/rad]
+
 # d(CD)/d(CL**2) vs. Mach
-# For CD = CD0 + eta * CLa * alpha**2 = CD0 + (eta/CLa) * CL**2
-# This is equivalent to eta/CLa vs. Mach
+# For CD = CD0 + CDL * CL**2
 mach_cdl = np.array((
     (0.5910738861614937, 0.3125937185465153),
     (0.9116837499743236, 0.3095782922169954),
