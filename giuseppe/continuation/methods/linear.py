@@ -94,13 +94,16 @@ class LinearSeries(ContinuationSeries):
 class BisectionLinearSeries(LinearSeries):
     def __init__(
             self, num_steps: int, target_mapping: Mapping[Hashable: float], solution_set: SolutionSet,
-            max_bisections: int = 3, constant_names: Optional[Union[Iterable[Hashable, ...], Annotations]] = None
+            max_bisections: int = 3, constant_names: Optional[Union[Iterable[Hashable, ...], Annotations]] = None,
+            keep_bisections: bool = True
     ):
 
         LinearSeries.__init__(self, num_steps, target_mapping, solution_set, constant_names=constant_names)
 
         self.max_bisections: int = max_bisections
         self.bisection_counter: int = 0
+        self.keep_bisections = keep_bisections
+        self.last_converged_solution = None
 
     def __iter__(self):
         super().__iter__()
@@ -109,6 +112,8 @@ class BisectionLinearSeries(LinearSeries):
 
     def __next__(self):
         if self.solution_set[-1].converged:
+            self.last_converged_solution = self.solution_set[-1]
+
             if self.current_step == self.num_steps:
                 raise StopIteration
 
@@ -117,6 +122,9 @@ class BisectionLinearSeries(LinearSeries):
 
             if self.bisection_counter > 0:
                 self.bisection_counter -= 1
+
+                if not self.keep_bisections:
+                    self.solution_set.damn_sol()
 
         else:
             self.solution_set.damn_sol()
@@ -131,10 +139,10 @@ class BisectionLinearSeries(LinearSeries):
             else:
                 raise ContinuationError('Bisection limit exceeded!')
 
-        return next_constants, self.solution_set[-1]
+        return next_constants, self.last_converged_solution
 
     def _generate_next_constants(self):
-        next_constants = copy(self.solution_set[-1].k)
+        next_constants = copy(self.last_converged_solution.k)
         next_constants[self.constant_indices] += self._step_size * 2 ** -self.bisection_counter
         return next_constants
 

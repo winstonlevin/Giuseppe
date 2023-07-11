@@ -13,7 +13,8 @@ from ...utils.typing import NPArray
 class UntilFailureSeries(ContinuationSeries):
     def __init__(
             self, step_mapping: Mapping[Hashable: float], solution_set: SolutionSet,
-            max_bisections: int = 3, constant_names: Optional[Union[Iterable[Hashable, ...], Annotations]] = None
+            max_bisections: int = 3, constant_names: Optional[Union[Iterable[Hashable, ...], Annotations]] = None,
+            keep_bisections: bool = True
     ):
 
         super().__init__(solution_set)
@@ -34,6 +35,8 @@ class UntilFailureSeries(ContinuationSeries):
         self._step_size: NPArray
         self.max_bisections: int = max_bisections
         self.bisection_counter: int = 0
+        self.keep_bisections = keep_bisections
+        self.last_converged_solution = None
 
     def __iter__(self):
         super().__iter__()
@@ -42,11 +45,16 @@ class UntilFailureSeries(ContinuationSeries):
 
     def __next__(self):
         if self.solution_set[-1].converged:
+            self.last_converged_solution = self.solution_set[-1]
+
             self.current_step += 1
             next_constants = self._generate_next_constants()
 
             if self.bisection_counter > 0:
                 self.bisection_counter -= 1
+
+                if not self.keep_bisections:
+                    self.solution_set.damn_sol()
 
         else:
             self.solution_set.damn_sol()
@@ -57,13 +65,13 @@ class UntilFailureSeries(ContinuationSeries):
             else:
                 raise StopIteration
 
-        return next_constants, self.solution_set[-1]
+        return next_constants, self.last_converged_solution
 
     def __repr__(self):
         return f'UntilFailureSeries({self.generate_target_mapping_str()})'
 
     def _generate_next_constants(self):
-        next_constants = copy(self.solution_set[-1].k)
+        next_constants = copy(self.last_converged_solution.k)
         next_constants[self.constant_indices] += self.constant_steps * 2 ** -self.bisection_counter
         return next_constants
 

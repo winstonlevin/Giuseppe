@@ -68,7 +68,7 @@ class ContinuationHandler:
         self.monitor: Optional[ContinuationDisplayManager] = None
 
     def add_linear_series(self, num_steps: int, target_values: Mapping[Hashable: float],
-                          bisection: Union[bool, int] = True):
+                          bisection: Union[bool, int] = True, keep_bisections: bool = True):
         """
         Add a linear series to the continuation handler
 
@@ -91,6 +91,10 @@ class ContinuationHandler:
 
            If a number is given, the number specifies the maximum number of bisections that will occur before giving up.
 
+        keep_bisections : bool, default=True
+            If True then the steps with bisections will be kept as part of the solutions set. Otherwise, only solutions
+            with the original linear spacing will be kept.
+
         Returns
         -------
         self : ContinuationHandler
@@ -98,10 +102,11 @@ class ContinuationHandler:
 
         if bisection is True:
             series = BisectionLinearSeries(num_steps, target_values, self.solution_set,
-                                           constant_names=self.constant_names)
+                                           constant_names=self.constant_names, keep_bisections=keep_bisections)
         elif bisection > 0:
             series = BisectionLinearSeries(num_steps, target_values, self.solution_set,
-                                           max_bisections=bisection, constant_names=self.constant_names)
+                                           max_bisections=bisection, constant_names=self.constant_names,
+                                           keep_bisections=keep_bisections)
         else:
             series = LinearSeries(num_steps, target_values, self.solution_set, constant_names=self.constant_names)
 
@@ -109,7 +114,7 @@ class ContinuationHandler:
         return self
 
     def add_logarithmic_series(self, num_steps: int, target_values: Mapping[Hashable: float],
-                               bisection: Union[bool, int] = True):
+                               bisection: Union[bool, int] = True, keep_bisections: bool = True):
         """
         Add a logarithmic series to the continuation handler
 
@@ -132,6 +137,10 @@ class ContinuationHandler:
 
            If a number is given, the number specifies the maximum number of bisections that will occur before giving up.
 
+        keep_bisections : bool, default=True
+            If True then the steps with bisections will be kept as part of the solutions set. Otherwise, only solutions
+            with the original linear spacing will be kept.
+
         Returns
         -------
         self : ContinuationHandler
@@ -139,10 +148,10 @@ class ContinuationHandler:
 
         if bisection is True:
             series = BisectionLogarithmicSeries(num_steps, target_values, self.solution_set,
-                                                constant_names=self.constant_names)
+                                                constant_names=self.constant_names, keep_bisections=keep_bisections)
         elif bisection > 0:
             series = BisectionLogarithmicSeries(num_steps, target_values, self.solution_set, max_bisections=bisection,
-                                                constant_names=self.constant_names)
+                                                constant_names=self.constant_names, keep_bisections=keep_bisections)
         else:
             series = LogarithmicSeries(num_steps, target_values, self.solution_set,
                                        constant_names=self.constant_names)
@@ -150,7 +159,8 @@ class ContinuationHandler:
         self.continuation_series.append(series)
         return self
 
-    def add_linear_series_until_failure(self, step_sizes: Mapping[Hashable: float], bisection: Union[bool, int] = True):
+    def add_linear_series_until_failure(self, step_sizes: Mapping[Hashable: float],
+                                        bisection: Union[bool, int] = True, keep_bisections: bool = True):
         """
         Add a linear series to the continuation handler
 
@@ -159,8 +169,6 @@ class ContinuationHandler:
 
         Parameters
         ----------
-        num_steps : int
-            number of steps in the continuation series
 
         step_sizes : dict[str: float]
            dictionary (or other mapping) assigning target values to continuation series
@@ -173,19 +181,24 @@ class ContinuationHandler:
 
            If a number is given, the number specifies the maximum number of bisections that will occur before giving up.
 
+        keep_bisections : bool, default=True
+            If True then the steps with bisections will be kept as part of the solutions set. Otherwise, only solutions
+            with the original linear spacing will be kept.
+
         Returns
         -------
         self : ContinuationHandler
         """
 
         if bisection is True:
-            series = UntilFailureSeries(step_sizes, self.solution_set, constant_names=self.constant_names)
+            series = UntilFailureSeries(step_sizes, self.solution_set, constant_names=self.constant_names,
+                                        keep_bisections=keep_bisections)
         elif bisection > 0:
             series = UntilFailureSeries(step_sizes, self.solution_set, max_bisections=bisection,
-                                        constant_names=self.constant_names)
+                                        constant_names=self.constant_names, keep_bisections=keep_bisections)
         else:
             series = UntilFailureSeries(step_sizes, self.solution_set, max_bisections=False,
-                                        constant_names=self.constant_names)
+                                        constant_names=self.constant_names, keep_bisections=keep_bisections)
 
         self.continuation_series.append(series)
         return self
