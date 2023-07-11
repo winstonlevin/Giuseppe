@@ -187,17 +187,17 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
     independent_var_lower = independent_var.lower()
     if independent_var_lower in ('v', 'velocity'):
         _h_interp = sp.interpolate.pchip(_v_vals, _h_vals)
-        _v_interp = sp.interpolate.pchip(_v_vals, _e_vals)
+        _v_interp = sp.interpolate.pchip(_e_vals, _v_vals)
         _drag_interp = sp.interpolate.pchip(_v_vals, _drag_vals)
         _gam_interp = sp.interpolate.pchip(_v_vals, _gam_vals)
     elif independent_var_lower in ('m', 'mach'):
         _mach_vals = _v_vals / np.asarray(sped_fun(_h_vals)).flatten()
         _h_interp = sp.interpolate.pchip(_mach_vals, _h_vals)
-        _v_interp = sp.interpolate.pchip(_mach_vals, _e_vals)
+        _v_interp = sp.interpolate.pchip(_mach_vals, _v_vals)
         _drag_interp = sp.interpolate.pchip(_mach_vals, _drag_vals)
         _gam_interp = sp.interpolate.pchip(_mach_vals, _gam_vals)
     elif independent_var in ('h', 'altitude'):
-        _h_interp = sp.interpolate.pchip(_h_vals, _e_vals)
+        _h_interp = sp.interpolate.pchip(_e_vals, _h_vals)
         _v_interp = sp.interpolate.pchip(_h_vals, _v_vals)
         _drag_interp = sp.interpolate.pchip(_h_vals, _drag_vals)
         _gam_interp = sp.interpolate.pchip(_h_vals, _gam_vals)
