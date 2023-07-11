@@ -11,8 +11,12 @@ from x15_aero_model import cla_fun, cd0_fun, cdl_fun, s_ref as s_ref_val,\
 from x15_atmosphere import atm, dens_fun, sped_fun, mu as mu_val, Re as Re_val
 from glide_slope import get_glide_slope
 
-d2r = np.pi / 180
+SWEEP_ALTITUDE = False
+SWEEP_VELOCITY = False
+SWEEP_CROSSRANGE = False
+SWEEP_ENVELOPE = True
 
+d2r = np.pi / 180
 
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.SX)
 
@@ -238,7 +242,7 @@ with open('seed_sol_range.data', 'wb') as file:
 # Continuations (from guess BCs to desired BCs)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(15, {'hf': hf_super_val, 'vf': vf_super_val, 'gamf': gamf_super_val})
-cont.add_linear_series(50, {'hf': hf_val, 'vf': vf_val, 'gamf': gamf_val})
+cont.add_linear_series(15, {'hf': hf_val, 'vf': vf_val, 'gamf': gamf_val})
 sol_set = cont.run_continuation()
 
 
@@ -247,43 +251,47 @@ sol_set.solutions[-1] = num_solver.solve(sol_set.solutions[-1], bc_tol=1e-15)
 # Save Solution
 sol_set.save('sol_set_range.data')
 
-# # Sweep Altitudes
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-# cont.add_linear_series(25, {'h0': 40_000., 'v0': mach0_val * atm.speed_of_sound(40_000.)})
-# sol_set_altitude = cont.run_continuation()
-# sol_set_altitude.save('sol_set_range_altitude.data')
-#
-# # Sweep Velocities
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-# cont.add_linear_series(15, {'v0': 0.35 * atm.speed_of_sound(h0_val)})
-# sol_set_altitude = cont.run_continuation()
-# sol_set_altitude.save('sol_set_range_velocity.data')
-#
-# # Sweep Cross-Range
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-# cont.add_linear_series(179, {'terminal_angle': 180. * d2r})
-# sol_set_crossrange = cont.run_continuation()
-# sol_set_crossrange.save('sol_set_range_crossrange.data')
-#
-# # Sweep Flight Envelope
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-# cont.add_linear_series(5, {'h0': 75e3, 'v0': 2.5e3, 'gam0': 0.})
-# sol_set_gam0 = cont.run_continuation()
-#
-# # Cover a grid spaced h0 in {5, 10, ..., 75} kft, V0 in {1.0, ..., 2.5} kft/s
-# last_sol = deepcopy(sol_set_gam0.solutions[-1])
-# cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-# cont.add_linear_series(14, {'h0': 5e3})
-# sol_set_sweep_envelope = cont.run_continuation()
-#
-# for velocity in (2.0e3, 1.5e3, 1.0e3):
-#     cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-#     cont.add_linear_series(5, {'v0': velocity})
-#     last_sol = cont.run_continuation().solutions[-1]
-#
-#     cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-#     cont.add_linear_series(14, {'h0': 5e3})
-#     new_sol_set = cont.run_continuation()
-#     sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
-#
-# sol_set_sweep_envelope.save('sol_set_range_sweep_envelope.data')
+if SWEEP_ALTITUDE:
+    # Sweep Altitudes
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+    cont.add_linear_series(25, {'h0': 40_000., 'v0': mach0_val * atm.speed_of_sound(40_000.)})
+    sol_set_altitude = cont.run_continuation()
+    sol_set_altitude.save('sol_set_range_altitude.data')
+
+if SWEEP_VELOCITY:
+    # Sweep Velocities
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+    cont.add_linear_series(15, {'v0': 0.35 * atm.speed_of_sound(h0_val)})
+    sol_set_altitude = cont.run_continuation()
+    sol_set_altitude.save('sol_set_range_velocity.data')
+
+if SWEEP_CROSSRANGE:
+    # Sweep Cross-Range
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+    cont.add_linear_series(179, {'terminal_angle': 180. * d2r})
+    sol_set_crossrange = cont.run_continuation()
+    sol_set_crossrange.save('sol_set_range_crossrange.data')
+
+if SWEEP_ENVELOPE:
+    # Sweep Flight Envelope
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+    cont.add_linear_series(5, {'h0': 125e3, 'v0': 7.5e3, 'gam0': 0.})
+    sol_set_gam0 = cont.run_continuation()
+
+    # Cover a grid spaced h0 in {30, 32.5, 35, ..., 125} kft, V0 in {1.0, ..., 7.5} kft/s
+    last_sol = deepcopy(sol_set_gam0.solutions[-1])
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
+    cont.add_linear_series(48, {'h0': 5e3}, keep_bisections=False)
+    sol_set_sweep_envelope = cont.run_continuation()
+
+    for velocity in np.arange(7.0e3, 1.0e3 - 0.5e3, -0.5e3):
+        cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
+        cont.add_linear_series(10, {'v0': velocity})
+        last_sol = cont.run_continuation().solutions[-1]
+
+        cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
+        cont.add_linear_series(48, {'h0': 5e3}, keep_bisections=False)
+        new_sol_set = cont.run_continuation()
+        sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
+
+    sol_set_sweep_envelope.save('sol_set_range_sweep_envelope.data')

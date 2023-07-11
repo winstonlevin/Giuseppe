@@ -40,7 +40,7 @@ def enable_print():
     sys.stdout = sys.__stdout__
 
 
-def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
+def get_glide_slope(_m, _e_vals: Optional[np.array] = None, _h_guess0: Optional[float] = None,
                     _h_min: float = 0., _h_max: float = 100e3,
                     _mach_min: float = 0.25, _mach_max: float = 0.9, independent_var: Optional[str] = 'e'):
 
@@ -119,7 +119,10 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
     _h_vals = np.empty(_e_vals.shape)
     _drag_vals = np.empty(_e_vals.shape)
 
-    _h_guess = _h_min
+    if _h_guess0 is not None:
+        _h_guess = _h_guess0
+    else:
+        _h_guess = _h_min
 
     # The glide slope occurs where the del(Hamiltonian)/delh = 0 for the zeroth-order asymptotic expansion
     idx0 = 0
@@ -128,7 +131,7 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
     for idx in range(len(_e_vals)):
         _e_i = _e_vals[idx]
 
-        # Glide slope occures where (in asymptotic expansion) the the Hamiltonian is stationary w.r.t. altitude
+        # Glide slope occurs where (in asymptotic expansion) the the Hamiltonian is stationary w.r.t. altitude
         _fsolve_sol = sp.optimize.fsolve(
             func=lambda _h_trial: np.asarray(_dham_dh_fun(_h_trial, _e_i)).flatten(),
             x0=np.asarray((_h_guess,)),
