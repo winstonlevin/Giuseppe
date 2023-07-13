@@ -7,7 +7,7 @@ import pickle
 import giuseppe
 
 from x15_aero_model import cla_fun, cd0_fun, cdl_fun, s_ref as s_ref_val,\
-    weight_empty, Isp as Isp_val, thrust_max as thrust_max_val
+    weight_empty, Isp as Isp_val, qdyn_max
 from x15_atmosphere import atm, dens_fun, sped_fun, mu as mu_val, Re as Re_val
 from glide_slope import get_glide_slope
 
@@ -136,15 +136,19 @@ m0 = ca.SX.sym('m0')
 m0_val = weight_empty / g0
 
 # Base initial conditions off glide slope
-h_interp, v_interp, gam_interp, _ = get_glide_slope(m0_val,
-                                                    _h_min=0., _h_max=atm.h_layers[-1] - 1e3,
-                                                    _mach_min=0.25,
-                                                    _mach_max=7.5, independent_var='mach')
+h_mach_interp, v_mach_interp, gam_mach_interp, _ = get_glide_slope(m0_val,
+                                                                   _h_min=0., _h_max=atm.h_layers[-1] - 1e3,
+                                                                   _mach_min=0.25,
+                                                                   _mach_max=7.5, independent_var='mach')
+h_interp, v_h_interp, gam_h_interp, _ = get_glide_slope(m0_val,
+                                                        _h_min=0., _h_max=atm.h_layers[-1] - 1e3,
+                                                        _mach_min=0.25,
+                                                        _mach_max=7.5, independent_var='h')
 
 mach0_val = 7.0
-v0_val = v_interp(mach0_val)
-h0_val = h_interp(mach0_val)
-gam0_val = gam_interp(mach0_val)
+v0_val = v_mach_interp(mach0_val)
+h0_val = h_mach_interp(mach0_val)
+gam0_val = gam_mach_interp(mach0_val)
 
 
 def ctrl_law(_t, _x, _p, _k):
@@ -164,14 +168,14 @@ def ctrl_law(_t, _x, _p, _k):
 
 
 machf_super_val = 1.2
-hf_super_val = h_interp(machf_super_val)
-vf_super_val = v_interp(machf_super_val)
-gamf_super_val = gam_interp(machf_super_val)
+hf_super_val = h_mach_interp(machf_super_val)
+vf_super_val = v_mach_interp(machf_super_val)
+gamf_super_val = gam_mach_interp(machf_super_val)
 
-machf_val = 0.5
-hf_val = h_interp(machf_val)
-vf_val = v_interp(machf_val)
-gamf_val = gam_interp(machf_val)
+hf_val = h_mach_interp(0)
+vf_val = v_h_interp(hf_val)
+machf_val = vf_val / atm.speed_of_sound(hf_val)
+gamf_val = gam_h_interp(hf_val)
 
 ocp.add_constant(h0, h0_val)
 ocp.add_constant(xn0, 0.)
@@ -273,24 +277,45 @@ if SWEEP_CROSSRANGE:
     sol_set_crossrange.save('sol_set_range_crossrange.data')
 
 if SWEEP_ENVELOPE:
+    def qdyn_max2h(_v: float, _h_min: float = 0., _h_max: float = 130e3, _tol: float = 1e-6, _max_steps: int = 1_000):
+
+        # Binary Search (since Qdyn increases monotonically with h)
+        for idx in range(_max_steps):
+            _h_trial = 0.5 * (_h_min + _h_max)
+            _qdyn_trial = 0.5 * atm.density(_h_trial) * _v ** 2
+
+            if _qdyn_trial > qdyn_max:
+                # Too low -> increase altitude
+                _h_min = _h_trial
+            else:
+                # Sufficiently high -> try lower altitude
+                _h_max = _h_trial
+
+            if abs(_qdyn_trial - qdyn_max) < _tol:
+                break
+
+        return _h_max
+
     # Sweep Flight Envelope
     cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-    cont.add_linear_series(5, {'h0': 125e3, 'v0': 7.5e3, 'gam0': 0.})
+    cont.add_linear_series(5, {'h0': 125e3, 'v0': 7.0 * atm.speed_of_sound(125e3), 'gam0': 0.})
     sol_set_gam0 = cont.run_continuation()
 
-    # Cover a grid spaced h0 in {30, 32.5, 35, ..., 125} kft, V0 in {1.0, ..., 7.5} kft/s
+    # Cover Mach0 in {1.0, ..., 7.0}
     last_sol = deepcopy(sol_set_gam0.solutions[-1])
+    h0_last = qdyn_max2h(7.0 * atm.speed_of_sound(125e3))
     cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-    cont.add_linear_series(48, {'h0': 5e3}, keep_bisections=False)
+    cont.add_linear_series(10, {'v0': 7.0 * atm.speed_of_sound(h0_last), 'h0': h0_last}, keep_bisections=False)
     sol_set_sweep_envelope = cont.run_continuation()
 
-    for velocity in np.arange(7.0e3, 1.0e3 - 0.5e3, -0.5e3):
+    for mach in np.arange(6.5, 1.0 - 0.5, -0.5):
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-        cont.add_linear_series(10, {'v0': velocity})
+        cont.add_linear_series(10, {'v0': mach * atm.speed_of_sound(125e3)})
         last_sol = cont.run_continuation().solutions[-1]
+        h0_last = qdyn_max2h(mach * atm.speed_of_sound(125e3))
 
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-        cont.add_linear_series(48, {'h0': 5e3}, keep_bisections=False)
+        cont.add_linear_series(10, {'v0': mach * atm.speed_of_sound(h0_last), 'h0': h0_last}, keep_bisections=False)
         new_sol_set = cont.run_continuation()
         sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
 

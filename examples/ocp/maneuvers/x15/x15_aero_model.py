@@ -55,15 +55,18 @@ mach_cdl = np.array((
 # Scalar data:
 # https://ntrs.nasa.gov/citations/19660010056
 # https://www.nasa.gov/centers/armstrong/news/FactSheets/FS-052-DFRC.html
+# https://labs.engineering.asu.edu/aircraft-design/wp-content/uploads/sites/115/2023/03/ManeuveringCapabilityHypersonic-AIAA-SciTech2023-final.pdf
+
 s_ref = 200.  # ft**2
 
 weight_empty = 12_295.  # lb
 weight_full = 31_275.
 weight_fuel = weight_full - weight_empty
 
-thrust_max = 57_000  # lb
+thrust_max = 57_000.  # lb
 thrust_frac_min = 0.5  # Fraction of Maximum Thrust
-Isp = 279  # s
+Isp = 279.  # s
+qdyn_max = 1_000.  # psf
 
 mach_MX = ca.MX.sym('M')
 
