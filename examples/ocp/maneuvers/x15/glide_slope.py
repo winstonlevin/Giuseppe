@@ -24,12 +24,25 @@ def drag_n1(_h, _e, _m):
     _cd0 = float(cd0_fun(_mach))
     _cla = float(cla_fun(_mach))
     _cdl = float(cdl_fun(_mach))
-    _weight = _m * g0
+    _weight = _m * _g
     _qdyn = 0.5 * atm.density(_h) * _v**2
 
-    _alpha = _weight / (_qdyn * s_ref * _cla)
-    _drag = _qdyn * s_ref * (_cd0 + _cdl * (_cla * _alpha) ** 2)
+    _cl = _weight / (_qdyn * s_ref)
+    _drag = _qdyn * s_ref * (_cd0 + _cdl * _cl ** 2)
     return _drag
+
+
+h_SX = ca.SX.sym('h')
+dens_expr = dens_fun(h_SX)
+drho_dh_expr = ca.jacobian(dens_expr, h_SX)
+drho_dh_fun = ca.Function('drho_dh', (h_SX,), (drho_dh_expr,), ('h',), ('drho_dh',))
+
+
+def drho_dh(_h):
+    _drho_dh = np.asarray(drho_dh_fun(_h)).flatten()
+    if len(_drho_dh) == 1:
+        _drho_dh = _drho_dh[0]
+    return _drho_dh
 
 
 def block_print():
@@ -40,7 +53,8 @@ def enable_print():
     sys.stdout = sys.__stdout__
 
 
-def get_glide_slope(_m, _e_vals: Optional[np.array] = None, _h_guess0: Optional[float] = None,
+def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
+                    _h_guess0: Optional[float] = None, _gam_guess0: Optional[float] = None,
                     _h_min: float = 0., _h_max: float = 100e3,
                     _mach_min: float = 0.25, _mach_max: float = 0.9, independent_var: Optional[str] = 'e'):
 
@@ -99,6 +113,15 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None, _h_guess0: Optional[
     _hamiltonian_opt_fun = ca.Function('H', (_h_sym, _e_sym), (_hamiltonian_opt,), ('h', 'E'), ('H',))
     _mach_fun = ca.Function('M', (_h_sym, _e_sym), (_mach_sym,), ('h', 'E'), ('M',))
 
+    # Direct Solution (minimize drag w.r.t. h)
+    _cl_n1 = _weight_sym / (_qdyn_sym * s_ref)
+    _cd_n1 = cd0_fun(_mach_sym) + cdl_fun(_mach_sym) * _cl_n1**2
+    _drag_n1 = (_qdyn_sym * s_ref) * _cd_n1
+    _ddrag_dh = ca.jacobian(_drag_n1, _h_sym)
+
+    _drag_n1_fun = ca.Function('D', (_h_sym, _e_sym), (_drag_n1,), ('h', 'E'), ('D',))
+    _ddrag_dh_fun = ca.Function('Dh', (_h_sym, _e_sym), (_ddrag_dh,), ('h', 'E'), ('Dh',))
+
     _g_max = mu / (Re + _h_min) ** 2
     _g_min = mu / (Re + _h_max) ** 2
 
@@ -124,12 +147,25 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None, _h_guess0: Optional[
     else:
         _h_guess = _h_min
 
+    if _gam_guess0 is not None:
+        _gam_guess = _gam_guess0
+    else:
+        _gam_guess = 0.
+
     # The glide slope occurs where the del(Hamiltonian)/delh = 0 for the zeroth-order asymptotic expansion
     idx0 = 0
     idxf = 0
 
     for idx in range(len(_e_vals)):
         _e_i = _e_vals[idx]
+
+        # Glide slope occurs where (in energy state) Drag is minimize @ constant energy
+        _min_sol = sp.optimize.minimize(fun=lambda _h_trial: np.asarray(_drag_n1_fun(_h_trial, _e_i)).flatten(),
+                                        jac=lambda _h_trial: np.asarray(_ddrag_dh_fun(_h_trial, _e_i)).flatten(),
+                                        x0=np.asarray((_h_guess,))
+                                        )
+
+        # TODO - finish implementing
 
         # Glide slope occurs where (in asymptotic expansion) the the Hamiltonian is stationary w.r.t. altitude
         _fsolve_sol = sp.optimize.fsolve(
@@ -141,6 +177,17 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None, _h_guess0: Optional[
         # Altitude should be monotonically increasing
         _h_min_i = _h_guess
         _h_i = max(min(float(_fsolve_sol[0]), _h_max), _h_min_i)
+
+        # If altitude is at its minimum, gam = 0. Otherwise, calculate value that keeps energy loss minimized.
+        if _h_i == _h_min:
+            _gam_i = 0.
+        else:
+            _fsolve_sol = sp.optimize.fsolve(
+                func=lambda _gam_trial: np.asarray(_ddham_dhe_fun(_h_i, _gam_trial, _e_i)).flatten(),
+                x0=np.asarray((_gam_guess,)),
+                fprime=lambda _gam_trial: np.asarray(_d3ham_dhegam_fun(_h_i, _gam_trial, _e_i)).flatten()
+            )
+            _gam_i = _fsolve_sol[0]
 
         # Altitude should produce nonnegative velocity
         _g_i = mu / (Re + _h_i) ** 2
@@ -178,12 +225,21 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None, _h_guess0: Optional[
     idx_last = len(_gam_vals) - 1
 
     for idx, (_h_val, _e_val, _drag_val) in enumerate(zip(_h_vals, _e_vals, _drag_vals)):
-        if idx == 0:  # Forward difference
-            _dh_dE = (_h_vals[idx + 1] - _h_val) / (_e_vals[idx + 1] - _e_val)
-        elif idx == idx_last:  # Backward difference
-            _dh_dE = (_h_val - _h_vals[idx - 1]) / (_e_val - _e_vals[idx - 1])
-        else:  # Central difference
-            _dh_dE = (_h_vals[idx + 1] - _h_vals[idx - 1]) / (_e_vals[idx + 1] - _e_vals[idx - 1])
+        # Model
+
+        _g_val = mu / (Re + _h_val) ** 2
+        _v_val2 = 2*(_e_val - _g_val * _h_val)
+        _rho_val = atm.density(_h_val)
+        _drho_dh_val = drho_dh(_h_val)
+
+        _dh_dE = 1 / (_g_val - 0.5*(_drho_dh_val / _rho_val) * _v_val2)
+        # # Discretized
+        # if idx == 0:  # Forward difference
+        #     _dh_dE = (_h_vals[idx + 1] - _h_val) / (_e_vals[idx + 1] - _e_val)
+        # elif idx == idx_last:  # Backward difference
+        #     _dh_dE = (_h_val - _h_vals[idx - 1]) / (_e_val - _e_vals[idx - 1])
+        # else:  # Central difference
+        #     _dh_dE = (_h_vals[idx + 1] - _h_vals[idx - 1]) / (_e_vals[idx + 1] - _e_vals[idx - 1])
 
         _gam_vals[idx] = - np.sin(_dh_dE * _drag_val / _m)
 
@@ -354,6 +410,21 @@ if __name__ == '__main__':
     g_vals = mu / (Re + h_vals) ** 2
     weight_vals = mass * g_vals
 
+    # Compare to max(L/D)
+    cd0_vals = np.asarray(cd0_fun(mach_vals)).flatten()
+    cdl_vals = np.asarray(cdl_fun(mach_vals)).flatten()
+    cla_vals = np.asarray(cla_fun(mach_vals)).flatten()
+
+    cl_ld_vals = (cd0_vals / cdl_vals) ** 0.5
+    max_ld_vals = cl_ld_vals / (cd0_vals + cdl_vals * cl_ld_vals ** 2)
+    ld_vals = weight_vals / drag_vals
+
+    rho_vals = np.asarray(dens_fun(h_vals)).flatten()
+    qdyn_vals = 0.5 * rho_vals * v_vals ** 2
+    cl_calc_vals = weight_vals / (qdyn_vals * s_ref)
+    cd_calc_vals = cd0_vals + cdl_vals * cl_calc_vals ** 2
+    ld_calc_vals = cl_calc_vals / cd_calc_vals
+
     # Plot Interpolants
     e_lab = r'$E$ [ft$^2$/s$^2$]'
     mach_lab = 'Mach'
@@ -411,5 +482,17 @@ if __name__ == '__main__':
     ax_k_gam.plot(mach_vals, k_gam_vals)
 
     fig_gains.tight_layout()
+
+    fig_ld = plt.figure()
+    ax_ld = fig_ld.add_subplot(111)
+    ax_ld.grid()
+    ax_ld.set_xlabel(mach_lab)
+    ax_ld.set_ylabel('L/D')
+    ax_ld.plot(mach_vals, ld_vals)
+    ax_ld.plot(mach_vals, ld_calc_vals)
+    ax_ld.plot(mach_vals, max_ld_vals, 'k--', label='Max L/D')
+    ax_ld.legend()
+
+    fig_ld.tight_layout()
 
     plt.show()

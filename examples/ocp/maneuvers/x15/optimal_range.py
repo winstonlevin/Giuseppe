@@ -315,7 +315,7 @@ if SWEEP_ENVELOPE:
         h0_last = qdyn_max2h(mach * atm.speed_of_sound(125e3))
 
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-        cont.add_linear_series(10, {'v0': mach * atm.speed_of_sound(h0_last), 'h0': h0_last}, keep_bisections=False)
+        cont.add_linear_series(10, {'h0': h0_last}, keep_bisections=False)
         new_sol_set = cont.run_continuation()
         sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
 
