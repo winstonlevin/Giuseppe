@@ -108,13 +108,17 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
         _ham_gam = ca.jacobian(_hamiltonian_qdyn, _gam_sym)
         _ham_qdyn = d_dqdyn(_hamiltonian_qdyn)
         _ham_x = ca.vcat((_ham_qdyn, _ham_gam))
-        _ham_xx = ca.jacobian(_ham_x, _x_sym)
+        _ham_xqdyn = d_dqdyn(_ham_x)
+        _ham_xgam = ca.jacobian(_ham_x, _gam_sym)
+        _ham_xx = ca.hcat((_ham_xqdyn, _ham_xgam))
         _ham_xu = ca.jacobian(_ham_x, _u_sym)
         _ham_u = ca.jacobian(_hamiltonian_h, _u_sym)
         _ham_uu = ca.jacobian(_ham_u, _u_sym)
 
-        _f = ca.vcat((_dh_dt_sym, _dgam_dt_sym))
-        _f_x = ca.jacobian(_f, _x_sym)
+        _f = ca.vcat((_dqdyn_dt_sym, _dgam_dt_sym))
+        _f_qdyn = d_dqdyn(_f)
+        _f_gam = ca.jacobian(_f, _gam_sym)
+        _f_x = ca.hcat((_f_qdyn, _f_gam))
         _f_u = ca.jacobian(_f, _u_sym)
 
         A_sym_opt = _f_x
@@ -122,8 +126,6 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
         Q_sym_opt = _ham_xx
         N_sym_opt = _ham_xu
         R_sym_opt = _ham_uu
-
-        # TODO
 
         # ZEROTH-ORDER OUTER SOLUTION
         # From dgamdt = 0 -> u = cos(gam)
@@ -151,11 +153,17 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
         _dham_dqdyn_opt = _dham_dqdyn
 
         for _original_arg, _new_arg in zip(
-                (_lam_qdyn_sym, _lam_gam_sym, _lam_e_sym, _u_sym),
-                (_lam_qdyn_opt, _lam_gam_opt, _lam_e_opt, _u_opt)
+                (_lam_gam_sym, _lam_qdyn_sym, _lam_e_sym, _u_sym),
+                (_lam_gam_opt, _lam_qdyn_opt, _lam_e_opt, _u_opt)
         ):
             _dqdyn_dt_opt = ca.substitute(_dqdyn_dt_opt, _original_arg, _new_arg)
             _dham_dqdyn_opt = ca.substitute(_dham_dqdyn_opt, _original_arg, _new_arg)
+
+            A_sym_opt = ca.substitute(A_sym_opt, _original_arg, _new_arg)
+            B_sym_opt = ca.substitute(B_sym_opt, _original_arg, _new_arg)
+            Q_sym_opt = ca.substitute(Q_sym_opt, _original_arg, _new_arg)
+            N_sym_opt = ca.substitute(N_sym_opt, _original_arg, _new_arg)
+            R_sym_opt = ca.substitute(R_sym_opt, _original_arg, _new_arg)
 
         _zero_expr = ca.vcat((_dqdyn_dt_opt, _dham_dqdyn_opt))
         _zero_jac_expr = ca.jacobian(_zero_expr, ca.vcat((_h_sym, _gam_sym)))
@@ -347,35 +355,34 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
             _gam_vals[idx] = - np.arcsin(_dh_dE * _drag_val / _m)
 
     # Neighboring Feedback Gains
+    _k1_vals = np.empty(_e_vals.shape)
+    _k2_vals = np.empty(_e_vals.shape)
+
+    for idx, (_h_val, _gam_val, _e_val) in enumerate(zip(_h_vals, _gam_vals, _e_vals)):
+        _a = np.asarray(A_fun(_h_val, _gam_val, _e_val))
+        _b = np.asarray(B_fun(_h_val, _gam_val, _e_val))
+        _q = np.asarray(Q_fun(_h_val, _gam_val, _e_val))
+        _r = np.asarray(R_fun(_h_val, _gam_val, _e_val))
+        _n = np.asarray(N_fun(_h_val, _gam_val, _e_val))
+        _p = sp.linalg.solve_continuous_are(
+            a=_a,
+            b=_b,
+            q=_q,
+            r=_r,
+            s=_n
+        )
+        _k = np.linalg.solve(_r, _b.T @ _p + _n.T)
+        _k1_vals[idx] = _k[0, 0]
+        _k2_vals[idx] = _k[0, 1]
+
     if _use_qdyn_expansion:
-        _k_qdyn_vals = np.zeros(_e_vals.shape)
-        _k_h_vals = np.zeros(_e_vals.shape)
-        _k_gam_vals = np.zeros(_e_vals.shape)
+        _k_qdyn_interp = sp.interpolate.pchip(_e_vals, _k1_vals)
+        _k_gam_interp = sp.interpolate.pchip(_e_vals, _k2_vals)
+        _k_h_interp = None
     else:
-        _k_qdyn_vals = np.zeros(_e_vals.shape)
-        _k_h_vals = np.empty(_e_vals.shape)
-        _k_gam_vals = np.empty(_e_vals.shape)
-
-        for idx, (_h_val, _gam_val, _e_val) in enumerate(zip(_h_vals, _gam_vals, _e_vals)):
-            _a = np.asarray(A_fun(_h_val, _gam_val, _e_val))
-            _b = np.asarray(B_fun(_h_val, _gam_val, _e_val))
-            _q = np.asarray(Q_fun(_h_val, _gam_val, _e_val))
-            _r = np.asarray(R_fun(_h_val, _gam_val, _e_val))
-            _n = np.asarray(N_fun(_h_val, _gam_val, _e_val))
-            _p = sp.linalg.solve_continuous_are(
-                a=_a,
-                b=_b,
-                q=_q,
-                r=_r,
-                s=_n
-            )
-            _k = np.linalg.solve(_r, _b.T @ _p + _n.T)
-            _k_h_vals[idx] = _k[0, 0]
-            _k_gam_vals[idx] = _k[0, 1]
-
-    _k_qdyn_interp = sp.interpolate.pchip(_e_vals, _k_qdyn_vals)
-    _k_h_interp = sp.interpolate.pchip(_e_vals, _k_h_vals)
-    _k_gam_interp = sp.interpolate.pchip(_e_vals, _k_gam_vals)
+        _k_h_interp = sp.interpolate.pchip(_e_vals, _k1_vals)
+        _k_gam_interp = sp.interpolate.pchip(_e_vals, _k2_vals)
+        _k_qdyn_interp = None
 
     independent_var_lower = independent_var.lower()
     if independent_var_lower in ('v', 'velocity'):
