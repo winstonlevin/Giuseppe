@@ -118,9 +118,11 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
     _cd_n1 = cd0_fun(_mach_sym) + cdl_fun(_mach_sym) * _cl_n1**2
     _drag_n1 = (_qdyn_sym * s_ref) * _cd_n1
     _ddrag_dh = ca.jacobian(_drag_n1, _h_sym)
+    _d2drag_dh2 = ca.jacobian(_ddrag_dh, _h_sym)
 
     _drag_n1_fun = ca.Function('D', (_h_sym, _e_sym), (_drag_n1,), ('h', 'E'), ('D',))
     _ddrag_dh_fun = ca.Function('Dh', (_h_sym, _e_sym), (_ddrag_dh,), ('h', 'E'), ('Dh',))
+    _d2drag_dh2_fun = ca.Function('Dhh', (_h_sym, _e_sym), (_d2drag_dh2,), ('h', 'E'), ('Dhh',))
 
     _g_max = mu / (Re + _h_min) ** 2
     _g_min = mu / (Re + _h_max) ** 2
@@ -159,35 +161,29 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
     for idx in range(len(_e_vals)):
         _e_i = _e_vals[idx]
 
+        # Altitude should be monotonically increasing
+        _h_min_i = _h_guess
+
         # Glide slope occurs where (in energy state) Drag is minimize @ constant energy
         _min_sol = sp.optimize.minimize(fun=lambda _h_trial: np.asarray(_drag_n1_fun(_h_trial, _e_i)).flatten(),
                                         jac=lambda _h_trial: np.asarray(_ddrag_dh_fun(_h_trial, _e_i)).flatten(),
-                                        x0=np.asarray((_h_guess,))
+                                        hess=lambda _h_trial: np.asarray(_d2drag_dh2_fun(_h_trial, _e_i)).flatten(),
+                                        x0=np.asarray((_h_guess,)),
+                                        bounds=((_h_min_i, _h_max),),
+                                        method='trust-constr',
+                                        tol=1e-10
                                         )
+        _h_i = _min_sol.x[0]
 
-        # TODO - finish implementing
+        _h_i = _min_sol.x[0]
 
-        # Glide slope occurs where (in asymptotic expansion) the the Hamiltonian is stationary w.r.t. altitude
-        _fsolve_sol = sp.optimize.fsolve(
-            func=lambda _h_trial: np.asarray(_dham_dh_fun(_h_trial, _e_i)).flatten(),
-            x0=np.asarray((_h_guess,)),
-            fprime=lambda _h_trial: np.asarray(_d2ham_dh2_fun(_h_trial, _e_i)).flatten()
-        )
-
-        # Altitude should be monotonically increasing
-        _h_min_i = _h_guess
-        _h_i = max(min(float(_fsolve_sol[0]), _h_max), _h_min_i)
-
-        # If altitude is at its minimum, gam = 0. Otherwise, calculate value that keeps energy loss minimized.
-        if _h_i == _h_min:
-            _gam_i = 0.
-        else:
-            _fsolve_sol = sp.optimize.fsolve(
-                func=lambda _gam_trial: np.asarray(_ddham_dhe_fun(_h_i, _gam_trial, _e_i)).flatten(),
-                x0=np.asarray((_gam_guess,)),
-                fprime=lambda _gam_trial: np.asarray(_d3ham_dhegam_fun(_h_i, _gam_trial, _e_i)).flatten()
-            )
-            _gam_i = _fsolve_sol[0]
+        # # Glide slope occurs where (in asymptotic expansion) the the Hamiltonian is stationary w.r.t. altitude
+        # _fsolve_sol = sp.optimize.fsolve(
+        #     func=lambda _h_trial: np.asarray(_dham_dh_fun(_h_trial, _e_i)).flatten(),
+        #     x0=np.asarray((_h_guess,)),
+        #     fprime=lambda _h_trial: np.asarray(_d2ham_dh2_fun(_h_trial, _e_i)).flatten()
+        # )
+        # _h_i = max(min(float(_fsolve_sol[0]), _h_max), _h_min_i)
 
         # Altitude should produce nonnegative velocity
         _g_i = mu / (Re + _h_i) ** 2
@@ -225,21 +221,21 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
     idx_last = len(_gam_vals) - 1
 
     for idx, (_h_val, _e_val, _drag_val) in enumerate(zip(_h_vals, _e_vals, _drag_vals)):
-        # Model
+        # # Model
+        # _g_val = mu / (Re + _h_val) ** 2
+        # _v_val2 = 2*(_e_val - _g_val * _h_val)
+        # _rho_val = atm.density(_h_val)
+        # _drho_dh_val = drho_dh(_h_val)
+        #
+        # _dh_dE = 1 / (_g_val - 0.5*(_drho_dh_val / _rho_val) * _v_val2)
 
-        _g_val = mu / (Re + _h_val) ** 2
-        _v_val2 = 2*(_e_val - _g_val * _h_val)
-        _rho_val = atm.density(_h_val)
-        _drho_dh_val = drho_dh(_h_val)
-
-        _dh_dE = 1 / (_g_val - 0.5*(_drho_dh_val / _rho_val) * _v_val2)
-        # # Discretized
-        # if idx == 0:  # Forward difference
-        #     _dh_dE = (_h_vals[idx + 1] - _h_val) / (_e_vals[idx + 1] - _e_val)
-        # elif idx == idx_last:  # Backward difference
-        #     _dh_dE = (_h_val - _h_vals[idx - 1]) / (_e_val - _e_vals[idx - 1])
-        # else:  # Central difference
-        #     _dh_dE = (_h_vals[idx + 1] - _h_vals[idx - 1]) / (_e_vals[idx + 1] - _e_vals[idx - 1])
+        # Discretized
+        if idx == 0:  # Forward difference
+            _dh_dE = (_h_vals[idx + 1] - _h_val) / (_e_vals[idx + 1] - _e_val)
+        elif idx == idx_last:  # Backward difference
+            _dh_dE = (_h_val - _h_vals[idx - 1]) / (_e_val - _e_vals[idx - 1])
+        else:  # Central difference
+            _dh_dE = (_h_vals[idx + 1] - _h_vals[idx - 1]) / (_e_vals[idx + 1] - _e_vals[idx - 1])
 
         _gam_vals[idx] = - np.sin(_dh_dE * _drag_val / _m)
 
