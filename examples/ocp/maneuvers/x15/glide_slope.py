@@ -105,6 +105,26 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
         + _lam_e_sym * _de_dt_sym + _lam_qdyn_sym * _dqdyn_dt_sym + _lam_gam_sym * _dgam_dt_sym
 
     if _use_qdyn_expansion:
+        _ham_gam = ca.jacobian(_hamiltonian_qdyn, _gam_sym)
+        _ham_qdyn = d_dqdyn(_hamiltonian_qdyn)
+        _ham_x = ca.vcat((_ham_qdyn, _ham_gam))
+        _ham_xx = ca.jacobian(_ham_x, _x_sym)
+        _ham_xu = ca.jacobian(_ham_x, _u_sym)
+        _ham_u = ca.jacobian(_hamiltonian_h, _u_sym)
+        _ham_uu = ca.jacobian(_ham_u, _u_sym)
+
+        _f = ca.vcat((_dh_dt_sym, _dgam_dt_sym))
+        _f_x = ca.jacobian(_f, _x_sym)
+        _f_u = ca.jacobian(_f, _u_sym)
+
+        A_sym_opt = _f_x
+        B_sym_opt = _f_u
+        Q_sym_opt = _ham_xx
+        N_sym_opt = _ham_xu
+        R_sym_opt = _ham_uu
+
+        # TODO
+
         # ZEROTH-ORDER OUTER SOLUTION
         # From dgamdt = 0 -> u = cos(gam)
         _u_opt = ca.cos(_gam_sym)
@@ -149,6 +169,24 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
         _lam_gam_opt = 2 * _lam_e_opt * _v_sym ** 2 * _adl_sym
         _lam_h_opt = 0
 
+        _x_sym = ca.vcat((_h_sym, _gam_sym))
+
+        _ham_x = ca.jacobian(_hamiltonian_h, _x_sym)
+        _ham_xx = ca.jacobian(_ham_x, _x_sym)
+        _ham_xu = ca.jacobian(_ham_x, _u_sym)
+        _ham_u = ca.jacobian(_hamiltonian_h, _u_sym)
+        _ham_uu = ca.jacobian(_ham_u, _u_sym)
+
+        _f = ca.vcat((_dh_dt_sym, _dgam_dt_sym))
+        _f_x = ca.jacobian(_f, _x_sym)
+        _f_u = ca.jacobian(_f, _u_sym)
+
+        A_sym_opt = _f_x
+        B_sym_opt = _f_u
+        Q_sym_opt = _ham_xx
+        N_sym_opt = _ham_xu
+        R_sym_opt = _ham_uu
+
         _dham_dh = ca.jacobian(_hamiltonian_h, _h_sym)
         _d2ham_dh2 = ca.jacobian(_dham_dh, _h_sym)
 
@@ -163,12 +201,22 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
             _d2ham_dh2_opt = ca.substitute(_d2ham_dh2_opt, _original_arg, _new_arg)
             _hamiltonian_opt = ca.substitute(_hamiltonian_opt, _original_arg, _new_arg)
 
+            A_sym_opt = ca.substitute(A_sym_opt, _original_arg, _new_arg)
+            B_sym_opt = ca.substitute(B_sym_opt, _original_arg, _new_arg)
+            Q_sym_opt = ca.substitute(Q_sym_opt, _original_arg, _new_arg)
+            N_sym_opt = ca.substitute(N_sym_opt, _original_arg, _new_arg)
+            R_sym_opt = ca.substitute(R_sym_opt, _original_arg, _new_arg)
+
         _zero_fun = ca.Function('dH_dh', (_h_sym, _e_sym), (_dham_dh_opt,), ('h', 'E'), ('dH_dh',))
         _zero_jac = ca.Function('d2H_dh2', (_h_sym, _e_sym), (_d2ham_dh2_opt,), ('h', 'E'), ('d2H_dh2',))
         _guess_gam = False
         # _hamiltonian_opt_fun = ca.Function('H', (_h_sym, _e_sym), (_hamiltonian_opt,), ('h', 'E'), ('H',))
-    _mach_fun = ca.Function('M', (_h_sym, _e_sym), (_mach_sym,), ('h', 'E'), ('M',))
 
+    A_fun = ca.Function('A', (_h_sym, _gam_sym, _e_sym), (A_sym_opt,), ('h', 'gam', 'E'), ('A',))
+    B_fun = ca.Function('B', (_h_sym, _gam_sym, _e_sym), (B_sym_opt,), ('h', 'gam', 'E'), ('B',))
+    Q_fun = ca.Function('Q', (_h_sym, _gam_sym, _e_sym), (Q_sym_opt,), ('h', 'gam', 'E'), ('Q',))
+    N_fun = ca.Function('N', (_h_sym, _gam_sym, _e_sym), (N_sym_opt,), ('h', 'gam', 'E'), ('N',))
+    R_fun = ca.Function('R', (_h_sym, _gam_sym, _e_sym), (R_sym_opt,), ('h', 'gam', 'E'), ('R',))
 
     # Initial guess for gamma generated from L = W, d(Qdyn)/dt = 0
     _dh_dE_expr = 1 / (_g_sym - 0.5 * (_drho_dh_sym / _rho_sym) * _v_sym**2)
@@ -176,17 +224,6 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
     _gam_qdyn0_fun_n1 = ca.Function('gam', (_h_sym, _e_sym),
                                     (_gam_n1_expr,),
                                     ('h', 'E'), ('gam',))
-
-    # # Direct Solution (minimize drag w.r.t. h)
-    # _cl_n1 = _weight_sym / (_qdyn_sym * s_ref)
-    # _cd_n1 = cd0_fun(_mach_sym) + cdl_fun(_mach_sym) * _cl_n1**2
-    # _drag_n1 = (_qdyn_sym * s_ref) * _cd_n1
-    # _ddrag_dh = ca.jacobian(_drag_n1, _h_sym)
-    # _d2drag_dh2 = ca.jacobian(_ddrag_dh, _h_sym)
-    #
-    # _drag_n1_fun = ca.Function('D', (_h_sym, _e_sym), (_drag_n1,), ('h', 'E'), ('D',))
-    # _ddrag_dh_fun = ca.Function('Dh', (_h_sym, _e_sym), (_ddrag_dh,), ('h', 'E'), ('Dh',))
-    # _d2drag_dh2_fun = ca.Function('Dhh', (_h_sym, _e_sym), (_d2drag_dh2,), ('h', 'E'), ('Dhh',))
 
     _g_max = mu / (Re + _h_min) ** 2
     _g_min = mu / (Re + _h_max) ** 2
@@ -229,17 +266,6 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
 
         # Altitude should be monotonically increasing
         _h_min_i = _h_guess
-
-        # # Glide slope occurs where (in energy state) Drag is minimize @ constant energy
-        # _min_sol = sp.optimize.minimize(fun=lambda _h_trial: np.asarray(_drag_n1_fun(_h_trial, _e_i)).flatten(),
-        #                                 jac=lambda _h_trial: np.asarray(_ddrag_dh_fun(_h_trial, _e_i)).flatten(),
-        #                                 hess=lambda _h_trial: np.asarray(_d2drag_dh2_fun(_h_trial, _e_i)).flatten(),
-        #                                 x0=np.asarray((_h_guess,)),
-        #                                 bounds=((_h_min_i, _h_max),),
-        #                                 method='trust-constr',
-        #                                 tol=1e-10
-        #                                 )
-        # _h_i = _min_sol.x[0]
 
         # Glide slope occurs where (in asymptotic expansion) the the Hamiltonian is stationary w.r.t. altitude
         if _guess_gam:
@@ -320,6 +346,37 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
 
             _gam_vals[idx] = - np.arcsin(_dh_dE * _drag_val / _m)
 
+    # Neighboring Feedback Gains
+    if _use_qdyn_expansion:
+        _k_qdyn_vals = np.zeros(_e_vals.shape)
+        _k_h_vals = np.zeros(_e_vals.shape)
+        _k_gam_vals = np.zeros(_e_vals.shape)
+    else:
+        _k_qdyn_vals = np.zeros(_e_vals.shape)
+        _k_h_vals = np.empty(_e_vals.shape)
+        _k_gam_vals = np.empty(_e_vals.shape)
+
+        for idx, (_h_val, _gam_val, _e_val) in enumerate(zip(_h_vals, _gam_vals, _e_vals)):
+            _a = np.asarray(A_fun(_h_val, _gam_val, _e_val))
+            _b = np.asarray(B_fun(_h_val, _gam_val, _e_val))
+            _q = np.asarray(Q_fun(_h_val, _gam_val, _e_val))
+            _r = np.asarray(R_fun(_h_val, _gam_val, _e_val))
+            _n = np.asarray(N_fun(_h_val, _gam_val, _e_val))
+            _p = sp.linalg.solve_continuous_are(
+                a=_a,
+                b=_b,
+                q=_q,
+                r=_r,
+                s=_n
+            )
+            _k = np.linalg.solve(_r, _b.T @ _p + _n.T)
+            _k_h_vals[idx] = _k[0, 0]
+            _k_gam_vals[idx] = _k[0, 1]
+
+    _k_qdyn_interp = sp.interpolate.pchip(_e_vals, _k_qdyn_vals)
+    _k_h_interp = sp.interpolate.pchip(_e_vals, _k_h_vals)
+    _k_gam_interp = sp.interpolate.pchip(_e_vals, _k_gam_vals)
+
     independent_var_lower = independent_var.lower()
     if independent_var_lower in ('v', 'velocity'):
         _h_interp = sp.interpolate.pchip(_v_vals, _h_vals)
@@ -347,115 +404,20 @@ def get_glide_slope(_m, _e_vals: Optional[np.array] = None,
         _drag_interp = sp.interpolate.pchip(_e_vals, _drag_vals)
         _gam_interp = sp.interpolate.pchip(_e_vals, _gam_vals)
 
-    return _h_interp, _v_interp, _gam_interp, _drag_interp
+    _interp_dict = {
+        'h': _h_interp,
+        'v': _v_interp,
+        'D': _drag_interp,
+        'gam': _gam_interp,
+        'k_gam': _k_gam_interp
+    }
 
+    if _use_qdyn_expansion:
+        _interp_dict['k_qdyn'] = _k_qdyn_interp
+    else:
+        _interp_dict['k_h'] = _k_h_interp
 
-def get_glide_slope_neighboring_feedback(_m, _h_interp, _use_qdyn_expansion: bool = False):
-    # DERIVE GLIDE SLOPE FROM HAMILTONIAN
-    # States
-    _e_sym = ca.SX.sym('e', 1)
-    _h_sym = ca.SX.sym('h', 1)
-    _gam_sym = ca.SX.sym('gam', 1)
-    _lam_e_sym = ca.SX.sym('lam_e', 1)
-    _lam_h_sym = ca.SX.sym('lam_h', 1)
-    _lam_gam_sym = ca.SX.sym('lam_gam', 1)
-
-    # Control (Load Factor)
-    _u_sym = ca.SX.sym('u', 1)
-
-    # Expressions
-    _g_sym = mu / (_h_sym + Re) ** 2
-    _v_sym = (2 * (_e_sym - _g_sym * _h_sym)) ** 0.5
-    _qdyn_sym = 0.5 * dens_fun(_h_sym) * _v_sym ** 2
-    _mach_sym = _v_sym / sped_fun(_h_sym)
-    _weight_sym = _m * _g_sym
-    _ad0_sym = _qdyn_sym * s_ref * cd0_fun(_mach_sym) / _weight_sym
-    _adl_sym = cdl_fun(_mach_sym) * _weight_sym / (_qdyn_sym * s_ref)
-
-    # Dynamics
-    _dh_dt_sym = _v_sym * ca.sin(_gam_sym)
-    _dxn_dt_sym = _v_sym * ca.cos(_gam_sym)
-    _de_dt_sym = - _g_sym * _v_sym * (_ad0_sym + _adl_sym * _u_sym ** 2)
-    _dgam_dt_sym = _g_sym/_v_sym * (_u_sym - ca.cos(_gam_sym))
-
-    # Hamiltonian
-    _path_cost = -_dxn_dt_sym
-    _hamiltonian = _path_cost + _lam_e_sym * _de_dt_sym + _lam_h_sym * _dh_dt_sym + _lam_gam_sym * _dgam_dt_sym
-
-    # ARE Parameters
-    _x_sym = ca.vcat((_h_sym, _gam_sym))
-    _ham_x = ca.jacobian(_hamiltonian, _x_sym)
-    _ham_u = ca.jacobian(_hamiltonian, _u_sym)
-
-    _ham_xx = ca.jacobian(_ham_x, _x_sym)
-    _ham_xu = ca.jacobian(_ham_x, _u_sym)
-    _ham_uu = ca.jacobian(_ham_u, _u_sym)
-
-    _f = ca.vcat((_dh_dt_sym, _dgam_dt_sym))
-    _f_x = ca.jacobian(_f, _x_sym)
-    _f_u = ca.jacobian(_f, _u_sym)
-
-    A_sym = _f_x
-    B_sym = _f_u
-    Q_sym = _ham_xx
-    N_sym = _ham_xu
-    R_sym = _ham_uu
-
-    # Zeroth-Order Outer Solution
-    _lam_e_opt = -1 / (_g_sym * (_ad0_sym + _adl_sym))
-    _lam_gam_opt = 2 * _lam_e_opt * _v_sym ** 2 * _adl_sym
-    _lam_h_opt = 0
-
-    A_sym_opt = A_sym
-    B_sym_opt = B_sym
-    Q_sym_opt = Q_sym
-    N_sym_opt = N_sym
-    R_sym_opt = R_sym
-
-    for _original_arg, _new_arg in zip(
-            (_gam_sym, _u_sym, _lam_e_sym, _lam_gam_sym, _lam_h_sym),
-            (0, 1., _lam_e_opt, _lam_gam_opt, _lam_h_opt)
-    ):
-        A_sym_opt = ca.substitute(A_sym_opt, _original_arg, _new_arg)
-        B_sym_opt = ca.substitute(B_sym_opt, _original_arg, _new_arg)
-        Q_sym_opt = ca.substitute(Q_sym_opt, _original_arg, _new_arg)
-        N_sym_opt = ca.substitute(N_sym_opt, _original_arg, _new_arg)
-        R_sym_opt = ca.substitute(R_sym_opt, _original_arg, _new_arg)
-
-
-    A_fun = ca.Function('A', (_h_sym, _e_sym), (A_sym_opt,), ('h', 'E'), ('A',))
-    B_fun = ca.Function('B', (_h_sym, _e_sym), (B_sym_opt,), ('h', 'E'), ('B',))
-    Q_fun = ca.Function('Q', (_h_sym, _e_sym), (Q_sym_opt,), ('h', 'E'), ('Q',))
-    N_fun = ca.Function('N', (_h_sym, _e_sym), (N_sym_opt,), ('h', 'E'), ('N',))
-    R_fun = ca.Function('R', (_h_sym, _e_sym), (R_sym_opt,), ('h', 'E'), ('R',))
-
-    _e_vals = _h_interp.x
-    _h_vals = _h_interp(_e_vals)
-
-    _k_h_vals = np.empty(_e_vals.shape)
-    _k_gam_vals = np.empty(_e_vals.shape)
-
-    for idx, (_h_val, _e_val) in enumerate(zip(_h_vals, _e_vals)):
-        _a = np.asarray(A_fun(_h_val, _e_val))
-        _b = np.asarray(B_fun(_h_val, _e_val))
-        _q = np.asarray(Q_fun(_h_val, _e_val))
-        _r = np.asarray(R_fun(_h_val, _e_val))
-        _n = np.asarray(N_fun(_h_val, _e_val))
-        _p = sp.linalg.solve_continuous_are(
-            a=_a,
-            b=_b,
-            q=_q,
-            r=_r,
-            s=_n
-        )
-        _k = np.linalg.solve(_r, _b.T @ _p + _n.T)
-        _k_h_vals[idx] = _k[0, 0]
-        _k_gam_vals[idx] = _k[0, 1]
-
-    _k_h_interp = sp.interpolate.pchip(_e_vals, _k_h_vals)
-    _k_gam_interp = sp.interpolate.pchip(_e_vals, _k_gam_vals)
-
-    return _k_h_interp, _k_gam_interp
+    return _interp_dict
 
 
 if __name__ == '__main__':
@@ -471,36 +433,30 @@ if __name__ == '__main__':
     mass = weight_empty / g0
 
     # Solve with asymptotic expansion in E, h, gam
-    h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(
+    interp_dict = get_glide_slope(
         mass, _h_min=h_min, _h_max=h_max, _mach_min=mach_min, _mach_max=mach_max, _use_qdyn_expansion=False
-    )
-    k_h_interp, k_gam_interp = get_glide_slope_neighboring_feedback(
-        mass, h_interp, _use_qdyn_expansion=False
     )
 
     # Solve with asymptotic expansion in E, Qdyn, gam
-    h_interp_qdyn, v_interp_qdyn, gam_interp_qdyn, drag_interp_qdyn = get_glide_slope(
+    interp_dict_qdyn = get_glide_slope(
         mass, _h_min=h_min, _h_max=h_max, _mach_min=mach_min, _mach_max=mach_max, _use_qdyn_expansion=True
     )
-    k_qdyn_interp_qdyn, k_gam_interp_qdyn = get_glide_slope_neighboring_feedback(
-        mass, h_interp_qdyn, _use_qdyn_expansion=True
-    )
 
-    e_vals = h_interp.x
-    h_vals = h_interp(e_vals)
-    h_vals_qdyn = h_interp_qdyn(e_vals)
-    v_vals = v_interp(e_vals)
-    v_vals_qdyn = v_interp_qdyn(e_vals)
-    k_h_vals = k_h_interp(e_vals)
-    k_qdyn_vals = k_qdyn_interp_qdyn(e_vals)
-    k_gam_vals = k_gam_interp(e_vals)
-    k_gam_vals_qdyn = k_gam_interp_qdyn(e_vals)
+    e_vals = interp_dict['h'].x
+    h_vals = interp_dict['h'](e_vals)
+    h_vals_qdyn = interp_dict_qdyn['h'](e_vals)
+    v_vals = interp_dict['v'](e_vals)
+    v_vals_qdyn = interp_dict_qdyn['v'](e_vals)
+    k_h_vals = interp_dict['k_h'](e_vals)
+    k_qdyn_vals = interp_dict_qdyn['k_qdyn'](e_vals)
+    k_gam_vals = interp_dict['k_gam'](e_vals)
+    k_gam_vals_qdyn = interp_dict_qdyn['k_gam'](e_vals)
     mach_vals = v_vals / np.asarray(sped_fun(h_vals)).flatten()
     mach_vals_qdyn = v_vals_qdyn / np.asarray(sped_fun(h_vals_qdyn)).flatten()
-    gam_vals = gam_interp(e_vals)
-    gam_vals_qdyn = gam_interp_qdyn(e_vals)
-    drag_vals = drag_interp(e_vals)
-    drag_vals_qdyn = drag_interp_qdyn(e_vals)
+    gam_vals = interp_dict['gam'](e_vals)
+    gam_vals_qdyn = interp_dict_qdyn['gam'](e_vals)
+    drag_vals = interp_dict['D'](e_vals)
+    drag_vals_qdyn = interp_dict_qdyn['D'](e_vals)
     g_vals = mu / (Re + h_vals) ** 2
     g_vals_qdyn = mu / (Re + h_vals_qdyn) ** 2
     weight_vals = mass * g_vals
