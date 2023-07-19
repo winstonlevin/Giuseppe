@@ -8,7 +8,7 @@ import scipy as sp
 
 from x15_aero_model import cla_fun, cd0_fun, cdl_fun, s_ref, thrust_max, thrust_frac_min, Isp, qdyn_max
 from x15_atmosphere import mu, Re, g0, atm, dens_fun, sped_fun
-from glide_slope import get_glide_slope, get_glide_slope_neighboring_feedback
+from glide_slope import get_glide_slope
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -40,17 +40,15 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
 
 
+use_qdyn_feedback = False
 h_min = 0.
+h_buffer = 100.
 h_max = 130e3
 mach_min = 0.25
 mach_max = 7.5
-h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(
+interp_dict = get_glide_slope(
     x_dict['m'][0],
-    _h_min=h_min, _h_max=h_max, _mach_min=mach_min, _mach_max=mach_max
-)
-
-k_h_interpolant, k_gam_interpolant = get_glide_slope_neighboring_feedback(
-    x_dict['m'][0], h_interp
+    _h_min=h_min + h_buffer, _h_max=h_max, _mach_min=mach_min, _mach_max=mach_max, _use_qdyn_expansion=use_qdyn_feedback
 )
 
 # CONTROL LIMITS
@@ -119,7 +117,8 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
 
     # Conditions at glide slope
     _e = 0.5 * _x[3]**2 + _g * _x[0]
-    _h_glide = saturate(h_interp(_e), h_min, h_max)
+    _h_glide = saturate(interp_dict['h'](_e), h_min, h_max)
+    _gam_glide = interp_dict['gam'](_e)
     _g_glide = mu / (_x[0] + Re) ** 2
     _a_glide = atm.speed_of_sound(_h_glide)
     _v_glide = (max(2 * (_e - _h_glide * _g_glide), _a_glide * mach_min)) ** 0.5
@@ -136,10 +135,13 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     # _radicand = (_ad0 + _adl - (_ad0_glide + _adl_glide)) / _adl
     # _load_factor_h = np.sign(_h_glide - _x[0]) * (max(_radicand, 0)) ** 0.5
 
-    _load_factor_h = (_h_glide - _x[0]) * k_h_interpolant(_e)
+    if use_qdyn_feedback:
+        _load_factor_h = (_qdyn_glide - _qdyn) * interp_dict['k_qdyn'](_e)
+    else:
+        _load_factor_h = (_h_glide - _x[0]) * interp_dict['k_h'](_e)
 
     # _load_factor_gam = 0.
-    _load_factor_gam = (gam_interp(_e) - _x[4]) * k_gam_interpolant(_e)
+    _load_factor_gam = (_gam_glide - _x[4]) * interp_dict['k_gam'](_e)
 
     _load_factor = _load_factor0 + _load_factor_h + _load_factor_gam
 
@@ -351,9 +353,10 @@ for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
     ax_hv.plot(sol.x[3, :] * ymult[3], sol.x[0, :] * ymult[0], 'k--')
     ax_hv.plot(ivp_sol_dict['x'][3, :] * ymult[3], ivp_sol_dict['x'][0, :] * ymult[0], color=cols_gradient(jdx))
 
-ax_hv.plot(v_interp(v_interp.x), h_interp(h_interp.x), 'k', label='Glide Slope', linewidth=2.)
+ax_hv.plot(interp_dict['v'](interp_dict['v'].x), interp_dict['h'](interp_dict['h'].x),
+           'k', label='Glide Slope', linewidth=2.)
 ax_hv.plot(v_qdyn_max, h_qdyn_max, 'k--', label=r'Max $Q_{\infty}$', linewidth=2.)
-ax_hv.set_xlim(left=v_interp(v_interp.x[0]), right=v_interp(v_interp.x[-1]))
+ax_hv.set_xlim(left=interp_dict['v'](interp_dict['v'].x[0]), right=interp_dict['v'](interp_dict['v'].x[-1]))
 
 fig_hv.tight_layout()
 
@@ -366,7 +369,8 @@ if n_sols >= 3:
     ax_optimality.set_ylabel(ylabs[0])
     mappable = ax_optimality.tricontourf(v0_arr, h0_arr, 100*opt_arr,
                                          vmin=0., vmax=100., levels=np.arange(0., 101., 1.))
-    ax_optimality.plot(v_interp(v_interp.x), h_interp(h_interp.x), 'k', label='Glide Slope', linewidth=2.)
+    ax_optimality.plot(interp_dict['v'](interp_dict['v'].x), interp_dict['h'](interp_dict['h'].x),
+           'k', label='Glide Slope', linewidth=2.)
     ax_optimality.plot(v_qdyn_max, h_qdyn_max, 'k--', label=r'Max $Q_{\infty}$', linewidth=2.)
     ax_optimality.legend()
     ax_optimality.set_title(f'Min. Optimality = {np.min(opt_arr):.2%}')
