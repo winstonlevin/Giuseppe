@@ -136,19 +136,19 @@ m0 = ca.SX.sym('m0')
 m0_val = weight_empty / g0
 
 # Base initial conditions off glide slope
-h_mach_interp, v_mach_interp, gam_mach_interp, _ = get_glide_slope(m0_val,
-                                                                   _h_min=0., _h_max=atm.h_layers[-1] - 1e3,
-                                                                   _mach_min=0.25,
-                                                                   _mach_max=7.5, independent_var='mach')
-h_interp, v_h_interp, gam_h_interp, _ = get_glide_slope(m0_val,
-                                                        _h_min=0., _h_max=atm.h_layers[-1] - 1e3,
-                                                        _mach_min=0.25,
-                                                        _mach_max=7.5, independent_var='h')
+interp_dict_mach = get_glide_slope(m0_val,
+                                   _h_min=0., _h_max=atm.h_layers[-1] - 1e3,
+                                   _mach_min=0.25,
+                                   _mach_max=7.5, independent_var='mach')
+interp_dict_h = get_glide_slope(m0_val,
+                                _h_min=0., _h_max=atm.h_layers[-1] - 1e3,
+                                _mach_min=0.25,
+                                _mach_max=7.5, independent_var='h')
 
 mach0_val = 7.0
-v0_val = v_mach_interp(mach0_val)
-h0_val = h_mach_interp(mach0_val)
-gam0_val = gam_mach_interp(mach0_val)
+v0_val = interp_dict_mach['v'](mach0_val)
+h0_val = interp_dict_mach['h'](mach0_val)
+gam0_val = interp_dict_mach['gam'](mach0_val)
 
 
 def ctrl_law(_t, _x, _p, _k):
@@ -168,14 +168,14 @@ def ctrl_law(_t, _x, _p, _k):
 
 
 machf_super_val = 1.2
-hf_super_val = h_mach_interp(machf_super_val)
-vf_super_val = v_mach_interp(machf_super_val)
-gamf_super_val = gam_mach_interp(machf_super_val)
+hf_super_val = interp_dict_mach['h'](machf_super_val)
+vf_super_val = interp_dict_mach['v'](machf_super_val)
+gamf_super_val = interp_dict_mach['gam'](machf_super_val)
 
-hf_val = h_mach_interp(0)
-vf_val = v_h_interp(hf_val)
+hf_val = 0.
+vf_val = interp_dict_h['v'](hf_val)
 machf_val = vf_val / atm.speed_of_sound(hf_val)
-gamf_val = gam_h_interp(hf_val)
+gamf_val = interp_dict_h['gam'](hf_val)
 
 ocp.add_constant(h0, h0_val)
 ocp.add_constant(xn0, 0.)
@@ -305,18 +305,20 @@ if SWEEP_ENVELOPE:
     last_sol = deepcopy(sol_set_gam0.solutions[-1])
     h0_last = qdyn_max2h(7.0 * atm.speed_of_sound(125e3))
     cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-    cont.add_linear_series(10, {'v0': 7.0 * atm.speed_of_sound(h0_last), 'h0': h0_last}, keep_bisections=False)
+    cont.add_linear_series(10, {'h0': h0_last}, keep_bisections=False)
     sol_set_sweep_envelope = cont.run_continuation()
 
-    for mach in np.arange(6.5, 1.0 - 0.5, -0.5):
+    for mach in [1.5]: # np.arange(6.5, 1.0 - 0.5, -0.5):
+        velocity = mach * atm.speed_of_sound(125e3)
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-        cont.add_linear_series(10, {'v0': mach * atm.speed_of_sound(125e3)})
+        cont.add_linear_series(10, {'v0': velocity})
         last_sol = cont.run_continuation().solutions[-1]
-        h0_last = qdyn_max2h(mach * atm.speed_of_sound(125e3))
+        h0_last = qdyn_max2h(velocity)
+        print(f'hf = {h0_last} ft, Qdyn = {0.5 * atm.density(h0_last) * velocity**2} psf')
 
-        cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-        cont.add_linear_series(10, {'h0': h0_last}, keep_bisections=False)
-        new_sol_set = cont.run_continuation()
-        sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
+        # cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
+        # cont.add_linear_series(10, {'h0': h0_last}, keep_bisections=True)
+        # new_sol_set = cont.run_continuation()
+        # sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
 
     sol_set_sweep_envelope.save('sol_set_range_sweep_envelope.data')

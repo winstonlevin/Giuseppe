@@ -15,7 +15,7 @@ gradient = mpl.colormaps['viridis'].colors
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 PLOT_REFERENCE = True
-DATA = 'altitude'  # {altitude, velocity, crossrange, sweep_envelope}
+DATA = 'sweep_envelope'  # {altitude, velocity, crossrange, sweep_envelope}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
@@ -92,12 +92,12 @@ for idx, sol in enumerate(sols):
 
     if idx == 0:
         aux_ref = auxiliaries[0]
-        h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(
+        interp_dict = get_glide_slope(
             aux_ref['m'][0], _e_vals=aux_ref['e'], _h_guess0=aux_ref['h'][-1],
             _h_min=0., _h_max=130e3, _mach_min=0.25, _mach_max=7.5
         )
 
-    auxiliaries[idx]['v_glide'] = v_interp(auxiliaries[idx]['e'])
+    auxiliaries[idx]['v_glide'] = interp_dict['v'](auxiliaries[idx]['e'])
     auxiliaries[idx]['h_glide'] = (auxiliaries[idx]['e'] - 0.5 * auxiliaries[idx]['v_glide']**2) / auxiliaries[idx]['g']
     auxiliaries[idx]['rho_glide'] = np.asarray(dens_fun(auxiliaries[idx]['h_glide'])).flatten()
     auxiliaries[idx]['qdyn_glide'] = 0.5 * auxiliaries[idx]['rho_glide'] * auxiliaries[idx]['v_glide'] ** 2
@@ -114,10 +114,10 @@ for idx, sol in enumerate(sols):
 
     auxiliaries[idx]['dh'] = auxiliaries[idx]['h'] - auxiliaries[idx]['h_glide']
     auxiliaries[idx]['dv'] = auxiliaries[idx]['v'] - auxiliaries[idx]['v_glide']
-    auxiliaries[idx]['dgam'] = auxiliaries[idx]['gam'] - gam_interp(auxiliaries[idx]['e'])
+    auxiliaries[idx]['dgam'] = auxiliaries[idx]['gam'] - interp_dict['gam'](auxiliaries[idx]['e'])
     auxiliaries[idx]['dalp'] = auxiliaries[idx]['alpha'] - auxiliaries[idx]['alpha_mg']
     auxiliaries[idx]['ddrag'] = (auxiliaries[idx]['drag']
-                                 - drag_interp(auxiliaries[idx]['e'])) / auxiliaries[idx]['weight']
+                                 - interp_dict['D'](auxiliaries[idx]['e'])) / auxiliaries[idx]['weight']
 
     # _cgam = np.cos(auxiliaries[idx]['gam'])
     _cgam = 1.
@@ -155,7 +155,7 @@ for idx, lab in enumerate(ylabs):
         ax.plot(sol.t, sol.x[idx, :] * ymult[idx], color=cols_gradient(jdx))
 
 if PLOT_REFERENCE:
-    axes_states[4].plot(aux_ref['t'], gam_interp(aux_ref['e']) * ymult[4], 'k--', label='Glide Slope')
+    axes_states[4].plot(aux_ref['t'], interp_dict['gam'](aux_ref['e']) * ymult[4], 'k--', label='Glide Slope')
     axes_states[4].legend()
 
 fig_states.tight_layout()
@@ -251,7 +251,8 @@ if PLOT_AUXILIARY:
         ax_ld.plot(sol.t, aux['lift'] / aux['drag'], color=cols_gradient(idx))
 
         ax_e.plot(sol.t, aux['e'], color=cols_gradient(idx))
-        ax_hv.plot(aux['mach'], aux['h'], color=cols_gradient(idx))
+        ax_hv.plot(aux['v'], aux['h'], color=cols_gradient(idx))
+        # ax_hv.plot(aux['mach'], aux['h'], color=cols_gradient(idx))
         ax_qdyn.plot(sol.t, aux['qdyn'], color=cols_gradient(idx))
         ax_ne.plot(aux['xe'], aux['xn'], color=cols_gradient(idx))
 
@@ -271,7 +272,7 @@ if PLOT_AUXILIARY:
     if PLOT_REFERENCE:
         ax_ld.legend()
 
-        ax_hv.plot(aux_ref['mach'], h_interp(aux_ref['e']), 'k--', label='Min{D} (E const)')
+        ax_hv.plot(aux_ref['mach'], interp_dict['h'](aux_ref['e']), 'k--', label='Min{D} (E const)')
         ax_hv.legend()
         # ax_qdyn.legend()
 
