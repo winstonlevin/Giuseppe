@@ -308,7 +308,7 @@ if SWEEP_ENVELOPE:
     cont.add_linear_series(10, {'h0': h0_last}, keep_bisections=False)
     sol_set_sweep_envelope = cont.run_continuation()
 
-    for mach in [1.5]: # np.arange(6.5, 1.0 - 0.5, -0.5):
+    for mach in np.arange(6.5, 1.0 - 0.5, -0.5):
         velocity = mach * atm.speed_of_sound(125e3)
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
         cont.add_linear_series(10, {'v0': velocity})
@@ -316,9 +316,9 @@ if SWEEP_ENVELOPE:
         h0_last = qdyn_max2h(velocity)
         print(f'hf = {h0_last} ft, Qdyn = {0.5 * atm.density(h0_last) * velocity**2} psf')
 
-        # cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
-        # cont.add_linear_series(10, {'h0': h0_last}, keep_bisections=True)
-        # new_sol_set = cont.run_continuation()
-        # sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
+        cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(last_sol))
+        cont.add_linear_series(10, {'h0': h0_last}, keep_bisections=False)
+        new_sol_set = cont.run_continuation()
+        sol_set_sweep_envelope.solutions.extend(new_sol_set.solutions)
 
     sol_set_sweep_envelope.save('sol_set_range_sweep_envelope.data')
