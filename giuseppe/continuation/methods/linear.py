@@ -168,21 +168,6 @@ class BisectionLinearSeries(LinearSeries):
     def _generate_next_constants(self):
         next_constants = copy(self.last_converged_solution.k)
         next_constants[self.constant_indices] += self._step_size * 2 ** -self.bisection_counter
-
-        # TODO - remove
-        if self.second_bisection_half:
-            progress_text = '(2/2)'
-        else:
-            progress_text = '(1/2)'
-        print(
-            f'\nSubsteps: {self.substeps_left} | Bi. Count.: {self.bisection_counter} {progress_text} | Step: {int(self.current_step)} | Total steps: {int(self.num_steps)}')
-        print(f'Current constants: {self.last_converged_solution.k[self.constant_indices][0]}')
-        # print(self.last_converged_solution.k[self.constant_indices])
-        print(f'Step Size: {self._step_size[0] * 2 ** -self.bisection_counter}')
-        # print(self._step_size * 2 ** -self.bisection_counter)
-        print(f'Next constants: {next_constants[self.constant_indices][0]}')
-        # print(next_constants[self.constant_indices])
-
         return next_constants
 
     def __repr__(self):
