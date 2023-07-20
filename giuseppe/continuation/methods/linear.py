@@ -102,12 +102,16 @@ class BisectionLinearSeries(LinearSeries):
 
         self.max_bisections: int = max_bisections
         self.bisection_counter: int = 0
+        self.second_bisection_half: bool = True
+        self.substeps_left: int = 1
         self.keep_bisections = keep_bisections
         self.last_converged_solution = None
 
     def __iter__(self):
         super().__iter__()
         self.bisection_counter = 0
+        self.second_bisection_half: bool = True
+        self.substeps_left: int = 1
         return self
 
     def __next__(self):
@@ -118,18 +122,38 @@ class BisectionLinearSeries(LinearSeries):
                 raise StopIteration
 
             self.current_step += 1
-            next_constants = self._generate_next_constants()
 
             if self.bisection_counter > 0:
-                self.bisection_counter -= 1
+                # If the first half of a bisection is completed, move to the second half.
+                # If the second half is completed, move up a bisection level.
+                if not self.second_bisection_half:
+                    self.second_bisection_half = True
+                else:
+                    self.bisection_counter -= 1
 
+                # The bisection being successfully completed, there is one fewer substeps left.
+                self.substeps_left -= 1
+
+                # Reset Bisection counter when the original step is completed
+                if self.substeps_left == 0:
+                    self.bisection_counter = 0
+                    self.substeps_left = 1
+
+                # By default, the bisected solutions are inserted into the solution set. If the user does not want these
+                # solutions, damn them now.
                 if not self.keep_bisections:
                     self.solution_set.damn_sol()
+
+            next_constants = self._generate_next_constants()
 
         else:
             self.solution_set.damn_sol()
             if self.bisection_counter < self.max_bisections:
+                # Begin first half of a new bisection. This lowers the bisection level and introduces a new solution.
+                # Additionally, the substeps left counter was wrongly decremented, so it must be incremented twice.
                 self.bisection_counter += 1
+                self.second_bisection_half = False
+                self.substeps_left += 1
                 self.num_steps += 1
                 next_constants = self._generate_next_constants()
 
@@ -146,7 +170,12 @@ class BisectionLinearSeries(LinearSeries):
         next_constants[self.constant_indices] += self._step_size * 2 ** -self.bisection_counter
 
         # TODO - remove
-        print(f'\nBi. Count.: {self.bisection_counter} | Step: {int(self.current_step)} | Total steps: {int(self.num_steps)}')
+        if self.second_bisection_half:
+            progress_text = '(2/2)'
+        else:
+            progress_text = '(1/2)'
+        print(
+            f'\nSubsteps: {self.substeps_left} | Bi. Count.: {self.bisection_counter} {progress_text} | Step: {int(self.current_step)} | Total steps: {int(self.num_steps)}')
         print(f'Current constants: {self.last_converged_solution.k[self.constant_indices][0]}')
         # print(self.last_converged_solution.k[self.constant_indices])
         print(f'Step Size: {self._step_size[0] * 2 ** -self.bisection_counter}')
