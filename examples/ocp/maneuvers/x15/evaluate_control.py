@@ -86,7 +86,7 @@ def generate_constant_ctrl(_const: float) -> Callable:
 
 def alpha_max_ld(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
     _mach = saturate(_x[3] / atm.speed_of_sound(_x[0]), mach_min, mach_max)
-    _alpha = float(cd0_fun(_mach) / cdl_fun(_mach)) ** 0.5 * float(cla_fun(_mach))
+    _alpha = float(cd0_fun(_mach) / cdl_fun(_mach)) ** 0.5 / float(cla_fun(_mach))
     _alpha = saturate(_alpha, alpha_min, alpha_max)
     return _alpha
 

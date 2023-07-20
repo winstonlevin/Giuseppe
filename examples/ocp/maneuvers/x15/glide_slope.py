@@ -1,5 +1,3 @@
-import os
-import sys
 from typing import Optional
 
 import numpy as np
@@ -43,14 +41,6 @@ def drho_dh(_h):
     if len(_drho_dh) == 1:
         _drho_dh = _drho_dh[0]
     return _drho_dh
-
-
-def block_print():
-    sys.stdout = open(os.devnull, 'w')
-
-
-def enable_print():
-    sys.stdout = sys.__stdout__
 
 
 def get_glide_slope(_m, _e_vals: Optional[np.array] = None,

@@ -19,7 +19,7 @@ DATA = 'sweep_envelope'  # {altitude, velocity, crossrange, sweep_envelope}
 
 with open('sol_set_range_' + DATA + '.data', 'rb') as f:
     sols = pickle.load(f)
-    # sols = [sols[0], sols[25], sols[50], sols[-1]]
+    sols = [sols[0], sols[25], sols[50], sols[-1]]
     # sols = [sols[0]]
 
 # Process Data
@@ -34,6 +34,10 @@ def cols_gradient(n):
 
 
 auxiliaries = [{} for _ in range(len(sols))]
+aux_ref = auxiliaries[0]
+interp_dict = get_glide_slope(
+    _m=sols[0].x[-1, 0], _h_min=0., _h_max=130e3, _mach_min=0.25, _mach_max=7.0, _use_qdyn_expansion=True
+)
 
 for idx, sol in enumerate(sols):
     auxiliaries[idx][sol.annotations.independent] = sol.t
@@ -75,7 +79,7 @@ for idx, sol in enumerate(sols):
         auxiliaries[idx]['weight'] / (_qdyn_s_ref * auxiliaries[idx]['cla']) \
         * np.cos(auxiliaries[idx]['gam']) / np.cos(auxiliaries[idx]['phi'])
     auxiliaries[idx]['alpha_ld'] = \
-        (auxiliaries[idx]['cd0'] / auxiliaries[idx]['cdl']) ** 0.5 * auxiliaries[idx]['cla']
+        (auxiliaries[idx]['cd0'] / auxiliaries[idx]['cdl']) ** 0.5 / auxiliaries[idx]['cla']
     auxiliaries[idx]['ld_max'] = \
         auxiliaries[idx]['cla'] * auxiliaries[idx]['alpha_ld'] \
         / (auxiliaries[idx]['cd0']
@@ -89,13 +93,6 @@ for idx, sol in enumerate(sols):
     auxiliaries[idx]['ADL'] = auxiliaries[idx]['cdl'] * auxiliaries[idx]['weight'] / _qdyn_s_ref
 
     auxiliaries[idx]['load_asymptotic'] = np.empty(sol.t.shape)
-
-    if idx == 0:
-        aux_ref = auxiliaries[0]
-        interp_dict = get_glide_slope(
-            aux_ref['m'][0], _e_vals=aux_ref['e'], _h_guess0=aux_ref['h'][-1],
-            _h_min=0., _h_max=130e3, _mach_min=0.25, _mach_max=7.5
-        )
 
     auxiliaries[idx]['v_glide'] = interp_dict['v'](auxiliaries[idx]['e'])
     auxiliaries[idx]['h_glide'] = (auxiliaries[idx]['e'] - 0.5 * auxiliaries[idx]['v_glide']**2) / auxiliaries[idx]['g']
@@ -231,16 +228,16 @@ if PLOT_AUXILIARY:
     fig_aero.tight_layout()
 
     # PLOT ENERGY STATE
-    xlabs = (t_label, r'$M$', t_label, r'$x_E$')
-    ylabs = (r'Energy [ft$^2$/s$^2$]', 'h [ft]', r'$q_{\infty}$ [psf]', r'$x_N$')
+    xlabs = (r'$E$ [ft$^2$/s$^2$]', r'$M$', r'$E$ [ft$^2$/s$^2$]', r'$x_E$ [ft]')
+    ylabs = (r'$\gamma$ [deg]', 'h [ft]', r'$q_{\infty}$ [psf]', r'$x_N$ [ft]')
     fig_energy_state = plt.figure()
 
-    ax_e = fig_energy_state.add_subplot(221)
+    ax_gam = fig_energy_state.add_subplot(221)
     ax_hv = fig_energy_state.add_subplot(222)
     ax_qdyn = fig_energy_state.add_subplot(223)
     ax_ne = fig_energy_state.add_subplot(224)
 
-    for ax, x_lab, y_lab in zip((ax_e, ax_hv, ax_qdyn, ax_ne), xlabs, ylabs):
+    for ax, x_lab, y_lab in zip((ax_gam, ax_hv, ax_qdyn, ax_ne), xlabs, ylabs):
         ax.grid()
         ax.set_xlabel(x_lab)
         ax.set_ylabel(y_lab)
@@ -250,10 +247,9 @@ if PLOT_AUXILIARY:
         ax_drag.plot(sol.t, aux['drag'] / aux['weight'], color=cols_gradient(idx))
         ax_ld.plot(sol.t, aux['lift'] / aux['drag'], color=cols_gradient(idx))
 
-        ax_e.plot(sol.t, aux['e'], color=cols_gradient(idx))
-        ax_hv.plot(aux['v'], aux['h'], color=cols_gradient(idx))
-        # ax_hv.plot(aux['mach'], aux['h'], color=cols_gradient(idx))
-        ax_qdyn.plot(sol.t, aux['qdyn'], color=cols_gradient(idx))
+        ax_gam.plot(aux['e'], aux['gam'] * 180/np.pi, color=cols_gradient(idx))
+        ax_hv.plot(aux['mach'], aux['h'], color=cols_gradient(idx))
+        ax_qdyn.plot(aux['e'], aux['qdyn'], color=cols_gradient(idx))
         ax_ne.plot(aux['xe'], aux['xn'], color=cols_gradient(idx))
 
         if PLOT_REFERENCE:
@@ -271,6 +267,9 @@ if PLOT_AUXILIARY:
 
     if PLOT_REFERENCE:
         ax_ld.legend()
+
+        ax_gam.plot(aux_ref['e'], interp_dict['gam'](aux_ref['e']) * 180/np.pi, 'k--', label='Min{D} (E const)')
+        ax_qdyn.plot(aux_ref['e'], aux_ref['qdyn_glide'], 'k--', label='Min{D} (E const)')
 
         ax_hv.plot(aux_ref['mach'], interp_dict['h'](aux_ref['e']), 'k--', label='Min{D} (E const)')
         ax_hv.legend()
