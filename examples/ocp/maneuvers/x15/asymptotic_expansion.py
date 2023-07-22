@@ -180,5 +180,29 @@ def derive_expansion_equations(_use_qdyn_expansion: bool = False):
     return _expansion_dict
 
 
+def solve_newton(_x, _fun: ca.Function, _jac: ca.Function, _max_iter: int, _fun_tol: float):
+    # TODO -- Compare with Giuseppe solve Newton and correct
+    for idx in range(_max_iter):
+        _f_prev = _fun(_x)
+        _x_step = -ca.solve(_jac(_x), _f_prev)
+        _x_trial = _x + _x_step
+        _f = _fun(_x_trial)
+
+        _damp = 1.
+        while _damp > 0.5**4 and _f > _f_prev:
+            _damp *= 0.5
+            _x_trial = _x + _damp * _x_step
+            _f = _fun(_x_trial)
+
+        _x = _x_trial
+
+    return _x
+
+
+def get_expansion_control_law(_expansion_dict):
+    # TODO implement
+    return None
+
+
 if __name__ == '__main__':
     expansion_dict = derive_expansion_equations(_use_qdyn_expansion=True)
