@@ -7,8 +7,11 @@ import casadi as ca
 from x15_aero_model import cd0_fun, cdl_fun, cla_fun, s_ref
 from x15_atmosphere import atm, dens_fun, sped_fun, mu, Re, g0
 
+# TODO - remove references to glide slope
+from glide_slope import get_glide_slope
 
-def derive_expansion_equations(_use_qdyn_expansion: bool = False):
+
+def derive_expansion_equations(_glide_slope_dict: dict, _use_qdyn_expansion: bool = False):
     # States
     _m_sym = ca.SX.sym('m', 1)
     _e_sym = ca.SX.sym('e', 1)
@@ -181,28 +184,245 @@ def derive_expansion_equations(_use_qdyn_expansion: bool = False):
 
 
 def solve_newton(_x, _fun: ca.Function, _jac: ca.Function, _max_iter: int, _fun_tol: float):
-    # TODO -- Compare with Giuseppe solve Newton and correct
+    _f_prev = _fun(_x)
+    _f_norm_prev = np.linalg.norm(_f_prev)
+
     for idx in range(_max_iter):
-        _f_prev = _fun(_x)
         _x_step = -ca.solve(_jac(_x), _f_prev)
         _x_trial = _x + _x_step
         _f = _fun(_x_trial)
+        _f_norm = np.linalg.norm(_f)
 
         _damp = 1.
-        while _damp > 0.5**4 and _f > _f_prev:
+        while _damp > 0.5**4 and _f_norm > _f_norm_prev:
             _damp *= 0.5
             _x_trial = _x + _damp * _x_step
             _f = _fun(_x_trial)
+            _f_norm = np.linalg.norm(_f)
 
         _x = _x_trial
+        _f_prev = _f
+        _f_norm_prev = _f_norm
+
+        if np.linalg.norm(_f) < _fun_tol:
+            break
 
     return _x
 
 
-def get_expansion_control_law(_expansion_dict):
-    # TODO implement
-    return None
+def get_solution_interpolant(
+        _m: float,
+        _expansion_dict: Optional[dict] = None, _use_qdyn_expansion: bool = False,
+        _e_vals: Optional[np.array] = None, _h_vals: Optional[np.array] = None,
+        _h_guess0: Optional[float] = None, _gam_guess0: Optional[float] = None,
+        _h_min: float = 0., _h_max: float = 100e3,
+        _gam_min: float = -80.*np.pi/180., _gam_max: float = 80.,
+        _mach_min: float = 0.25, _mach_max: float = 0.9
+):
+    if _expansion_dict is None:
+        _expansion_dict = derive_expansion_equations(_use_qdyn_expansion=_use_qdyn_expansion)
+
+    if _e_vals is None:
+        # Space based on altitude range (note: steps not linear w.r.t. h)
+        _n_e_vals = int(np.ceil((_h_max - _h_min)/100.))
+
+        _g_max = mu / (Re + _h_min) ** 2
+        _g_min = mu / (Re + _h_max) ** 2
+        _e_min = _g_max * _h_min + 0.5 * (_mach_min * atm.speed_of_sound(_h_min)) ** 2
+        _e_max = _g_min * _h_max + 0.5 * (_mach_max * atm.speed_of_sound(_h_max)) ** 2
+        _e_vals = np.linspace(_e_min, _e_max, _n_e_vals)
+
+    _h_vals = np.empty(_e_vals.shape)
+    _gam_vals = np.empty(_e_vals.shape)
+    _lam_e_vals = np.empty(_e_vals.shape)
+
+    if _h_guess0 is not None:
+        _h_guess = _h_guess0
+    else:
+        _h_guess = _h_min
+
+    if _gam_guess0 is not None:
+        _gam_guess = _gam_guess0
+    else:
+        _gam_guess = 0.
+        # _gam_guess = None
+
+    # OUTER SOLUTION ---------------------------------------------------------------------------------------------------
+    # The glide slope occurs where the del(Hamiltonian)/delh = 0 for the zeroth-order asymptotic expansion
+    idx0 = 0
+    idxf = 0
+
+    for idx in range(len(_e_vals)):
+        _e_i = _e_vals[idx]
+
+        # Altitude should be monotonically increasing
+        _h_min_i = _h_guess
+
+        # if _gam_guess is None:
+        #     _fsolve_sol = sp.optimize.fsolve(
+        #         func=lambda _gam_trial:
+        #         np.asarray(_expansion_dict['f1'](_m, _e_i, _h_guess, _gam_trial[0])[1]).flatten(),
+        #         x0=np.asarray((0.,)),
+        #         fprime=lambda _gam_trial:
+        #         np.asarray(_expansion_dict['f1_jac'](_m, _e_i, _h_guess, _gam_trial[0])[1, 1])
+        #     )
+        #     _gam_guess = _fsolve_sol[0]
+
+        # First, solve for h holding gam constant
+        _fsolve_sol = sp.optimize.fsolve(
+            func=lambda _h_trial:
+            np.asarray(_expansion_dict['f1'](_m, _e_i, _h_trial[0], _gam_guess)[0]).flatten(),
+            x0=np.asarray((_h_guess,)),
+            fprime=lambda _h_trial:
+            np.asarray(_expansion_dict['f1_jac'](_m, _e_i, _h_trial[0], _gam_guess)[0, 0])
+        )
+        _h_guess = _fsolve_sol[0]
+
+        # Glide slope solved from f1
+        _fsolve_sol = sp.optimize.fsolve(
+            func=lambda _x_trial: np.asarray(_expansion_dict['f1'](_m, _e_i, _x_trial[0], _x_trial[1])).flatten(),
+            x0=np.asarray((_h_guess, _gam_guess)),
+            fprime=lambda _x_trial: np.asarray(_expansion_dict['f1_jac'](_m, _e_i, _x_trial[0], _x_trial[1]))
+        )
+
+        if _fsolve_sol[0] < _h_min:
+            _h_i = _h_min
+            _gam_i = 0.
+        else:
+            _h_i = max(min(float(_fsolve_sol[0]), _h_max), _h_min_i)
+            _gam_i = max(min(float(_fsolve_sol[1]), _gam_max), _gam_min)
+
+        # Altitude should produce nonnegative velocity
+        _g_i = mu / (Re + _h_i) ** 2
+        _h_max_i = min(_e_i / _g_i, _h_max)
+        _h_i = min(_h_i, _h_max_i)
+
+        _g_i = mu / (Re + _h_i) ** 2
+        _a_i = atm.speed_of_sound(_h_i)
+        _v_i = (2 * (_e_i - _g_i * _h_i)) ** 0.5
+        _mach_i = _v_i / _a_i
+
+        # Ensure velocity is within bounds, i.e. applying bounds does not change energy
+        if _mach_i < _mach_min:
+            idx0 = idx + 1
+            continue
+        elif _mach_i > _mach_max:
+            break
+        else:
+            idxf = idx
+
+        # Assign values if valid
+        _h_vals[idx] = _h_i
+        _gam_vals[idx] = _gam_i
+        _lam_e_vals[idx] = float(_expansion_dict['lam_E'](_m, _e_i, _h_i, _gam_i))
+
+        # Prepare guess for next iteration
+        _h_guess = _h_i
+        _gam_guess = _gam_i
+
+    # Remove invalid values where energy exceeds altitude/Mach bounds
+    _e_vals = _e_vals[idx0:idxf+1]
+    _h_vals = _h_vals[idx0:idxf+1]
+    _gam_vals = _gam_vals[idx0:idxf+1]
+    _lam_e_vals = _lam_e_vals[idx0:idxf+1]
+
+    # TODO -- remove
+    from matplotlib import pyplot as plt
+    plt.plot(_e_vals, _h_vals)
+
+    # INNER SOLUTION ---------------------------------------------------------------------------------------------------
+    _gam_inner_vals = np.empty((len(_e_vals), len(_h_vals)))
+    for idx, (_e_i, _lam_e_i, _gam_glide_i) in enumerate(zip(_e_vals, _lam_e_vals, _gam_vals)):
+        # Solve for increasing altitudes
+        if idx < idxf:
+            _gam_inner_guess = _gam_glide_i
+            for jdx, _h_i in enumerate(_h_vals[idx:]):
+
+                _g_i = mu / (Re + _h_i) ** 2
+                _v_i2 = 2 * (_e_i - _g_i * _h_i)
+
+                if _v_i2 > 0:
+                    # Glide slope solved from f1
+                    _fsolve_sol = sp.optimize.fsolve(
+                        func=lambda _x_trial: np.asarray(_expansion_dict['f2'](_m, _e_i, _h_i, _x_trial[0], _lam_e_i)).flatten(),
+                        x0=np.asarray((_gam_inner_guess,)),
+                        fprime=lambda _x_trial: np.asarray(_expansion_dict['f2_jac'](_m, _e_i, _h_i, _x_trial[0], _lam_e_i))
+                    )
+
+                    _gam_inner_vals[idx, jdx] = _fsolve_sol[0]
+                    _gam_inner_guess = _fsolve_sol[0]
+                else:
+                    # Altitude too high -> set remaining values to 0
+                    _gam_inner_vals[idx, jdx:] = 0.
+                    break
+
+        # Solve for decreasing altitudes
+        if idx > 0:
+            _gam_inner_guess = _gam_glide_i
+            for jdx, _h_i in enumerate(_h_vals[idx-1::-1]):
+                # Glide slope solved from f1
+                _fsolve_sol = sp.optimize.fsolve(
+                    func=lambda _x_trial: np.asarray(_expansion_dict['f2'](_m, _e_i, _h_i, _x_trial[0], _lam_e_i)).flatten(),
+                    x0=np.asarray((_gam_inner_guess,)),
+                    fprime=lambda _x_trial: np.asarray(_expansion_dict['f2_jac'](_m, _e_i, _h_i, _x_trial[0], _lam_e_i))
+                )
+
+                _gam_inner_vals[idx, jdx] = _fsolve_sol[0]
+                _gam_inner_guess = _fsolve_sol[0]
+
+        # TODO -- remove
+        plt.plot(_h_vals, _gam_inner_vals[idx, :])
+
+
+
+def saturate(_val, _val_min, _val_max):
+    return max(_val_min, min(_val_max, _val))
+
+
+# def get_expansion_control_law(
+#         _expansion_dict: Optional[dict] = None, _glide_slope_dict: Optional[dict] = None,
+#         _use_qdyn_expansion: bool = False, _max_iter: int = 10, _fun_tol: float = 1e-6,
+#         _mach_min: float = 0., _mach_max: float = np.inf
+# ):
+#     if _expansion_dict is None:
+#         _expansion_dict = get_expansion_control_law(_use_qdyn_expansion=_use_qdyn_expansion)
+#
+#     if _glide_slope_dict is not None:
+#         def form_initial_guess(_x):
+#             _g = mu / (Re + _x[0]) ** 2
+#             _e = _g * _x[0] + 0.5 * _x[3] ** 2
+#             _h_glide_guess = _glide_slope_dict['h'](_e)
+#             _gam_glide_guess = _glide_slope_dict['gam'](_e)
+#             return _h_glide_guess, _gam_glide_guess
+#     else:
+#         def form_initial_guess(_x):
+#
+#
+#
+#     def control_law(_x):
+#         # Conditions at current state
+#         _mach = saturate(_x[3] / atm.speed_of_sound(_x[0]), _mach_min, _mach_max)
+#         _qdyn = 0.5 * atm.density(_x[0]) * _x[3] ** 2
+#         _g = mu / (_x[0] + Re) ** 2
+#         _weight = _x[6] * _g
+#         _ad0 = float(_qdyn * s_ref * cd0_fun(_mach)) / _weight
+#         _adl = float(cdl_fun(_mach)) * _weight / (_qdyn * s_ref)
+#
+#         _cgam = np.cos(_x[4])
+#
+#         # Form Initial Guess
+#
+#
+#     return control_law
 
 
 if __name__ == '__main__':
-    expansion_dict = derive_expansion_equations(_use_qdyn_expansion=True)
+    from x15_aero_model import weight_empty
+
+    mass = weight_empty / g0
+    use_qdyn = False
+
+    glide_slope_dict = get_glide_slope(_m=mass)
+    expansion_dict = derive_expansion_equations(_glide_slope_dict=glide_slope_dict, _use_qdyn_expansion=use_qdyn)
+
+    get_solution_interpolant(_expansion_dict=expansion_dict, _m=mass)
