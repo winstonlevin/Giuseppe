@@ -210,6 +210,99 @@ def solve_newton(_x, _fun: ca.Function, _jac: ca.Function, _max_iter: int, _fun_
     return _x
 
 
+def explicit_inner_gamma(_glide_slope_dict, _m, _e):
+    # States
+    _m_sym = ca.SX.sym('m', 1)
+    _e_sym = ca.SX.sym('e', 1)
+    _h_sym = ca.SX.sym('h', 1)
+    _gam_sym = ca.SX.sym('gam', 1)
+    _lam_e_sym = ca.SX.sym('lam_e', 1)
+    _u_sym = ca.SX.sym('u', 1)
+
+    # Expressions
+    _g_sym = mu / (_h_sym + Re) ** 2
+    _v_sym = (2 * (_e_sym - _g_sym * _h_sym)) ** 0.5
+    _rho_sym = dens_fun(_h_sym)
+    _qdyn_sym = 0.5 * _rho_sym * _v_sym ** 2
+    _mach_sym = _v_sym / sped_fun(_h_sym)
+    _weight_sym = _m_sym * _g_sym
+    _ad0_sym = _qdyn_sym * s_ref * cd0_fun(_mach_sym) / _weight_sym
+    _adl_sym = cdl_fun(_mach_sym) * _weight_sym / (_qdyn_sym * s_ref)
+    _ad_sym = _ad0_sym + _adl_sym * _u_sym ** 2
+
+    # EOM
+    _ad_glide = ca.SX.sym('ad_glide', 1)
+    _ad_inner = _ad0_sym + _adl_sym * ca.cos(_gam_sym) ** 2
+    _lam_e_inner = -1 / (_g_sym * _ad_glide)
+    _u_inner = ca.cos(_gam_sym)
+    _ham_inner = -_v_sym * ca.cos(_gam_sym) \
+        + _v_sym * _ad_inner / _ad_glide \
+        + ca.tan(_gam_sym) * (2 * _adl_sym / _ad_glide * ca.cos(_gam_sym) - 1) * _v_sym * ca.sin(_gam_sym)
+
+    _zero_fun = ca.Function(
+        'Hi', (_m_sym, _e_sym, _h_sym, _gam_sym, _ad_glide), (_ham_inner,),
+        ('m', 'E', 'h', 'gam', 'AD_glide'), ('Hi_gam',)
+    )
+    _zero_jac = ca.Function(
+        'Hi_gam', (_m_sym, _e_sym, _h_sym, _gam_sym, _ad_glide),
+        (ca.jacobian(_ham_inner, _gam_sym),), ('m', 'E', 'h', 'gam', 'AD_glide'), ('Hi_gam',)
+    )
+
+    _h_min = _glide_slope_dict['h'](_glide_slope_dict['h'].x[0])
+    _v_min = _glide_slope_dict['v'](_glide_slope_dict['v'].x[0])
+    _h_max = _e - 0.5 * _v_min ** 2
+    _drag_glide = _glide_slope_dict['D'](_e)
+    _h_glide = _glide_slope_dict['h'](_e)
+    _g_glide = mu / (Re + _h_glide) ** 2
+    _ad_glide = _drag_glide / (_m * _g_glide)
+
+    _h_vals_lower = np.arange(_h_glide, _h_min, -100)
+    _h_vals_upper = np.linspace(_h_glide, _h_max, 100)
+    _gam_inner_lower_vals = np.empty(_h_vals_lower.shape)
+    _gam_inner_upper_vals = np.empty(_h_vals_upper.shape)
+
+    # Start with gam_glide and work way down
+    _gam_guess = 0. + 1e-3
+    for idx, _h_val in enumerate(_h_vals_lower):
+        _fsolve_sol = sp.optimize.fsolve(
+            func=lambda _x_trial: np.asarray(_zero_fun(_m, _e, _h_val, _x_trial[0], _ad_glide)).flatten(),
+            x0=np.asarray((_gam_guess,)),
+            # fprime=lambda _x_trial: np.asarray(_zero_jac(_m, _e, _h_val, _x_trial[0], _ad_glide))
+        )
+        if abs(_fsolve_sol[0]) > np.pi/180 * 89:
+            _gam_inner_val = np.sign(_fsolve_sol)[0] * np.pi/180 * 89
+        else:
+            _gam_inner_val = _fsolve_sol[0]
+
+        print(f'h = {_h_val} ft, gam = {_gam_inner_val * 180 / np.pi} deg')
+
+        _gam_inner_lower_vals[idx] = _gam_inner_val
+        _gam_guess = _gam_inner_val
+
+    # Start with gam_glide and work way up
+    _gam_guess = 0. - 1e-3
+    for idx, _h_val in enumerate(_h_vals_upper):
+        _fsolve_sol = sp.optimize.fsolve(
+            func=lambda _x_trial: np.asarray(_zero_fun(_m, _e, _h_val, _x_trial[0], _ad_glide)).flatten(),
+            x0=np.asarray((_gam_guess,)),
+            # fprime=lambda _x_trial: np.asarray(_zero_jac(_m, _e, _h_val, _x_trial[0], _ad_glide))
+        )
+        if abs(_fsolve_sol[0]) > np.pi/180 * 89:
+            _gam_inner_val = np.sign(_fsolve_sol)[0] * np.pi/180 * 89
+        else:
+            _gam_inner_val = _fsolve_sol[0]
+
+        _gam_inner_upper_vals[idx] = _gam_inner_val
+        _gam_guess = _gam_inner_val
+
+    _h_vals = np.concatenate((np.flip(_h_vals_lower[1:]), _h_vals_upper))
+    _gam_inner_vals = np.concatenate((np.flip(_gam_inner_lower_vals[1:]), _gam_inner_upper_vals))
+
+    _gam_inner_interp = sp.interpolate.pchip(_h_vals, _gam_inner_vals)
+
+    return _gam_inner_interp
+
+
 def get_solution_interpolant(
         _m: float,
         _expansion_dict: Optional[dict] = None, _use_qdyn_expansion: bool = False,
@@ -425,4 +518,5 @@ if __name__ == '__main__':
     glide_slope_dict = get_glide_slope(_m=mass)
     expansion_dict = derive_expansion_equations(_glide_slope_dict=glide_slope_dict, _use_qdyn_expansion=use_qdyn)
 
-    get_solution_interpolant(_expansion_dict=expansion_dict, _m=mass)
+    # get_solution_interpolant(_expansion_dict=expansion_dict, _m=mass)
+    explicit_inner_gamma(glide_slope_dict, mass, glide_slope_dict['h'].x[200])
