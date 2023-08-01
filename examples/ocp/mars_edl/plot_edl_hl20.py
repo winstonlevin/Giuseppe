@@ -94,4 +94,21 @@ for idx, ctrl in enumerate(list(sol.u)):
 
 fig_controls.tight_layout()
 
+if PLOT_COSTATE:
+    # PLOT COSTATES
+    ylabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$')
+    ymult = np.array((1., 1., 1., 1.))
+    fig_costates = plt.figure()
+    axes_costates = []
+
+    for idx, costate in enumerate(list(sol.lam)):
+        axes_costates.append(fig_costates.add_subplot(2, 2, idx + 1))
+        ax = axes_costates[-1]
+        ax.grid()
+        ax.set_xlabel(t_label)
+        ax.set_ylabel(ylabs[idx])
+        ax.plot(sol.t, costate * ymult[idx])
+
+    fig_costates.tight_layout()
+
 plt.show()
