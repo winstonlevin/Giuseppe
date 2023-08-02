@@ -15,7 +15,7 @@ hl20.set_independent('t')
 # Controls
 hl20.add_control('alpha')
 
-# States
+# States and Dynamics
 hl20.add_state('h', 'v * sin(gam)')  # Altitude [m]
 hl20.add_state('theta', 'v * cos(gam) / r')  # Downrange angle [rad]
 hl20.add_state('v', '-drag/mass - g * sin(gam)')  # Velocity [m/s]
@@ -67,14 +67,30 @@ hl20.add_constraint('terminal', 'h - hf')
 hl20.add_constraint('terminal', 'theta - thetaf')
 hl20.add_constraint('terminal', 'gam - gamf')
 
+# CONSTRAINTS
+# Control Constraint - alpha
+# Scale: O(t) = 1e2, O(V) = 1e3, O(cos(alpha)) = 1, O(cost) = 1e-1
+# O(eps_alpha) = [O(dcost) O(V)] / [O(cos(alpha)) * O(t)] = [1e-1 1e3] / [1 1e2] = 1e2 / 1e2 = 1
+# v_scale = 1e3
+# t_scale = 1e2
+# alpha_scale = 30 * d2r
+# dcost_scale = 1e-2
+# eps_alpha = dcost_scale * v_scale / (alpha_scale * t_scale)
+hl20.add_constant('alpha_max', 30 * d2r)
+hl20.add_constant('eps_alpha', 1.)
+hl20.add_inequality_constraint(
+    'control', 'alpha', '-alpha_max', 'alpha_max',
+    regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method='sin')
+)
+
 # COST FUNCTIONAL
 # Minimum terminal energy
 hl20.set_cost('0', '0', 'v')
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
-    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20).compile(use_jit_compile=False)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=True, max_nodes=100, node_buffer=10)
+    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20).compile(use_jit_compile=True)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=10)
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
@@ -90,8 +106,8 @@ with open('seed_sol_hl20.data', 'wb') as file:
 
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-# cont.add_linear_series(100, {'thetaf': 3 * d2r})  # Quarter rotation about Mars
-cont.add_linear_series(100, {'hf': 1e3, 'thetaf': 10 * d2r})  # Quarter rotation about Mars
+# cont.add_linear_series(100, {'hf': 10e3, 'thetaf': 10 * d2r})
+cont.add_linear_series(100, {'thetaf': 2.25*d2r})
 sol_set = cont.run_continuation()
 
 # Save Solution

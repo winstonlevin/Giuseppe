@@ -38,7 +38,13 @@ for key, x_val, lam_val in zip(sol.annotations.states, list(sol.x), list(sol.lam
 for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
 
-# Process Data
+# PROCESS DATA ---------------------------------------------------------------------------------------------------------
+# De-regularize control
+alpha_max = k_dict['alpha_max']
+alpha_min = -alpha_max
+alpha = 0.5 * (alpha_max - alpha_min) * np.sin(sol.u[0, :]) + 0.5 * (alpha_max + alpha_min)
+u_dict['alpha'] = alpha
+
 r2d = 180 / np.pi
 g = k_dict['mu'] / (k_dict['rm'] + x_dict['h']) ** 2
 g0 = k_dict['mu'] / k_dict['rm'] ** 2
@@ -58,6 +64,9 @@ lift = qdyn * k_dict['s_ref'] * cl
 lift_g = lift / weight
 drag = qdyn * k_dict['s_ref'] * cd
 drag_g = drag / weight
+
+dv_dt = -drag/k_dict['mass'] - g * np.sin(x_dict['gam'])
+dcost_alpha_dt = -k_dict['eps_alpha'] * np.cos(u_dict['_alpha_reg'])
 
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
@@ -84,13 +93,17 @@ ymult = np.array((r2d,))
 fig_controls = plt.figure()
 axes_u = []
 
-for idx, ctrl in enumerate(list(sol.u)):
+for idx, ctrl in enumerate(list((alpha,))):
     axes_u.append(fig_controls.add_subplot(1, 1, idx + 1))
     ax = axes_u[-1]
     ax.grid()
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, ctrl * ymult[idx])
+
+    if PLOT_AUXILIARY:
+        ax.plot(sol.t, 0*sol.t + alpha_max * ymult[idx], 'k--')
+        ax.plot(sol.t, 0*sol.t + alpha_min * ymult[idx], 'k--')
 
 fig_controls.tight_layout()
 
@@ -110,5 +123,25 @@ if PLOT_COSTATE:
         ax.plot(sol.t, costate * ymult[idx])
 
     fig_costates.tight_layout()
+
+if PLOT_AUXILIARY:
+    # PLOT COST CONTRIBUTIONS
+    ydata = (dv_dt, dcost_alpha_dt)
+    ylabs = (r'$J$', r'$\Delta{J_{\alpha}}$')
+    sup_title = f'J = {sol.cost}, Vf = {x_dict["v"][-1]} [{abs(x_dict["v"][-1]/sol.cost):.2%} of cost]'
+
+    fig_cost = plt.figure()
+    axes_cost = []
+
+    for idx, cost in enumerate(ydata):
+        axes_cost.append(fig_cost.add_subplot(2, 1, idx + 1))
+        ax = axes_cost[-1]
+        ax.grid()
+        ax.set_xlabel(t_label)
+        ax.set_ylabel(ylabs[idx])
+        ax.plot(sol.t, cost)
+
+    fig_cost.suptitle(sup_title)
+    fig_cost.tight_layout()
 
 plt.show()
