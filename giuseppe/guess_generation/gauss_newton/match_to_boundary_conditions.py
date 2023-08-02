@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Optional, Iterable
 from copy import deepcopy
 
 import numpy as np
@@ -11,7 +11,8 @@ from .gauss_newton import gauss_newton
 
 def match_constants_to_boundary_conditions(
         prob: Union[BVP, OCP, Dual], guess: Solution, rel_tol: float = 1e-4, abs_tol: float = 1e-4,
-        use_adjoint_bcs: bool = False, verbose: bool = False
+        use_adjoint_bcs: bool = False, verbose: bool = False,
+        immutable_constants: Optional[Iterable] = None
 ) -> Solution:
     """
     Projects the constant array of a guess to the problem's boundary conditions to get the closest match
@@ -28,6 +29,8 @@ def match_constants_to_boundary_conditions(
        relative tolerance
     use_adjoint_bcs : bool, default=False
     verbose : bool, default=False
+    immutable_constants : Optional[Iterable], default=None
+        iterator of constant names which projection onto boundary conditions will not change
 
     Returns
     -------
@@ -35,17 +38,26 @@ def match_constants_to_boundary_conditions(
 
     """
     guess = deepcopy(guess)
+    original_constants = deepcopy(guess.k)
 
     _compute_initial_boundary_conditions = prob.compute_initial_boundary_conditions
     _compute_terminal_boundary_conditions = prob.compute_terminal_boundary_conditions
     _t, _x, _p = guess.t, guess.x, guess.p
+
+    # Get indices in the k array for mutated constants
+    altered_constant_idces = list(np.arange(0, len(original_constants), 1))
+    if immutable_constants is not None:
+        for immutable_constant in immutable_constants:
+            altered_constant_idces.remove(guess.annotations.constants.index(immutable_constant))
 
     if use_adjoint_bcs and isinstance(prob, Dual):
         _compute_initial_adjoint_boundary_conditions = prob.compute_initial_adjoint_boundary_conditions
         _compute_terminal_adjoint_boundary_conditions = prob.compute_terminal_adjoint_boundary_conditions
         _u, _lam, _nu0, _nuf = guess.u, guess.lam, guess.nu0, guess.nuf
 
-        def _constraint_function(_k: np.ndarray):
+        def _constraint_function(_k_mutable: np.ndarray):
+            _k = deepcopy(original_constants)
+            _k[altered_constant_idces] = _k_mutable
             return np.concatenate((
                 _compute_initial_boundary_conditions(_t[0], _x[:, 0], _p, _k),
                 _compute_terminal_boundary_conditions(_t[-1], _x[:, -1], _p, _k),
@@ -53,14 +65,17 @@ def match_constants_to_boundary_conditions(
                 _compute_terminal_adjoint_boundary_conditions(_t[-1], _x[:, -1], _lam[:, -1], _u[:, -1], _p, _nuf, _k),
             ))
     else:
-        def _constraint_function(_k: np.ndarray):
+        def _constraint_function(_k_mutable: np.ndarray):
+            _k = deepcopy(original_constants)
+            _k[altered_constant_idces] = _k_mutable
             return np.concatenate((
                 _compute_initial_boundary_conditions(_t[0], _x[:, 0], _p, _k),
                 _compute_terminal_boundary_conditions(_t[-1], _x[:, -1], _p, _k),
             ))
 
-    guess.k = gauss_newton(_constraint_function, guess.k,
-                           rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose)
+    k_mutable = gauss_newton(_constraint_function, guess.k[altered_constant_idces],
+                             rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose)
+    guess.k[altered_constant_idces] = k_mutable
     return guess
 
 
