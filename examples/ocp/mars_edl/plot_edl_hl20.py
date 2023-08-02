@@ -8,6 +8,7 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
+REG_METHOD = 'atan'
 DATA = 2
 
 if DATA == 0:
@@ -42,7 +43,20 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
 # De-regularize control
 alpha_max = k_dict['alpha_max']
 alpha_min = -alpha_max
-alpha = 0.5 * (alpha_max - alpha_min) * np.sin(sol.u[0, :]) + 0.5 * (alpha_max + alpha_min)
+eps_alpha = k_dict['eps_alpha']
+alpha_reg = sol.u[0, :]
+
+if REG_METHOD in ['trig', 'sin']:
+    alpha = 0.5 * (alpha_max - alpha_min) * np.sin(alpha_reg) + 0.5 * (alpha_max + alpha_min)
+    dcost_alpha_dt = -eps_alpha * np.cos(alpha_reg)
+elif REG_METHOD in ['atan', 'arctan']:
+    alpha = (alpha_max - alpha_min) / np.pi * np.arctan(alpha_reg / eps_alpha) \
+                       + (alpha_max + alpha_min) / 2
+    dcost_alpha_dt = eps_alpha * np.log(1 + alpha_reg ** 2 / eps_alpha ** 2) / np.pi
+else:
+    alpha = np.nan * sol.t
+    dcost_alpha_dt = np.nan * sol.t
+
 u_dict['alpha'] = alpha
 
 r2d = 180 / np.pi
@@ -66,7 +80,7 @@ drag = qdyn * k_dict['s_ref'] * cd
 drag_g = drag / weight
 
 dv_dt = -drag/k_dict['mass'] - g * np.sin(x_dict['gam'])
-dcost_alpha_dt = -k_dict['eps_alpha'] * np.cos(u_dict['_alpha_reg'])
+dv = x_dict["v"][-1] - x_dict["v"][0]
 
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
@@ -128,7 +142,7 @@ if PLOT_AUXILIARY:
     # PLOT COST CONTRIBUTIONS
     ydata = (dv_dt, dcost_alpha_dt)
     ylabs = (r'$J$', r'$\Delta{J_{\alpha}}$')
-    sup_title = f'J = {sol.cost}, Vf = {x_dict["v"][-1]} [{abs(x_dict["v"][-1]/sol.cost):.2%} of cost]'
+    sup_title = f'J = {sol.cost}, DV = {dv} [{abs(dv/sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()
     axes_cost = []

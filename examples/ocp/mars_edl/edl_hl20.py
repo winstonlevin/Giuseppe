@@ -69,23 +69,22 @@ hl20.add_constraint('terminal', 'gam - gamf')
 
 # CONSTRAINTS
 # Control Constraint - alpha
-# Scale: O(t) = 1e2, O(V) = 1e3, O(cos(alpha)) = 1, O(cost) = 1e-1
-# O(eps_alpha) = [O(dcost) O(V)] / [O(cos(alpha)) * O(t)] = [1e-1 1e3] / [1 1e2] = 1e2 / 1e2 = 1
-# v_scale = 1e3
-# t_scale = 1e2
-# alpha_scale = 30 * d2r
-# dcost_scale = 1e-2
-# eps_alpha = dcost_scale * v_scale / (alpha_scale * t_scale)
-hl20.add_constant('alpha_max', 30 * d2r)
-hl20.add_constant('eps_alpha', 1.)
+alpha_reg_method = 'atan'
+alpha_max = 30 * d2r
+alpha_min = -alpha_max
+eps_alpha = 1e-2
+
+hl20.add_constant('alpha_max', alpha_max)
+hl20.add_constant('eps_alpha', eps_alpha)
 hl20.add_inequality_constraint(
     'control', 'alpha', '-alpha_max', 'alpha_max',
-    regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method='sin')
+    regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method=alpha_reg_method)
 )
 
 # COST FUNCTIONAL
 # Minimum terminal energy
-hl20.set_cost('0', '0', 'v')
+# hl20.set_cost('-v', '0', 'v')  # Formulation with terminal cost: min{Vf - V0}
+hl20.set_cost('0', '-drag/mass - g * sin(gam)', '0')  # Formulation with path cost: min{int(dV/dt)}
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
@@ -94,7 +93,15 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
-guess = giuseppe.guess_generation.auto_propagate_guess(hl20_dual, control=5 * d2r, t_span=30)
+alpha0 = 5 * d2r
+if alpha_reg_method in ['trig', 'sin']:
+    alpha_reg0 = np.asin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
+elif alpha_reg_method in ['atan', 'arctan']:
+    alpha_reg0 = eps_alpha * np.tan(0.5 * (2*alpha0 - alpha_max - alpha_min) * np.pi / (alpha_max - alpha_min))
+else:
+    alpha_reg0 = alpha0
+
+guess = giuseppe.guess_generation.auto_propagate_guess(hl20_dual, control=alpha_reg0, t_span=30)
 
 with open('guess_hl20.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -107,6 +114,7 @@ with open('seed_sol_hl20.data', 'wb') as file:
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 # cont.add_linear_series(100, {'hf': 10e3, 'thetaf': 10 * d2r})
+cont.add_logarithmic_series(100, {'eps_alpha': 5})
 cont.add_linear_series(100, {'thetaf': 2.25*d2r})
 sol_set = cont.run_continuation()
 
