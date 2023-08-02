@@ -46,33 +46,41 @@ hl20.add_constant('s_ref', 26.6)  # Reference area [m**2]
 hl20.add_constant('mass', 11000.)  # Mass [kg]
 
 # BOUNDARY CONDITIONS
+# Scaling Factors
+hl20.add_constant('t_scale', 1.)
+hl20.add_constant('h_scale', 1e4)
+hl20.add_constant('theta_scale', r2d)
+hl20.add_constant('v_scale', 1e4)
+hl20.add_constant('gam_scale', 5 * r2d)
+hl20.add_constant('alpha_scale', 30 * r2d)
+
 # Initial Conditions
 hl20.add_constant('h0', 80e3)
 hl20.add_constant('theta0', 0.)
 hl20.add_constant('v0', 4e3)
 hl20.add_constant('gam0', -5 * d2r)
 
-hl20.add_constraint('initial', 't')
-hl20.add_constraint('initial', 'h - h0')
-hl20.add_constraint('initial', 'theta - theta0')
-hl20.add_constraint('initial', 'v - v0')
-hl20.add_constraint('initial', 'gam - gam0')
+hl20.add_constraint('initial', 't/t_scale')
+hl20.add_constraint('initial', '(h - h0)/h_scale')
+hl20.add_constraint('initial', '(theta - theta0)/theta_scale')
+hl20.add_constraint('initial', '(v - v0)/v_scale')
+hl20.add_constraint('initial', '(gam - gam0)/gam_scale')
 
 # Terminal conditions
 hl20.add_constant('hf', 10e3)
 hl20.add_constant('thetaf', 1. * d2r)
 hl20.add_constant('gamf', 0. * d2r)
 
-hl20.add_constraint('terminal', 'h - hf')
-hl20.add_constraint('terminal', 'theta - thetaf')
-hl20.add_constraint('terminal', 'gam - gamf')
+hl20.add_constraint('terminal', '(h - hf)/h_scale')
+hl20.add_constraint('terminal', '(theta - thetaf)/theta_scale')
+hl20.add_constraint('terminal', '(gam - gamf)/gam_scale')
 
 # CONSTRAINTS
 # Control Constraint - alpha
-alpha_reg_method = 'atan'
+alpha_reg_method = 'sin'
 alpha_max = 30 * d2r
 alpha_min = -alpha_max
-eps_alpha = 1e-2
+eps_alpha = 100.
 
 hl20.add_constant('alpha_max', alpha_max)
 hl20.add_constant('eps_alpha', eps_alpha)
@@ -83,25 +91,44 @@ hl20.add_inequality_constraint(
 
 # COST FUNCTIONAL
 # Minimum terminal energy
-# hl20.set_cost('-v', '0', 'v')  # Formulation with terminal cost: min{Vf - V0}
-hl20.set_cost('0', '-drag/mass - g * sin(gam)', '0')  # Formulation with path cost: min{int(dV/dt)}
+hl20.add_constant('k_cost_v', 1.)
+hl20.add_constant('k_cost_alpha', 0.)
+hl20.set_cost(
+    '-v/v_scale * k_cost_v',
+    'k_cost_alpha * (alpha / alpha_scale)**2',
+    'v/v_scale * k_cost_v'
+)  # Formulation with terminal cost: min{Vf - V0}
+
+# hl20.set_cost(
+#     '0',
+#     '(-drag/mass - g * sin(gam))/v_scale * k_cost_v + k_cost_alpha * (alpha / alpha_scale)**2',
+#     '0')  # Formulation with path cost: min{int(dV/dt)}
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     hl20_dual = giuseppe.problems.symbolic.SymDual(hl20).compile(use_jit_compile=True)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=10)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=25)
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
-alpha0 = 5 * d2r
+alpha0 = 0 * d2r
 if alpha_reg_method in ['trig', 'sin']:
-    alpha_reg0 = np.asin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
+    alpha_reg0 = np.arcsin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
 elif alpha_reg_method in ['atan', 'arctan']:
     alpha_reg0 = eps_alpha * np.tan(0.5 * (2*alpha0 - alpha_max - alpha_min) * np.pi / (alpha_max - alpha_min))
 else:
     alpha_reg0 = alpha0
 
-guess = giuseppe.guess_generation.auto_propagate_guess(hl20_dual, control=alpha_reg0, t_span=30)
+immutable_constants = (
+    'mu', 'rm', 'h_ref', 'rho0',
+    'CL0', 'CL1', 'CD0', 'CD1', 'CD2', 's_ref', 'mass',
+    't_scale', 'h_scale', 'theta_scale', 'v_scale', 'gam_scale',
+    'alpha_max', 'eps_alpha', 'k_cost_v', 'k_cost_alpha'
+)
+
+guess = giuseppe.guess_generation.auto_propagate_guess(
+    hl20_dual, control=alpha_reg0, t_span=225, immutable_constants=immutable_constants
+)
 
 with open('guess_hl20.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -113,10 +140,17 @@ with open('seed_sol_hl20.data', 'wb') as file:
 
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-# cont.add_linear_series(100, {'hf': 10e3, 'thetaf': 10 * d2r})
-cont.add_logarithmic_series(100, {'eps_alpha': 5})
-cont.add_linear_series(100, {'thetaf': 2.25*d2r})
+# cont.add_linear_series(100, {'k_cost_v': 1., 'k_cost_alpha': 0.})
+# cont.add_linear_series(1, {'k_cost_v': 1.})
+# cont.add_logarithmic_series(100, {'k_cost_v': 1.})
+cont.add_linear_series(100, {'gamf': 0.})
+cont.add_logarithmic_series(100, {'eps_alpha': 1.})
+cont.add_logarithmic_series(100, {'eps_alpha': 1e-1})
+cont.add_logarithmic_series(100, {'eps_alpha': 5e-2})
+cont.add_logarithmic_series(100, {'eps_alpha': 1e-2}, bisection=10)
 sol_set = cont.run_continuation()
+
+# TODO -- I think there is singularity in algebraic control law. switch to differential.
 
 # Save Solution
 sol_set.save('sol_set_hl20.data')

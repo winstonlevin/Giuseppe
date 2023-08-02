@@ -8,7 +8,8 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-REG_METHOD = 'atan'
+RESCALE_COSTATES = False
+REG_METHOD = 'sin'
 DATA = 2
 
 if DATA == 0:
@@ -81,6 +82,7 @@ drag_g = drag / weight
 
 dv_dt = -drag/k_dict['mass'] - g * np.sin(x_dict['gam'])
 dv = x_dict["v"][-1] - x_dict["v"][0]
+cost_dv = k_dict["k_cost_v"]/k_dict["v_scale"] * dv
 
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
@@ -102,20 +104,20 @@ for idx, state in enumerate(list(sol.x)):
 fig_states.tight_layout()
 
 # PLOT CONTROL
-ylabs = (r'$\alpha$ [deg]',)
-ymult = np.array((r2d,))
+ylabs = (r'$\alpha$ [deg]', r'$\alpha_{reg}$ [deg]')
+ymult = np.array((r2d, 1))
 fig_controls = plt.figure()
 axes_u = []
 
-for idx, ctrl in enumerate(list((alpha,))):
-    axes_u.append(fig_controls.add_subplot(1, 1, idx + 1))
+for idx, ctrl in enumerate(list((alpha, alpha_reg))):
+    axes_u.append(fig_controls.add_subplot(2, 1, idx + 1))
     ax = axes_u[-1]
     ax.grid()
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, ctrl * ymult[idx])
 
-    if PLOT_AUXILIARY:
+    if PLOT_AUXILIARY and idx == 0:
         ax.plot(sol.t, 0*sol.t + alpha_max * ymult[idx], 'k--')
         ax.plot(sol.t, 0*sol.t + alpha_min * ymult[idx], 'k--')
 
@@ -124,7 +126,10 @@ fig_controls.tight_layout()
 if PLOT_COSTATE:
     # PLOT COSTATES
     ylabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$')
-    ymult = np.array((1., 1., 1., 1.))
+    if RESCALE_COSTATES:
+        ymult = np.array((k_dict['h_scale'], k_dict['theta_scale'], k_dict['v_scale'], k_dict['gam_scale']))
+    else:
+        ymult = np.array((1., 1., 1., 1.))
     fig_costates = plt.figure()
     axes_costates = []
 
@@ -140,15 +145,17 @@ if PLOT_COSTATE:
 
 if PLOT_AUXILIARY:
     # PLOT COST CONTRIBUTIONS
-    ydata = (dv_dt, dcost_alpha_dt)
-    ylabs = (r'$J$', r'$\Delta{J_{\alpha}}$')
-    sup_title = f'J = {sol.cost}, DV = {dv} [{abs(dv/sol.cost):.2%} of cost]'
+    ydata = (dv_dt * k_dict["k_cost_v"] / k_dict["v_scale"],
+             alpha * k_dict["k_cost_alpha"] / k_dict["alpha_scale"],
+             dcost_alpha_dt)
+    ylabs = (r'$J(\Delta{V})$', r'$J(\alpha)$', r'$\Delta{J_{\alpha}}$')
+    sup_title = f'J = {sol.cost}\nJ(DV) = {cost_dv} [{abs(cost_dv / sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()
     axes_cost = []
 
     for idx, cost in enumerate(ydata):
-        axes_cost.append(fig_cost.add_subplot(2, 1, idx + 1))
+        axes_cost.append(fig_cost.add_subplot(3, 1, idx + 1))
         ax = axes_cost[-1]
         ax.grid()
         ax.set_xlabel(t_label)
