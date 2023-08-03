@@ -96,6 +96,15 @@ dv_dt = -drag/k_dict['mass'] - g * np.sin(x_dict['gam'])
 dv = x_dict["v"][-1] - x_dict["v"][0]
 cost_dv = k_dict["k_cost_v"]/k_dict["v_scale"] * dv
 
+eps_n = k_dict['eps_n']
+n_max = k_dict['n_max']
+n_min = -n_max
+dcost_n = eps_n / np.cos(np.pi / 2 * (2 * lift_g - n_max - n_min) / (n_max - n_min)) - eps_n
+
+heat_rate_max = k_dict['heat_rate_max']
+heat_rate_min = -heat_rate_max
+heat_rate = k_dict['k'] * (rho / k_dict['rn']) * x_dict['v'] ** 3
+
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
 
@@ -171,15 +180,32 @@ if PLOT_AUXILIARY:
         ax.set_ylabel(ylabs[idx])
         ax.plot(sol.t, y)
 
+        if idx == 0:
+            ax.plot(sol.t, 0*sol.t + n_max, 'k--')
+            ax.plot(sol.t, 0*sol.t + n_min, 'k--')
+
         if idx == 2:
-            ax.plot(sol.t, sol.t*0 + ld_max, 'k--')
-            ax.plot(sol.t, sol.t*0 + ld_min, 'k--')
+            ax.plot(sol.t, 0*sol.t + ld_max, 'k--')
+            ax.plot(sol.t, 0*sol.t + ld_min, 'k--')
+
+    # PLOT HEAT RATE
+    fig_heat = plt.figure()
+
+    ax_heat = fig_heat.add_subplot(111)
+    ax_heat.grid()
+    ax_heat.set_xlabel('t_label')
+    ax_heat.set_ylabel(r'Heat Rate [W/m$^2$]')
+    ax_heat.plot(sol.t, heat_rate)
+    ax_heat.plot(sol.t, 0*sol.t + heat_rate_max, 'k--')
+    ax_heat.plot(sol.t, 0 * sol.t + heat_rate_min, 'k--')
+
+    fig_heat.tight_layout()
 
     # PLOT COST CONTRIBUTIONS
     ydata = (dv_dt * k_dict["k_cost_v"] / k_dict["v_scale"],
-             alpha * k_dict["k_cost_alpha"] / k_dict["alpha_scale"],
+             dcost_n,
              dcost_alpha_dt)
-    ylabs = (r'$J(\Delta{V})$', r'$J(\alpha)$', r'$\Delta{J_{\alpha}}$')
+    ylabs = (r'$J(\Delta{V})$', r'$\Delta{J(n)}$', r'$\Delta{J_{\alpha}}$')
     sup_title = f'J = {sol.cost}\nJ(DV) = {cost_dv} [{abs(cost_dv / sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()

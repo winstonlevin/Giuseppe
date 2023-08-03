@@ -32,8 +32,9 @@ hl20.add_expression('qdyn', '0.5 * rho * v ** 2')  # Dynamic Pressure [N/m**2]
 hl20.add_expression('r', 'rm + h')  # Radius [m]
 
 # Constants
+rm = 3397.e3
 hl20.add_constant('mu', 42828.371901e9)  # Mar's Gravitational Parameter [m**3/s**2]
-hl20.add_constant('rm', 3397.e3)  # Mar's radius [m]
+hl20.add_constant('rm', rm)  # Mar's radius [m]
 hl20.add_constant('h_ref', 11.1e3)  # Density reference altitude [m]
 hl20.add_constant('rho0', 0.02)  # Mars sea-level density
 
@@ -95,6 +96,21 @@ hl20.add_inequality_constraint(
     regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method=alpha_reg_method)
 )
 
+# Path Constraint - G Load
+hl20.add_constant('n_max', 4.5)
+hl20.add_constant('eps_n', 1e-3)
+hl20.add_expression('n', 'lift / (mass * g)')
+hl20.add_inequality_constraint(
+    'path', 'n', '-n_max', 'n_max',
+    regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
+)
+
+# Path Constraint - Heat Rate
+hl20.add_constant('k', 1.9027e-4)  # Heat rate constant for Mars [kg**0.5 / m]
+hl20.add_constant('rn', 1.)  # Nose radius [m]
+hl20.add_constant('heat_rate_max', 500e4)  # Max heat rate [W/m**2]
+hl20.add_expression('heat_rate', 'k * (rho / rn) * v ** 3')  # Heat Rate [W/m**2]
+
 # COST FUNCTIONAL
 # Minimum terminal energy
 hl20.add_constant('k_cost_v', 1)
@@ -117,7 +133,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
-alpha0 = -25 * d2r
+alpha0 = -20 * d2r
 if alpha_reg_method in ['trig', 'sin']:
     alpha_reg0 = np.arcsin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
 elif alpha_reg_method in ['atan', 'arctan']:
@@ -133,7 +149,7 @@ immutable_constants = (
 )
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=145., immutable_constants=immutable_constants
+    hl20_dual, control=alpha_reg0, t_span=120., immutable_constants=immutable_constants
 )
 
 with open('guess_hl20.data', 'wb') as file:
@@ -146,15 +162,15 @@ with open('seed_sol_hl20.data', 'wb') as file:
 
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(25, {'thetaf': 18*d2r})
-cont.add_linear_series(100, {'hf': 37e3, 'thetaf': 13*d2r, 'gamf': 0.})
-cont.add_linear_series(100, {'hf': 10e3, 'thetaf': 12*d2r})
-cont.add_logarithmic_series(100, {'eps_alpha': 1e-3}, bisection=10)
+cont.add_linear_series(25, {'hf': 20e3, 'thetaf': 19*d2r})
+cont.add_linear_series(100, {'hf': 33e3, 'thetaf': 15.25*d2r, 'gamf': 0.})
+cont.add_linear_series(100, {'hf': 10e3})
+cont.add_logarithmic_series(100, {'eps_alpha': 1e-3, 'eps_n': 1e-3})
+cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
+cont.add_logarithmic_series(100, {'eps_alpha': 1e-4, 'eps_n': 1e-4})
+# cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r, 'hf': (0.1 * d2r * rm) * np.tan(-1.5*d2r)})
 # cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
 sol_set = cont.run_continuation()
 
 # Save Solution
 sol_set.save('sol_set_hl20.data')
-
-# with open('sol_set_hl20.data', 'wb') as file:
-#     pickle.dump(sol_set.damned_sols, file)
