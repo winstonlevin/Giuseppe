@@ -83,25 +83,29 @@ hl20.add_constraint('terminal', '(theta - thetaf)/theta_scale')
 hl20.add_constraint('terminal', '(gam - gamf)/gam_scale')
 
 # CONSTRAINTS
+# alpha limit due to G-Load
+hl20.add_constant('n_max', 4.5)
+hl20.add_constant('n_min', -4.5)
+hl20.add_constant('k_lse', 10)  # Higher -> closer to discontinuous limit
+hl20.add_expression('alpha_n_max', '(mass * g) * n_max / (qdyn * s_ref * CL1) - CL0 / CL1')
+hl20.add_expression('alpha_n_min', '(mass * g) * n_min / (qdyn * s_ref * CL1), - CL0 / CL1')
+
 # Control Constraint - alpha
 alpha_reg_method = 'sin'
 alpha_max = 30 * d2r
 alpha_min = -alpha_max
 eps_alpha = 1e-2
 hl20.add_constant('alpha_max', alpha_max)
+hl20.add_constant('alpha_min', alpha_min)
+
+# Smoothed combination of alpha limits due to alpha min/max + G-load constraint
+hl20.add_expression('alpha_upper_limit', '-log(exp(k_lse * -alpha_max) + exp(k_lse * -alpha_n_max)) / k_lse')
+hl20.add_expression('alpha_lower_limit', ' log(exp(k_lse *  alpha_min) + exp(k_lse *  alpha_n_min)) / k_lse')
+
 hl20.add_constant('eps_alpha', eps_alpha)
 hl20.add_inequality_constraint(
-    'control', 'alpha', '-alpha_max', 'alpha_max',
+    'control', 'alpha', 'alpha_lower_limit', 'alpha_upper_limit',
     regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method=alpha_reg_method)
-)
-
-# Path Constraint - G Load
-hl20.add_constant('n_max', 4.5)
-hl20.add_constant('eps_n', 1e-3)
-hl20.add_expression('n', 'lift / (mass * g)')
-hl20.add_inequality_constraint(
-    'path', 'n', '-n_max', 'n_max',
-    regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
 )
 
 # Path Constraint - Heat Rate
