@@ -189,22 +189,33 @@ if PLOT_AUXILIARY:
             ax.plot(sol.t, 0*sol.t + ld_min, 'k--')
 
     # PLOT HEAT RATE
-    fig_heat = plt.figure()
+    ydata = (heat_rate, qdyn)
+    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]')
 
-    ax_heat = fig_heat.add_subplot(111)
-    ax_heat.grid()
-    ax_heat.set_xlabel('t_label')
-    ax_heat.set_ylabel(r'Heat Rate [W/m$^2$]')
-    ax_heat.plot(sol.t, heat_rate)
-    ax_heat.plot(sol.t, 0*sol.t + heat_rate_max, 'k--')
-    ax_heat.plot(sol.t, 0 * sol.t + heat_rate_min, 'k--')
+    fig_aux = plt.figure()
+    axes_aux = []
 
-    fig_heat.tight_layout()
+    for idx, y in enumerate(ydata):
+        axes_aux.append(fig_aux.add_subplot(2, 1, idx+1))
+        ax = axes_aux[-1]
+        ax.grid()
+        ax.set_xlabel(t_label)
+        ax.set_ylabel(ylabs[idx])
+        ax.plot(sol.t, y)
+
+    # ax_heat = fig_heat.add_subplot(111)
+    # ax_heat.grid()
+    # ax_heat.set_xlabel('t_label')
+    # ax_heat.set_ylabel(r'Heat Rate [W/m$^2$]')
+    # ax_heat.plot(sol.t, heat_rate)
+    # ax_heat.plot(sol.t, 0*sol.t + heat_rate_max, 'k--')
+    # ax_heat.plot(sol.t, 0 * sol.t + heat_rate_min, 'k--')
+
+    fig_aux.tight_layout()
 
     # PLOT COST CONTRIBUTIONS
     ydata = (dv_dt * k_dict["k_cost_v"] / k_dict["v_scale"],
-             dcost_n,
-             dcost_alpha_dt)
+             dcost_n)
     ylabs = (r'$J(\Delta{V})$', r'$\Delta{J(n)}$', r'$\Delta{J_{\alpha}}$')
     sup_title = f'J = {sol.cost}\nJ(DV) = {cost_dv} [{abs(cost_dv / sol.cost):.2%} of cost]'
 

@@ -88,7 +88,6 @@ alpha_reg_method = 'sin'
 alpha_max = 30 * d2r
 alpha_min = -alpha_max
 eps_alpha = 1e-2
-
 hl20.add_constant('alpha_max', alpha_max)
 hl20.add_constant('eps_alpha', eps_alpha)
 hl20.add_inequality_constraint(
@@ -128,8 +127,8 @@ hl20.set_cost(
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
-    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=15)
+    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=False)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=True, max_nodes=100, node_buffer=15)
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
@@ -145,7 +144,9 @@ immutable_constants = (
     'mu', 'rm', 'h_ref', 'rho0',
     'CL0', 'CL1', 'CD0', 'CD1', 'CD2', 's_ref', 'mass',
     't_scale', 'h_scale', 'theta_scale', 'v_scale', 'gam_scale',
-    'alpha_max', 'eps_alpha', 'k_cost_v', 'k_cost_alpha'
+    'alpha_max', 'eps_alpha',
+    'n_max', 'eps_n',
+    'k_cost_v', 'k_cost_alpha'
 )
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
