@@ -86,7 +86,7 @@ hl20.add_constraint('terminal', '(gam - gamf)/gam_scale')
 alpha_reg_method = 'sin'
 alpha_max = 30 * d2r
 alpha_min = -alpha_max
-eps_alpha = 1e-3
+eps_alpha = 1e-2
 
 hl20.add_constant('alpha_max', alpha_max)
 hl20.add_constant('eps_alpha', eps_alpha)
@@ -146,7 +146,11 @@ with open('seed_sol_hl20.data', 'wb') as file:
 
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
+cont.add_linear_series(25, {'thetaf': 18*d2r})
+cont.add_linear_series(100, {'hf': 37e3, 'thetaf': 13*d2r, 'gamf': 0.})
+cont.add_linear_series(100, {'hf': 10e3, 'thetaf': 12*d2r})
+cont.add_logarithmic_series(100, {'eps_alpha': 1e-3}, bisection=10)
+# cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
 sol_set = cont.run_continuation()
 
 # Save Solution
