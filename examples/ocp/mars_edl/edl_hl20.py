@@ -37,11 +37,17 @@ hl20.add_constant('rm', 3397.e3)  # Mar's radius [m]
 hl20.add_constant('h_ref', 11.1e3)  # Density reference altitude [m]
 hl20.add_constant('rho0', 0.02)  # Mars sea-level density
 
-hl20.add_constant('CL0', -0.1232)
-hl20.add_constant('CL1', 0.0368 / d2r)
-hl20.add_constant('CD0', 0.075)
-hl20.add_constant('CD1', -0.0029 / d2r)
-hl20.add_constant('CD2', 5.5556e-4 / d2r**2)
+CL0 = -0.1232
+CL1 = 0.0368 / d2r
+CD0 = 0.075
+CD1 = -0.0029 / d2r
+CD2 = 5.5556e-4 / d2r**2
+
+hl20.add_constant('CL0', CL0)
+hl20.add_constant('CL1', CL1)
+hl20.add_constant('CD0', CD0)
+hl20.add_constant('CD1', CD1)
+hl20.add_constant('CD2', CD2)
 hl20.add_constant('s_ref', 26.6)  # Reference area [m**2]
 hl20.add_constant('mass', 11000.)  # Mass [kg]
 
@@ -80,7 +86,7 @@ hl20.add_constraint('terminal', '(gam - gamf)/gam_scale')
 alpha_reg_method = 'sin'
 alpha_max = 30 * d2r
 alpha_min = -alpha_max
-eps_alpha = 100.
+eps_alpha = 1e-3
 
 hl20.add_constant('alpha_max', alpha_max)
 hl20.add_constant('eps_alpha', eps_alpha)
@@ -91,7 +97,7 @@ hl20.add_inequality_constraint(
 
 # COST FUNCTIONAL
 # Minimum terminal energy
-hl20.add_constant('k_cost_v', 1.)
+hl20.add_constant('k_cost_v', 1)
 hl20.add_constant('k_cost_alpha', 0.)
 hl20.set_cost(
     '-v/v_scale * k_cost_v',
@@ -106,12 +112,12 @@ hl20.set_cost(
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
-    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20).compile(use_jit_compile=True)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=25)
+    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=15)
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
-alpha0 = 0 * d2r
+alpha0 = -25 * d2r
 if alpha_reg_method in ['trig', 'sin']:
     alpha_reg0 = np.arcsin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
 elif alpha_reg_method in ['atan', 'arctan']:
@@ -127,7 +133,7 @@ immutable_constants = (
 )
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=225, immutable_constants=immutable_constants
+    hl20_dual, control=alpha_reg0, t_span=145., immutable_constants=immutable_constants
 )
 
 with open('guess_hl20.data', 'wb') as file:
@@ -140,17 +146,11 @@ with open('seed_sol_hl20.data', 'wb') as file:
 
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-# cont.add_linear_series(100, {'k_cost_v': 1., 'k_cost_alpha': 0.})
-# cont.add_linear_series(1, {'k_cost_v': 1.})
-# cont.add_logarithmic_series(100, {'k_cost_v': 1.})
-cont.add_linear_series(100, {'gamf': 0.})
-cont.add_logarithmic_series(100, {'eps_alpha': 1.})
-cont.add_logarithmic_series(100, {'eps_alpha': 1e-1})
-cont.add_logarithmic_series(100, {'eps_alpha': 5e-2})
-cont.add_logarithmic_series(100, {'eps_alpha': 1e-2}, bisection=10)
+cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
 sol_set = cont.run_continuation()
-
-# TODO -- I think there is singularity in algebraic control law. switch to differential.
 
 # Save Solution
 sol_set.save('sol_set_hl20.data')
+
+# with open('sol_set_hl20.data', 'wb') as file:
+#     pickle.dump(sol_set.damned_sols, file)

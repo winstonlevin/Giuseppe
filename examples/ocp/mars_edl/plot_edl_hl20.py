@@ -71,14 +71,26 @@ temperature = g0 * k_dict['h_ref'] / gas_constant_mars  # Sea-level temperature 
 speed_of_sound = (heat_ratio_mars * gas_constant_mars * temperature) ** 0.5  # Speed of sound [m/s]
 mach = x_dict['v'] / speed_of_sound
 
-cl = k_dict['CL0'] + k_dict['CL1'] * u_dict['alpha']
-cd = k_dict['CD0'] + k_dict['CD1'] * u_dict['alpha'] * k_dict['CD2'] * u_dict['alpha'] ** 2
+CL0 = k_dict['CL0']
+CL1 = k_dict['CL1']
+CD0 = k_dict['CD0']
+CD1 = k_dict['CD1']
+CD2 = k_dict['CD2']
+
+cl = CL0 + CL1 * alpha
+cd = CD0 + CD1 * alpha + CD2 * alpha ** 2
 rho = k_dict['rho0'] * np.exp(-x_dict['h'] / k_dict['h_ref'])
 qdyn = 0.5 * rho * x_dict['v'] ** 2
 lift = qdyn * k_dict['s_ref'] * cl
 lift_g = lift / weight
 drag = qdyn * k_dict['s_ref'] * cd
 drag_g = drag / weight
+
+alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
+alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
+
+ld_max = (CL0 + CL1 * alpha_max_ld) / (CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2)
+ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_min_ld ** 2)
 
 dv_dt = -drag/k_dict['mass'] - g * np.sin(x_dict['gam'])
 dv = x_dict["v"][-1] - x_dict["v"][0]
@@ -144,6 +156,25 @@ if PLOT_COSTATE:
     fig_costates.tight_layout()
 
 if PLOT_AUXILIARY:
+    # PLOT AERODYNAMICS
+    ydata = (lift_g, drag_g, lift/drag)
+    ylabs = (r'$L$ [g]', r'$D$ [g]', r'L/D')
+
+    fig_aero = plt.figure()
+    axes_aero = []
+
+    for idx, y in enumerate(ydata):
+        axes_aero.append(fig_aero.add_subplot(3, 1, idx + 1))
+        ax = axes_aero[-1]
+        ax.grid()
+        ax.set_xlabel(t_label)
+        ax.set_ylabel(ylabs[idx])
+        ax.plot(sol.t, y)
+
+        if idx == 2:
+            ax.plot(sol.t, sol.t*0 + ld_max, 'k--')
+            ax.plot(sol.t, sol.t*0 + ld_min, 'k--')
+
     # PLOT COST CONTRIBUTIONS
     ydata = (dv_dt * k_dict["k_cost_v"] / k_dict["v_scale"],
              alpha * k_dict["k_cost_alpha"] / k_dict["alpha_scale"],
