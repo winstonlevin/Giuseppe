@@ -73,7 +73,7 @@ class SymBVP(Symbolic):
         for sym_expr, in_expr in zip(self.expressions, input_data.expressions):
             sym_expr.expr = self.sympify(in_expr.expr)
 
-        self._order_named_expressions()
+        # self._order_named_expressions()
 
     def _order_named_expressions(self):
         interdependencies = []
@@ -97,6 +97,7 @@ class SymBVP(Symbolic):
         return sym_expr.subs(sub_pairs)
 
     def _perform_substitutions(self):
+        self._order_named_expressions()
         self.dynamics = self._substitute(self.dynamics)
         self.boundary_conditions.initial = self._substitute(self.boundary_conditions.initial)
         self.boundary_conditions.terminal = self._substitute(self.boundary_conditions.terminal)

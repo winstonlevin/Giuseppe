@@ -48,7 +48,10 @@ def match_constants_to_boundary_conditions(
     altered_constant_idces = list(np.arange(0, len(original_constants), 1))
     if immutable_constants is not None:
         for immutable_constant in immutable_constants:
-            altered_constant_idces.remove(guess.annotations.constants.index(immutable_constant))
+            if immutable_constant in guess.annotations.constants:
+                altered_constant_idces.remove(guess.annotations.constants.index(immutable_constant))
+            else:
+                raise RuntimeError(f'{immutable_constant} is not a defined constant!')
 
     if use_adjoint_bcs and isinstance(prob, Dual):
         _compute_initial_adjoint_boundary_conditions = prob.compute_initial_adjoint_boundary_conditions
