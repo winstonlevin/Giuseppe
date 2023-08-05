@@ -86,9 +86,8 @@ hl20.add_constraint('terminal', '(gam - gamf)/gam_scale')
 # alpha limit due to G-Load
 hl20.add_constant('n_max', 4.5)
 hl20.add_constant('n_min', -4.5)
-hl20.add_constant('k_lse', 10)  # Higher -> closer to discontinuous limit
 hl20.add_expression('alpha_n_max', '(mass * g) * n_max / (qdyn * s_ref * CL1) - CL0 / CL1')
-hl20.add_expression('alpha_n_min', '(mass * g) * n_min / (qdyn * s_ref * CL1), - CL0 / CL1')
+hl20.add_expression('alpha_n_min', '(mass * g) * n_min / (qdyn * s_ref * CL1) - CL0 / CL1')
 
 # Control Constraint - alpha
 alpha_reg_method = 'sin'
@@ -99,6 +98,7 @@ hl20.add_constant('alpha_max', alpha_max)
 hl20.add_constant('alpha_min', alpha_min)
 
 # Smoothed combination of alpha limits due to alpha min/max + G-load constraint
+hl20.add_constant('k_lse', 10)  # Higher -> closer to discontinuous limit
 hl20.add_expression('alpha_upper_limit', '-log(exp(k_lse * -alpha_max) + exp(k_lse * -alpha_n_max)) / k_lse')
 hl20.add_expression('alpha_lower_limit', ' log(exp(k_lse *  alpha_min) + exp(k_lse *  alpha_n_min)) / k_lse')
 
@@ -131,8 +131,8 @@ hl20.set_cost(
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
-    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=False)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=True, max_nodes=100, node_buffer=15)
+    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=15)
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
@@ -148,8 +148,7 @@ immutable_constants = (
     'mu', 'rm', 'h_ref', 'rho0',
     'CL0', 'CL1', 'CD0', 'CD1', 'CD2', 's_ref', 'mass',
     't_scale', 'h_scale', 'theta_scale', 'v_scale', 'gam_scale',
-    'alpha_max', 'eps_alpha',
-    'n_max', 'eps_n',
+    'alpha_max', 'alpha_min', 'eps_alpha', 'k_lse', 'n_max', 'n_min',
     'k_cost_v', 'k_cost_alpha'
 )
 
@@ -170,9 +169,8 @@ cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(25, {'hf': 20e3, 'thetaf': 19*d2r})
 cont.add_linear_series(100, {'hf': 33e3, 'thetaf': 15.25*d2r, 'gamf': 0.})
 cont.add_linear_series(100, {'hf': 10e3})
-cont.add_logarithmic_series(100, {'eps_alpha': 1e-3, 'eps_n': 1e-3})
+cont.add_logarithmic_series(100, {'eps_alpha': 1e-3})
 cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
-cont.add_logarithmic_series(100, {'eps_alpha': 1e-4, 'eps_n': 1e-4})
 # cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r, 'hf': (0.1 * d2r * rm) * np.tan(-1.5*d2r)})
 # cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
 sol_set = cont.run_continuation()

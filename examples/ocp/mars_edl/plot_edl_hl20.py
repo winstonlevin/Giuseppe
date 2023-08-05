@@ -10,7 +10,7 @@ PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 RESCALE_COSTATES = False
 REG_METHOD = 'sin'
-DATA = 2
+DATA = 1
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -41,25 +41,6 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
 
 # PROCESS DATA ---------------------------------------------------------------------------------------------------------
-# De-regularize control
-alpha_max = k_dict['alpha_max']
-alpha_min = -alpha_max
-eps_alpha = k_dict['eps_alpha']
-alpha_reg = sol.u[0, :]
-
-if REG_METHOD in ['trig', 'sin']:
-    alpha = 0.5 * (alpha_max - alpha_min) * np.sin(alpha_reg) + 0.5 * (alpha_max + alpha_min)
-    dcost_alpha_dt = -eps_alpha * np.cos(alpha_reg)
-elif REG_METHOD in ['atan', 'arctan']:
-    alpha = (alpha_max - alpha_min) / np.pi * np.arctan(alpha_reg / eps_alpha) \
-                       + (alpha_max + alpha_min) / 2
-    dcost_alpha_dt = eps_alpha * np.log(1 + alpha_reg ** 2 / eps_alpha ** 2) / np.pi
-else:
-    alpha = np.nan * sol.t
-    dcost_alpha_dt = np.nan * sol.t
-
-u_dict['alpha'] = alpha
-
 r2d = 180 / np.pi
 g = k_dict['mu'] / (k_dict['rm'] + x_dict['h']) ** 2
 g0 = k_dict['mu'] / k_dict['rm'] ** 2
@@ -77,10 +58,43 @@ CD0 = k_dict['CD0']
 CD1 = k_dict['CD1']
 CD2 = k_dict['CD2']
 
-cl = CL0 + CL1 * alpha
-cd = CD0 + CD1 * alpha + CD2 * alpha ** 2
+# (Smoothed) Control Limits
+alpha_max = k_dict['alpha_max']
+alpha_min = k_dict['alpha_min']
+n_max = k_dict['n_max']
+n_min = k_dict['n_min']
+k_lse = k_dict['k_lse']
+
 rho = k_dict['rho0'] * np.exp(-x_dict['h'] / k_dict['h_ref'])
 qdyn = 0.5 * rho * x_dict['v'] ** 2
+s_ref = k_dict['s_ref']
+alpha_n_max = weight * n_max / (qdyn * s_ref * CL1) - CL0 / CL1
+alpha_n_min = weight * n_min / (qdyn * s_ref * CL1) - CL0 / CL1
+
+alpha_upper_limit = -np.log(np.exp(k_lse * -alpha_max) + np.exp(k_lse * -alpha_n_max)) / k_lse
+alpha_lower_limit = np.log(np.exp(k_lse * alpha_min) + np.exp(k_lse * alpha_n_min)) / k_lse
+
+# De-regularize control
+eps_alpha = k_dict['eps_alpha']
+alpha_reg = sol.u[0, :]
+
+if REG_METHOD in ['trig', 'sin']:
+    alpha = 0.5 * ((alpha_upper_limit - alpha_lower_limit) * np.sin(alpha_reg)
+                   + (alpha_upper_limit + alpha_lower_limit))
+    dcost_alpha_dt = -eps_alpha * np.cos(alpha_reg)
+elif REG_METHOD in ['atan', 'arctan']:
+    alpha = (alpha_upper_limit - alpha_lower_limit) / np.pi * np.arctan(alpha_reg / eps_alpha) \
+            + (alpha_upper_limit + alpha_lower_limit) / 2
+    dcost_alpha_dt = eps_alpha * np.log(1 + alpha_reg ** 2 / eps_alpha ** 2) / np.pi
+else:
+    alpha = np.nan * sol.t
+    dcost_alpha_dt = np.nan * sol.t
+
+u_dict['alpha'] = alpha
+
+# Aerodynamic Analysis
+cl = CL0 + CL1 * alpha
+cd = CD0 + CD1 * alpha + CD2 * alpha ** 2
 lift = qdyn * k_dict['s_ref'] * cl
 lift_g = lift / weight
 drag = qdyn * k_dict['s_ref'] * cd
@@ -95,11 +109,6 @@ ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_mi
 dv_dt = -drag/k_dict['mass'] - g * np.sin(x_dict['gam'])
 dv = x_dict["v"][-1] - x_dict["v"][0]
 cost_dv = k_dict["k_cost_v"]/k_dict["v_scale"] * dv
-
-eps_n = k_dict['eps_n']
-n_max = k_dict['n_max']
-n_min = -n_max
-dcost_n = eps_n / np.cos(np.pi / 2 * (2 * lift_g - n_max - n_min) / (n_max - n_min)) - eps_n
 
 heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
@@ -139,8 +148,8 @@ for idx, ctrl in enumerate(list((alpha, alpha_reg))):
     ax.plot(sol.t, ctrl * ymult[idx])
 
     if PLOT_AUXILIARY and idx == 0:
-        ax.plot(sol.t, 0*sol.t + alpha_max * ymult[idx], 'k--')
-        ax.plot(sol.t, 0*sol.t + alpha_min * ymult[idx], 'k--')
+        ax.plot(sol.t, alpha_upper_limit * ymult[idx], 'k--')
+        ax.plot(sol.t, alpha_lower_limit * ymult[idx], 'k--')
 
 fig_controls.tight_layout()
 
@@ -215,8 +224,8 @@ if PLOT_AUXILIARY:
 
     # PLOT COST CONTRIBUTIONS
     ydata = (dv_dt * k_dict["k_cost_v"] / k_dict["v_scale"],
-             dcost_n)
-    ylabs = (r'$J(\Delta{V})$', r'$\Delta{J(n)}$', r'$\Delta{J_{\alpha}}$')
+             dcost_alpha_dt)
+    ylabs = (r'$J(\Delta{V})$', r'$\Delta{J_{\alpha}}$', r'$\Delta{J(n)}$')
     sup_title = f'J = {sol.cost}\nJ(DV) = {cost_dv} [{abs(cost_dv / sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()
