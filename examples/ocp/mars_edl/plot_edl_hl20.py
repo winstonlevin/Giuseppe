@@ -71,20 +71,26 @@ s_ref = k_dict['s_ref']
 alpha_n_max = weight * n_max / (qdyn * s_ref * CL1) - CL0 / CL1
 alpha_n_min = weight * n_min / (qdyn * s_ref * CL1) - CL0 / CL1
 
-alpha_upper_limit = -np.log(np.exp(k_lse * -alpha_max) + np.exp(k_lse * -alpha_n_max)) / k_lse
-alpha_lower_limit = np.log(np.exp(k_lse * alpha_min) + np.exp(k_lse * alpha_n_min)) / k_lse
+alpha_upper_limit = np.minimum(alpha_max, alpha_n_max)
+alpha_lower_limit = np.maximum(alpha_min, alpha_n_min)
+alpha_upper_limit_smooth = alpha_upper_limit - np.log(
+    np.exp(k_lse * -(alpha_max - alpha_upper_limit)) + np.exp(k_lse * -(alpha_n_max - alpha_upper_limit))
+) / k_lse
+alpha_lower_limit_smooth = alpha_lower_limit + np.log(
+    np.exp(k_lse * (alpha_min - alpha_lower_limit)) + np.exp(k_lse * (alpha_n_min - alpha_lower_limit))
+) / k_lse
 
 # De-regularize control
 eps_alpha = k_dict['eps_alpha']
 alpha_reg = sol.u[0, :]
 
 if REG_METHOD in ['trig', 'sin']:
-    alpha = 0.5 * ((alpha_upper_limit - alpha_lower_limit) * np.sin(alpha_reg)
-                   + (alpha_upper_limit + alpha_lower_limit))
+    alpha = 0.5 * ((alpha_upper_limit_smooth - alpha_lower_limit_smooth) * np.sin(alpha_reg)
+                   + (alpha_upper_limit_smooth + alpha_lower_limit_smooth))
     dcost_alpha_dt = -eps_alpha * np.cos(alpha_reg)
 elif REG_METHOD in ['atan', 'arctan']:
-    alpha = (alpha_upper_limit - alpha_lower_limit) / np.pi * np.arctan(alpha_reg / eps_alpha) \
-            + (alpha_upper_limit + alpha_lower_limit) / 2
+    alpha = (alpha_upper_limit_smooth - alpha_lower_limit_smooth) / np.pi * np.arctan(alpha_reg / eps_alpha) \
+            + (alpha_upper_limit_smooth + alpha_lower_limit_smooth) / 2
     dcost_alpha_dt = eps_alpha * np.log(1 + alpha_reg ** 2 / eps_alpha ** 2) / np.pi
 else:
     alpha = np.nan * sol.t

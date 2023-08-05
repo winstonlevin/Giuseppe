@@ -59,12 +59,23 @@ alpha_max_smooth = []
 alpha_min_smooth = []
 
 for k_val in k_vals:
+    # alpha_max_smooth.append(
+    #     -np.log(np.exp(-alpha_stall_max_vals*k_val) + np.exp(-alpha_n_max_vals*k_val))/k_val
+    # )
+    #
+    # alpha_min_smooth.append(
+    #     np.log(np.exp(alpha_stall_min_vals*k_val) + np.exp(alpha_n_min_vals*k_val))/k_val
+    # )
     alpha_max_smooth.append(
-        -np.log(np.exp(-alpha_stall_max_vals*k_val) + np.exp(-alpha_n_max_vals*k_val))/k_val
+        alpha_max_vals - np.log(
+            np.exp(-(alpha_stall_max_vals - alpha_max_vals)*k_val) + np.exp(-(alpha_n_max_vals - alpha_max_vals)*k_val)
+        ) / k_val
     )
 
     alpha_min_smooth.append(
-        np.log(np.exp(alpha_stall_min_vals*k_val) + np.exp(alpha_n_min_vals*k_val))/k_val
+        alpha_min_vals + np.log(
+            np.exp((alpha_stall_min_vals - alpha_min_vals)*k_val) + np.exp((alpha_n_min_vals - alpha_min_vals)*k_val)
+        ) / k_val
     )
 
 # PLOTTING -------------------------------------------------------------------------------------------------------------

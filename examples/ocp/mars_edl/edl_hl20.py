@@ -93,18 +93,30 @@ hl20.add_expression('alpha_n_min', '(mass * g) * n_min / (qdyn * s_ref * CL1) - 
 alpha_reg_method = 'sin'
 alpha_max = 30 * d2r
 alpha_min = -alpha_max
-eps_alpha = 1e-2
+eps_alpha = 1e-3
 hl20.add_constant('alpha_max', alpha_max)
 hl20.add_constant('alpha_min', alpha_min)
 
 # Smoothed combination of alpha limits due to alpha min/max + G-load constraint
 hl20.add_constant('k_lse', 10)  # Higher -> closer to discontinuous limit
-hl20.add_expression('alpha_upper_limit', '-log(exp(k_lse * -alpha_max) + exp(k_lse * -alpha_n_max)) / k_lse')
-hl20.add_expression('alpha_lower_limit', ' log(exp(k_lse *  alpha_min) + exp(k_lse *  alpha_n_min)) / k_lse')
+# hl20.add_expression('alpha_upper_limit_smooth', '-log(exp(k_lse * -alpha_max) + exp(k_lse * -alpha_n_max)) / k_lse')
+# hl20.add_expression('alpha_lower_limit_smooth', ' log(exp(k_lse *  alpha_min) + exp(k_lse *  alpha_n_min)) / k_lse')
+hl20.add_expression('alpha_upper_limit', 'minimum(alpha_max, alpha_n_max)')
+hl20.add_expression('alpha_lower_limit', 'maximum(alpha_min, alpha_n_min)')
+hl20.add_expression(
+    'alpha_upper_limit_smooth',
+    'alpha_upper_limit - ' +
+    'log(exp(k_lse * -(alpha_max - alpha_upper_limit)) + exp(k_lse * -(alpha_n_max - alpha_upper_limit))) / k_lse'
+)
+hl20.add_expression(
+    'alpha_lower_limit_smooth',
+    'alpha_lower_limit + ' +
+    'log(exp(k_lse * (alpha_min - alpha_lower_limit)) + exp(k_lse * (alpha_n_min - alpha_lower_limit))) / k_lse')
+
 
 hl20.add_constant('eps_alpha', eps_alpha)
 hl20.add_inequality_constraint(
-    'control', 'alpha', 'alpha_lower_limit', 'alpha_upper_limit',
+    'control', 'alpha', 'alpha_lower_limit_smooth', 'alpha_upper_limit_smooth',
     regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method=alpha_reg_method)
 )
 
@@ -136,7 +148,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
-alpha0 = -20 * d2r
+alpha0 = -29.5 * d2r
 if alpha_reg_method in ['trig', 'sin']:
     alpha_reg0 = np.arcsin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
 elif alpha_reg_method in ['atan', 'arctan']:
@@ -166,9 +178,10 @@ with open('seed_sol_hl20.data', 'wb') as file:
 
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(25, {'hf': 20e3, 'thetaf': 19*d2r})
-cont.add_linear_series(100, {'hf': 33e3, 'thetaf': 15.25*d2r, 'gamf': 0.})
+cont.add_linear_series(25, {'hf': 20e3, 'thetaf': 19*d2r})  # TODO - lower thetaf for convergence
+cont.add_linear_series(100, {'hf': 33e3, 'thetaf': 15.25*d2r, 'gamf': 0.})  # TODO - rework continuation set
 cont.add_linear_series(100, {'hf': 10e3})
+# cont.add_logarithmic_series(100, {'k_lse': 1e4})
 cont.add_logarithmic_series(100, {'eps_alpha': 1e-3})
 cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
 # cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r, 'hf': (0.1 * d2r * rm) * np.tan(-1.5*d2r)})
