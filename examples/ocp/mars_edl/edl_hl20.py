@@ -131,9 +131,9 @@ hl20.add_expression('heat_rate', 'k * (rho / rn) * v ** 3')  # Heat Rate [W/m**2
 hl20.add_constant('k_cost_v', 1)
 hl20.add_constant('k_cost_alpha', 0.)
 # hl20.set_cost(
-#     '-v/v_scale * k_cost_v',
+#     '-(v/v_scale)**2 * k_cost_v',
 #     'k_cost_alpha * (alpha / alpha_scale)**2',
-#     'v/v_scale * k_cost_v'
+#     '(v/v_scale)**2 * k_cost_v'
 # )  # Formulation with terminal cost: min{Vf - V0}
 
 hl20.set_cost(
