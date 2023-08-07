@@ -29,6 +29,7 @@ def auto_propagate_guess(
         nuf: Optional[ArrayLike] = None,
         default_value: float = 1.,
         match_constants: bool = True,
+        fit_states: bool = True,
         fit_adjoints: bool = True,
         quadrature: str = 'trapezoidal',
         condition_adjoints: bool = False,
@@ -87,14 +88,14 @@ def auto_propagate_guess(
         guess = auto_propagate_bvp_guess(
             problem, t_span, initial_states,
             p=p, k=k, abs_tol=abs_tol, rel_tol=rel_tol, max_step=max_step, reverse=reverse,
-            default_value=default_value, match_constants=match_constants, verbose=verbose,
+            default_value=default_value, fit_states=fit_states, match_constants=match_constants, verbose=verbose,
             immutable_constants=immutable_constants
         )
     elif problem.prob_class == 'ocp':
         guess = auto_propagate_ocp_guess(
             problem, t_span, initial_states, control,
             p=p,  k=k, abs_tol=abs_tol, rel_tol=rel_tol, max_step=max_step, reverse=reverse,
-            match_constants=match_constants, default_value=default_value, verbose=verbose,
+            fit_states=fit_states, match_constants=match_constants, default_value=default_value, verbose=verbose,
             immutable_constants=immutable_constants
         )
     elif problem.prob_class == 'dual':
@@ -102,8 +103,9 @@ def auto_propagate_guess(
             problem, t_span, initial_states, initial_costates, control,
             p=p, nu0=nu0, nuf=nuf, k=k,
             abs_tol=abs_tol, rel_tol=rel_tol, max_step=max_step, reverse=reverse, default_value=default_value,
-            match_constants=match_constants, fit_adjoints=fit_adjoints, condition_adjoints=condition_adjoints,
-            quadrature=quadrature, verbose=verbose, immutable_constants=immutable_constants
+            match_constants=match_constants, fit_states=fit_states, fit_adjoints=fit_adjoints,
+            condition_adjoints=condition_adjoints, quadrature=quadrature, verbose=verbose,
+            immutable_constants=immutable_constants
         )
     else:
         raise RuntimeError(f'Cannot process problem of class {type(problem)}')
@@ -122,15 +124,17 @@ def auto_propagate_bvp_guess(
         rel_tol: float = 1e-4,
         max_step: Optional[float] = None,
         reverse: bool = False,
+        fit_states: bool = True,
         match_constants: bool = True,
         verbose: bool = False,
         immutable_constants: Optional[Iterable] = None
 ) -> Solution:
     guess = initialize_guess(bvp, default_value=default_value, t_span=t_span, x=initial_states, p=p, k=k)
 
-    if verbose:
-        print(f'Matching states, parameters, and time to boundary conditions:')
-    guess = match_states_to_boundary_conditions(bvp, guess, rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose)
+    if fit_states:
+        if verbose:
+            print(f'Matching states, parameters, and time to boundary conditions:')
+        guess = match_states_to_boundary_conditions(bvp, guess, rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose)
 
     if verbose:
         print(f'Propagating the dynamics in time\n')
@@ -159,15 +163,17 @@ def auto_propagate_ocp_guess(
         rel_tol: float = 1e-4,
         max_step: Optional[float] = None,
         reverse: bool = False,
+        fit_states: bool = True,
         match_constants: bool = True,
         verbose: bool = False,
         immutable_constants: Optional[Iterable] = None
 ) -> Solution:
     guess = initialize_guess(ocp, default_value=default_value, t_span=t_span, x=initial_states, p=p, k=k)
 
-    if verbose:
-        print(f'Matching states, parameters, and time to boundary conditions:')
-    guess = match_states_to_boundary_conditions(ocp, guess, rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose)
+    if fit_states:
+        if verbose:
+            print(f'Matching states, parameters, and time to boundary conditions:')
+        guess = match_states_to_boundary_conditions(ocp, guess, rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose)
 
     if verbose:
         print(f'Propagating the dynamics in time\n')
@@ -199,6 +205,7 @@ def auto_propagate_dual_guess(
         max_step: Optional[float] = None,
         reverse: bool = False,
         match_constants: bool = True,
+        fit_states: bool = True,
         fit_adjoints: bool = True,
         quadrature: str = 'simpson',
         condition_adjoints: bool = False,
@@ -209,10 +216,10 @@ def auto_propagate_dual_guess(
     guess = initialize_guess(dual, default_value=default_value, t_span=t_span, x=initial_states, lam=initial_costates,
                              p=p, nu0=nu0, nuf=nuf, k=k)
 
-    if verbose:
-        print(f'Matching states, parameters, and time to boundary conditions:')
-
-    guess = match_states_to_boundary_conditions(dual, guess, rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose)
+    if fit_states:
+        if verbose:
+            print(f'Matching states, parameters, and time to boundary conditions:')
+        guess = match_states_to_boundary_conditions(dual, guess, rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose)
 
     if verbose:
         print(f'Propagating the dynamics in time\n')
