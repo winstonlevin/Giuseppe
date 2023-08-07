@@ -10,7 +10,7 @@ PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 RESCALE_COSTATES = False
 REG_METHOD = 'sin'
-DATA = 1
+DATA = 2
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -154,8 +154,13 @@ for idx, ctrl in enumerate(list((alpha, alpha_reg))):
     ax.plot(sol.t, ctrl * ymult[idx])
 
     if PLOT_AUXILIARY and idx == 0:
+        ax.plot(sol.t, alpha_upper_limit_smooth * ymult[idx], '--', color='0.5')
+        ax.plot(sol.t, alpha_lower_limit_smooth * ymult[idx], '--', color='0.5')
         ax.plot(sol.t, alpha_upper_limit * ymult[idx], 'k--')
         ax.plot(sol.t, alpha_lower_limit * ymult[idx], 'k--')
+    elif PLOT_AUXILIARY and idx == 1:
+        ax.plot(sol.t, 0*sol.t + np.pi/2, 'k--')
+        ax.plot(sol.t, 0*sol.t - np.pi/2, 'k--')
 
 fig_controls.tight_layout()
 
@@ -229,7 +234,7 @@ if PLOT_AUXILIARY:
     fig_aux.tight_layout()
 
     # PLOT COST CONTRIBUTIONS
-    ydata = (dv_dt * k_dict["k_cost_v"] / k_dict["v_scale"],
+    ydata = ((dv_dt/k_dict["v_scale"])**2 * k_dict["k_cost_v"],
              dcost_alpha_dt)
     ylabs = (r'$J(\Delta{V})$', r'$\Delta{J_{\alpha}}$', r'$\Delta{J(n)}$')
     sup_title = f'J = {sol.cost}\nJ(DV) = {cost_dv} [{abs(cost_dv / sol.cost):.2%} of cost]'

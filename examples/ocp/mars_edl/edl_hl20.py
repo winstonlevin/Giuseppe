@@ -130,16 +130,16 @@ hl20.add_expression('heat_rate', 'k * (rho / rn) * v ** 3')  # Heat Rate [W/m**2
 # Minimum terminal energy
 hl20.add_constant('k_cost_v', 1)
 hl20.add_constant('k_cost_alpha', 0.)
-hl20.set_cost(
-    '-v/v_scale * k_cost_v',
-    'k_cost_alpha * (alpha / alpha_scale)**2',
-    'v/v_scale * k_cost_v'
-)  # Formulation with terminal cost: min{Vf - V0}
-
 # hl20.set_cost(
-#     '0',
-#     '(-drag/mass - g * sin(gam))/v_scale * k_cost_v + k_cost_alpha * (alpha / alpha_scale)**2',
-#     '0')  # Formulation with path cost: min{int(dV/dt)}
+#     '-v/v_scale * k_cost_v',
+#     'k_cost_alpha * (alpha / alpha_scale)**2',
+#     'v/v_scale * k_cost_v'
+# )  # Formulation with terminal cost: min{Vf - V0}
+
+hl20.set_cost(
+    '0',
+    '(-drag/mass - g * sin(gam))**2/v_scale**2 * k_cost_v + k_cost_alpha * (alpha / alpha_scale)**2',
+    '0')  # Formulation with path cost: min{int(dV/dt)}
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
@@ -148,7 +148,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
-alpha0 = -29.5 * d2r
+alpha0 = 29.5 * d2r
 if alpha_reg_method in ['trig', 'sin']:
     alpha_reg0 = np.arcsin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
 elif alpha_reg_method in ['atan', 'arctan']:
@@ -165,7 +165,7 @@ immutable_constants = (
 )
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=120., immutable_constants=immutable_constants
+    hl20_dual, control=alpha_reg0, t_span=130., immutable_constants=immutable_constants
 )
 
 with open('guess_hl20.data', 'wb') as file:
@@ -178,14 +178,10 @@ with open('seed_sol_hl20.data', 'wb') as file:
 
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(25, {'hf': 20e3, 'thetaf': 19*d2r})  # TODO - lower thetaf for convergence
-cont.add_linear_series(100, {'hf': 33e3, 'thetaf': 15.25*d2r, 'gamf': 0.})  # TODO - rework continuation set
-cont.add_linear_series(100, {'hf': 10e3})
-# cont.add_logarithmic_series(100, {'k_lse': 1e4})
-cont.add_logarithmic_series(100, {'eps_alpha': 1e-3})
-cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
-# cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r, 'hf': (0.1 * d2r * rm) * np.tan(-1.5*d2r)})
-# cont.add_linear_series_until_failure({'thetaf': 0.1 * d2r})
+cont.add_linear_series(1, {'gamf': 0.})
+cont.add_linear_series(100, {'hf': 10e3, 'thetaf': 17 * d2r})
+cont.add_logarithmic_series(100, {'eps_alpha': 1e-6})
+cont.add_linear_series_until_failure({'thetaf': -0.1 * d2r})
 sol_set = cont.run_continuation()
 
 # Save Solution

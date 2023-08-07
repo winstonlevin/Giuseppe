@@ -30,7 +30,7 @@ heat_ratio_mars = 1.29  # Mars' specific heat ratio [-]
 temperature = g0 * k_dict['h_ref'] / gas_constant_mars  # Sea-level temperature [K]
 speed_of_sound = (heat_ratio_mars * gas_constant_mars * temperature) ** 0.5  # Speed of sound [m/s]
 
-qdyn_vals = np.logspace(2, 4, 1000)
+qdyn_vals = np.logspace(2, 5, 1000)
 
 CL0 = k_dict['CL0']
 CL1 = k_dict['CL1']
@@ -79,6 +79,7 @@ for k_val in k_vals:
     )
 
 # PLOTTING -------------------------------------------------------------------------------------------------------------
+colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 qdyn_lab = r'$Q_{\infty}$ [N / m$^2$]'
 
 fig_bounds = plt.figure()
@@ -89,16 +90,25 @@ reflists = (alpha_max_smooth, alpha_min_smooth)
 ylabs = (r'$\alpha_{max}$ [deg]', r'$\alpha_{min}$ [deg]')
 ymult = (r2d, r2d)
 
+axes_bounds.append(fig_bounds.add_subplot(1, 1, 1))
+ax = axes_bounds[-1]
+ax.grid()
+
 for idx, y in enumerate(ydata):
-    axes_bounds.append(fig_bounds.add_subplot(2, 1, idx + 1))
-    ax = axes_bounds[-1]
-    ax.grid()
+    # axes_bounds.append(fig_bounds.add_subplot(1, 1, 1))
+    # ax = axes_bounds[-1]
+    # ax.grid()
     ax.set_xlabel(qdyn_lab)
     ax.set_ylabel(ylabs[idx])
-    ax.plot(qdyn_vals, y * ymult[idx])
 
-    for k_val, y_smooth in zip(k_vals, reflists[idx]):
-        ax.plot(qdyn_vals, y_smooth * ymult[idx], label=f'k = {k_val}')
+    for jdx, (k_val, y_smooth) in enumerate(zip(k_vals, reflists[idx])):
+        if idx == 0:
+            label = f'k = {k_val}'
+        else:
+            label = None
+        ax.plot(qdyn_vals, y_smooth * ymult[idx], label=label, color=colors[jdx])
+
+    ax.plot(qdyn_vals, y * ymult[idx], 'k')
 
     ax.legend()
 
