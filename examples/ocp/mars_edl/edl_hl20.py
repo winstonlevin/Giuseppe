@@ -62,9 +62,9 @@ hl20.add_constant('gam_scale', 5 * r2d)
 hl20.add_constant('alpha_scale', 30 * r2d)
 
 # Initial Conditions
-hl20.add_constant('h0', 80e3)
+hl20.add_constant('h0', 30e3)
 hl20.add_constant('theta0', 0.)
-hl20.add_constant('v0', 4e3)
+hl20.add_constant('v0', 0.5e3)
 hl20.add_constant('gam0', -5 * d2r)
 
 hl20.add_constraint('initial', 't/t_scale')
@@ -77,10 +77,12 @@ hl20.add_constraint('initial', '(gam - gam0)/gam_scale')
 hl20.add_constant('hf', 10e3)
 hl20.add_constant('thetaf', 1. * d2r)
 hl20.add_constant('gamf', 0. * d2r)
+hl20.add_constant('vf', 10.)
 
 hl20.add_constraint('terminal', '(h - hf)/h_scale')
-hl20.add_constraint('terminal', '(theta - thetaf)/theta_scale')
+# hl20.add_constraint('terminal', '(theta - thetaf)/theta_scale')
 hl20.add_constraint('terminal', '(gam - gamf)/gam_scale')
+hl20.add_constraint('terminal', '(v - vf)/v_scale')
 
 # CONSTRAINTS
 # alpha limit due to G-Load
@@ -93,7 +95,7 @@ hl20.add_expression('alpha_n_min', '(mass * g) * n_min / (qdyn * s_ref * CL1) - 
 alpha_reg_method = 'sin'
 alpha_max = 30 * d2r
 alpha_min = -alpha_max
-eps_alpha = 1e-3
+eps_alpha = 5e-2
 hl20.add_constant('alpha_max', alpha_max)
 hl20.add_constant('alpha_min', alpha_min)
 
@@ -127,19 +129,11 @@ hl20.add_constant('heat_rate_max', 500e4)  # Max heat rate [W/m**2]
 hl20.add_expression('heat_rate', 'k * (rho / rn) * v ** 3')  # Heat Rate [W/m**2]
 
 # COST FUNCTIONAL
-# Minimum terminal energy
-hl20.add_constant('k_cost_v', 1)
-hl20.add_constant('k_cost_alpha', 0.)
-# hl20.set_cost(
-#     '-(v/v_scale)**2 * k_cost_v',
-#     'k_cost_alpha * (alpha / alpha_scale)**2',
-#     '(v/v_scale)**2 * k_cost_v'
-# )  # Formulation with terminal cost: min{Vf - V0}
+# Maximum range
+hl20.set_cost('0', '-v * cos(gam) / r', '0')
 
-hl20.set_cost(
-    '0',
-    '(-drag/mass - g * sin(gam))**2/v_scale**2 * k_cost_v + k_cost_alpha * (alpha / alpha_scale)**2',
-    '0')  # Formulation with path cost: min{int(dV/dt)}
+# # Minimum range
+# hl20.set_cost('0', 'v * cos(gam) / r', '0')
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
@@ -148,7 +142,8 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
-alpha0 = 29.5 * d2r
+alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
+alpha0 = alpha_max_ld
 if alpha_reg_method in ['trig', 'sin']:
     alpha_reg0 = np.arcsin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
 elif alpha_reg_method in ['atan', 'arctan']:
@@ -161,15 +156,16 @@ immutable_constants = (
     'CL0', 'CL1', 'CD0', 'CD1', 'CD2', 's_ref', 'mass',
     't_scale', 'h_scale', 'theta_scale', 'v_scale', 'gam_scale',
     'alpha_max', 'alpha_min', 'eps_alpha', 'k_lse', 'n_max', 'n_min',
-    'k_cost_v', 'k_cost_alpha'
 )
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=130., immutable_constants=immutable_constants
+    hl20_dual, control=alpha_reg0, t_span=40., immutable_constants=immutable_constants,
+    initial_states=np.array((15e3, 0., 0.5e3, -5*d2r)), fit_states=False
 )
 
 with open('guess_hl20.data', 'wb') as file:
     pickle.dump(guess, file)
+
 
 seed_sol = num_solver.solve(guess)
 
@@ -179,9 +175,9 @@ with open('seed_sol_hl20.data', 'wb') as file:
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(1, {'gamf': 0.})
-cont.add_linear_series(100, {'hf': 10e3, 'thetaf': 17 * d2r})
-cont.add_logarithmic_series(100, {'eps_alpha': 1e-6})
-cont.add_linear_series_until_failure({'thetaf': -0.1 * d2r})
+cont.add_linear_series(100, {'vf': 10.})
+# cont.add_logarithmic_series(100, {'eps_alpha': 1e-6})
+# cont.add_linear_series_until_failure({'hf': -100.})
 sol_set = cont.run_continuation()
 
 # Save Solution

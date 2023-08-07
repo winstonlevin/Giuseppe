@@ -10,7 +10,7 @@ PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 RESCALE_COSTATES = False
 REG_METHOD = 'sin'
-DATA = 2
+DATA = 0
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -42,7 +42,8 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
 
 # PROCESS DATA ---------------------------------------------------------------------------------------------------------
 r2d = 180 / np.pi
-g = k_dict['mu'] / (k_dict['rm'] + x_dict['h']) ** 2
+r = k_dict['rm'] + x_dict['h']
+g = k_dict['mu'] / r ** 2
 g0 = k_dict['mu'] / k_dict['rm'] ** 2
 weight = k_dict['mass'] * g
 
@@ -112,9 +113,9 @@ alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) **
 ld_max = (CL0 + CL1 * alpha_max_ld) / (CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2)
 ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_min_ld ** 2)
 
-dv_dt = -drag/k_dict['mass'] - g * np.sin(x_dict['gam'])
-dv = x_dict["v"][-1] - x_dict["v"][0]
-cost_dv = k_dict["k_cost_v"]/k_dict["v_scale"] * dv
+dtheta_dt = -x_dict['v'] * np.cos(x_dict['gam']) / r
+dtheta = x_dict["theta"][-1] - x_dict["theta"][0]
+cost_dtheta = dtheta / k_dict["theta_scale"]
 
 heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
@@ -234,10 +235,10 @@ if PLOT_AUXILIARY:
     fig_aux.tight_layout()
 
     # PLOT COST CONTRIBUTIONS
-    ydata = ((dv_dt/k_dict["v_scale"])**2 * k_dict["k_cost_v"],
-             dcost_alpha_dt)
+    ydata = ((dtheta_dt,
+             dcost_alpha_dt))
     ylabs = (r'$J(\Delta{V})$', r'$\Delta{J_{\alpha}}$', r'$\Delta{J(n)}$')
-    sup_title = f'J = {sol.cost}\nJ(DV) = {cost_dv} [{abs(cost_dv / sol.cost):.2%} of cost]'
+    sup_title = f'J = {sol.cost}\nJ(Dtheta) = {cost_dtheta} [{abs(cost_dtheta / sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()
     axes_cost = []
