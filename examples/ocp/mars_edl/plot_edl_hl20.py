@@ -144,6 +144,9 @@ for idx, state in enumerate(list(sol.x)):
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, state * ymult[idx])
 
+    if idx == 0:
+        ax.plot(sol.t, 0*sol.t + k_dict['h_min'] * ymult[idx], 'k--')
+
 fig_states.tight_layout()
 
 # PLOT CONTROL
@@ -160,12 +163,12 @@ for idx, ctrl in enumerate(list((alpha, alpha_reg))):
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t, ctrl * ymult[idx])
 
-    if PLOT_AUXILIARY and idx == 0:
+    if idx == 0:
         ax.plot(sol.t, alpha_upper_limit_smooth * ymult[idx], '--', color='0.5')
         ax.plot(sol.t, alpha_lower_limit_smooth * ymult[idx], '--', color='0.5')
         ax.plot(sol.t, alpha_upper_limit * ymult[idx], 'k--')
         ax.plot(sol.t, alpha_lower_limit * ymult[idx], 'k--')
-    elif PLOT_AUXILIARY and idx == 1:
+    elif idx == 1:
         ax.plot(sol.t, 0*sol.t + np.pi/2, 'k--')
         ax.plot(sol.t, 0*sol.t - np.pi/2, 'k--')
 
