@@ -8,7 +8,6 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-RESCALE_COSTATES = False
 REG_METHOD = 'sin'
 DATA = 2
 
@@ -51,7 +50,18 @@ gas_constant_mars = 8.31446261815324 / 43.34  # Universal gas constant R / mean 
 heat_ratio_mars = 1.29  # Mars' specific heat ratio [-]
 temperature = g0 * k_dict['h_ref'] / gas_constant_mars  # Sea-level temperature [K]
 speed_of_sound = (heat_ratio_mars * gas_constant_mars * temperature) ** 0.5  # Speed of sound [m/s]
-mach = x_dict['v'] / speed_of_sound
+if 'gam' in x_dict:
+    v = x_dict['v']
+    vx = v * np.cos(x_dict['gam'])
+    xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]')
+    xmult = np.array((1e-3, r2d, 1e-3, r2d))
+else:
+    v = (x_dict['vx'] ** 2 + x_dict['vn'] ** 2) ** 0.5
+    vx = x_dict['vx']
+    xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V_x$ [km/s]', r'$V_n$ [km/s]')
+    xmult = np.array((1e-3, r2d, 1e-3, 1e-3))
+
+mach = v / speed_of_sound
 
 CL0 = k_dict['CL0']
 CL1 = k_dict['CL1']
@@ -67,7 +77,7 @@ n_min = k_dict['n_min']
 k_lse = k_dict['k_lse']
 
 rho = k_dict['rho0'] * np.exp(-x_dict['h'] / k_dict['h_ref'])
-qdyn = 0.5 * rho * x_dict['v'] ** 2
+qdyn = 0.5 * rho * v ** 2
 s_ref = k_dict['s_ref']
 alpha_n_max = weight * n_max / (qdyn * s_ref * CL1) - CL0 / CL1
 alpha_n_min = weight * n_min / (qdyn * s_ref * CL1) - CL0 / CL1
@@ -113,7 +123,7 @@ alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) **
 ld_max = (CL0 + CL1 * alpha_max_ld) / (CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2)
 ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_min_ld ** 2)
 
-dtheta_dt = -x_dict['v'] * np.cos(x_dict['gam']) / r
+dtheta_dt = vx / r
 dtheta = x_dict["theta"][-1] - x_dict["theta"][0]
 cost_dtheta = dtheta / k_dict["theta_scale"]
 dcost_h = k_dict['eps_h'] / np.cos(
@@ -122,14 +132,14 @@ dcost_h = k_dict['eps_h'] / np.cos(
 
 heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
-heat_rate = k_dict['k'] * (rho / k_dict['rn']) * x_dict['v'] ** 3
+heat_rate = k_dict['k'] * (rho / k_dict['rn']) * v ** 3
 
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
 
 # PLOT STATES
-ylabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]')
-ymult = np.array((1e-3, r2d, 1e-3, r2d))
+ylabs = xlabs
+ymult = xmult
 fig_states = plt.figure()
 axes_states = []
 
@@ -170,11 +180,8 @@ fig_controls.tight_layout()
 
 if PLOT_COSTATE:
     # PLOT COSTATES
-    ylabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$')
-    if RESCALE_COSTATES:
-        ymult = np.array((k_dict['h_scale'], k_dict['theta_scale'], k_dict['v_scale'], k_dict['gam_scale']))
-    else:
-        ymult = np.array((1., 1., 1., 1.))
+    ylabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V_x}$', r'$\lambda_{V_n}$')
+    ymult = np.array((1., 1., 1., 1.))
     fig_costates = plt.figure()
     axes_costates = []
 

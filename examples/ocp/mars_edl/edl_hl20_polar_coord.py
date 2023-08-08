@@ -16,18 +16,19 @@ hl20.set_independent('t')
 hl20.add_control('alpha')
 
 # States and Dynamics
-hl20.add_state('h', 'vn')  # Altitude [m]
-hl20.add_state('theta', 'vx / r')  # Downrange angle [rad]
-hl20.add_state('vx', '-rho*v*s_ref/(2*mass) * (CD*vx + CL*vn) - vx*vn/r')  # Horizontal velocity [m/s]
-hl20.add_state('vn', 'rho*v*s_ref/(2*mass)  * (CL*vx - CD*vn) + vx**2/r - g')  # Vertical velocity [m/s]
+hl20.add_state('h', 'v * sin(gam)')  # Altitude [m]
+hl20.add_state('theta', 'v * cos(gam) / r')  # Downrange angle [rad]
+hl20.add_state('v', '-drag/mass - g * sin(gam)')  # Velocity [m/s]
+hl20.add_state('gam', 'lift / (mass * v) + (v/r - g/v) * cos(gam)')  # Flight path angle [rad]
 
 # Expressions
-hl20.add_expression('v', '(vx**2 + vn**2) ** 0.5')
-hl20.add_expression('qdyn', '0.5 * rho * v**2')
 hl20.add_expression('g', 'mu/r**2')  # Gravitational acceleration [m/s**2]
+hl20.add_expression('drag', 'qdyn * s_ref * CD')  # Drag [N]
+hl20.add_expression('lift', 'qdyn * s_ref * CL')  # Lift [N]
 hl20.add_expression('CD', 'CD0 + CD1 * alpha + CD2 * alpha**2')  # Drag Coefficient [-]
 hl20.add_expression('CL', 'CL0 + CL1 * alpha')  # Lift coefficient [-]
 hl20.add_expression('rho', 'rho0 * exp(-h / h_ref)')  # Density [kg/m**3]
+hl20.add_expression('qdyn', '0.5 * rho * v ** 2')  # Dynamic Pressure [N/m**2]
 hl20.add_expression('r', 'rm + h')  # Radius [m]
 
 # Constants
@@ -54,43 +55,34 @@ hl20.add_constant('mass', 11000.)  # Mass [kg]
 # BOUNDARY CONDITIONS
 # Scaling Factors
 hl20.add_constant('t_scale', 1.)
-hl20.add_constant('h_scale', 1.)
-hl20.add_constant('theta_scale', 1.)
-hl20.add_constant('v_scale', 1.)
-hl20.add_constant('alpha_scale', 1.)
-# hl20.add_constant('h_scale', 1e4)
-# hl20.add_constant('theta_scale', r2d)
-# hl20.add_constant('v_scale', 1e4)
-# hl20.add_constant('alpha_scale', 30 * r2d)
+hl20.add_constant('h_scale', 1e4)
+hl20.add_constant('theta_scale', r2d)
+hl20.add_constant('v_scale', 1e4)
+hl20.add_constant('gam_scale', 5 * r2d)
+hl20.add_constant('alpha_scale', 30 * r2d)
 
 # Initial Conditions
-h0 = 15e3
-theta0 = 0.
-v0 = 1.5e3
-gam0 = -5*d2r
-vx0 = v0 * np.cos(gam0)
-vn0 = v0 * np.sin(gam0)
-
-hl20.add_constant('h0', h0)
-hl20.add_constant('theta0', theta0)
-hl20.add_constant('vx0', vx0)
-hl20.add_constant('vn0', vn0)
+hl20.add_constant('h0', 30e3)
+hl20.add_constant('theta0', 0.)
+hl20.add_constant('v0', 0.5e3)
+hl20.add_constant('gam0', -5 * d2r)
 
 hl20.add_constraint('initial', 't/t_scale')
 hl20.add_constraint('initial', '(h - h0)/h_scale')
 hl20.add_constraint('initial', '(theta - theta0)/theta_scale')
-hl20.add_constraint('initial', '(vx - vx0)/v_scale')
-hl20.add_constraint('initial', '(vn - vn0)/v_scale')
+hl20.add_constraint('initial', '(v - v0)/v_scale')
+hl20.add_constraint('initial', '(gam - gam0)/gam_scale')
 
 # Terminal conditions
 hl20.add_constant('hf', 10e3)
 hl20.add_constant('thetaf', 1. * d2r)
-hl20.add_constant('vxf', 10.)
-hl20.add_constant('vnf', 0.)
+hl20.add_constant('gamf', 0. * d2r)
+hl20.add_constant('vf', 10.)
 
 hl20.add_constraint('terminal', '(h - hf)/h_scale')
-hl20.add_constraint('terminal', '(vx - vxf)/v_scale')
-hl20.add_constraint('terminal', '(vn - vnf)/v_scale')
+# hl20.add_constraint('terminal', '(theta - thetaf)/theta_scale')
+hl20.add_constraint('terminal', '(gam - gamf)/gam_scale')
+hl20.add_constraint('terminal', '(v - vf)/v_scale')
 
 # CONSTRAINTS
 # alpha limit due to G-Load
@@ -148,10 +140,10 @@ hl20.add_inequality_constraint(
 
 # COST FUNCTIONAL
 # Maximum range
-hl20.set_cost('0', '-vx / r', '0')
+hl20.set_cost('0', '-v * cos(gam) / r', '0')
 
 # # Minimum range
-# hl20.set_cost('0', 'vx / r', '0')
+# hl20.set_cost('0', 'v * cos(gam) / r', '0')
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
@@ -172,16 +164,13 @@ else:
 immutable_constants = (
     'mu', 'rm', 'h_ref', 'rho0',
     'CL0', 'CL1', 'CD0', 'CD1', 'CD2', 's_ref', 'mass',
-    't_scale', 'h_scale', 'theta_scale', 'v_scale',
+    't_scale', 'h_scale', 'theta_scale', 'v_scale', 'gam_scale',
     'alpha_max', 'alpha_min', 'eps_alpha', 'k_lse', 'n_max', 'n_min',
 )
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=20., immutable_constants=immutable_constants
-)
-
-guess_long = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=40., immutable_constants=immutable_constants
+    hl20_dual, control=alpha_reg0, t_span=40., immutable_constants=immutable_constants,
+    initial_states=np.array((15e3, 0., 1.5e3, -5*d2r)), fit_states=False
 )
 
 with open('guess_hl20.data', 'wb') as file:
@@ -195,8 +184,8 @@ with open('seed_sol_hl20.data', 'wb') as file:
 
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(10, {'hf': guess_long.x[0, -1], 'vxf': guess_long.x[2, -1], 'vnf': 0.})
-cont.add_linear_series(100, {'vxf': 10.})
+cont.add_linear_series(1, {'gamf': 0.})
+cont.add_linear_series(100, {'vf': 10.})
 # cont.add_logarithmic_series(100, {'eps_alpha': 1e-6})
 # cont.add_linear_series_until_failure({'hf': -100.})
 sol_set = cont.run_continuation()
