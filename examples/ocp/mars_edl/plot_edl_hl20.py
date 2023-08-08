@@ -10,7 +10,7 @@ PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 RESCALE_COSTATES = False
 REG_METHOD = 'sin'
-DATA = 0
+DATA = 2
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -116,6 +116,9 @@ ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_mi
 dtheta_dt = -x_dict['v'] * np.cos(x_dict['gam']) / r
 dtheta = x_dict["theta"][-1] - x_dict["theta"][0]
 cost_dtheta = dtheta / k_dict["theta_scale"]
+dcost_h = k_dict['eps_h'] / np.cos(
+    np.pi/2 * (2 * x_dict['h'] - k_dict['h_max'] - k_dict['h_min']) / (k_dict['h_max'] - k_dict['h_min'])
+) - k_dict['eps_h']
 
 heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
@@ -236,8 +239,9 @@ if PLOT_AUXILIARY:
 
     # PLOT COST CONTRIBUTIONS
     ydata = ((dtheta_dt,
-             dcost_alpha_dt))
-    ylabs = (r'$J(\Delta{V})$', r'$\Delta{J_{\alpha}}$', r'$\Delta{J(n)}$')
+             dcost_alpha_dt,
+             dcost_h))
+    ylabs = (r'$J(\Delta{\theta})$', r'$\Delta{J_{\alpha}}$', r'$\Delta{J_{h}}$')
     sup_title = f'J = {sol.cost}\nJ(Dtheta) = {cost_dtheta} [{abs(cost_dtheta / sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()

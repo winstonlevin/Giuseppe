@@ -128,6 +128,16 @@ hl20.add_constant('rn', 1.)  # Nose radius [m]
 hl20.add_constant('heat_rate_max', 500e4)  # Max heat rate [W/m**2]
 hl20.add_expression('heat_rate', 'k * (rho / rn) * v ** 3')  # Heat Rate [W/m**2]
 
+# Path Constraint - Altitude
+hl20.add_constant('h_min', 5e3)
+hl20.add_constant('h_max', 120e3)
+hl20.add_constant('eps_h', 1e-3)
+hl20.add_inequality_constraint(
+    'path', 'h', 'h_min', 'h_max', regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
+        'eps_h / h_scale', method='utm'
+    )
+)
+
 # COST FUNCTIONAL
 # Maximum range
 hl20.set_cost('0', '-v * cos(gam) / r', '0')
@@ -160,7 +170,7 @@ immutable_constants = (
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     hl20_dual, control=alpha_reg0, t_span=40., immutable_constants=immutable_constants,
-    initial_states=np.array((15e3, 0., 0.5e3, -5*d2r)), fit_states=False
+    initial_states=np.array((15e3, 0., 1.5e3, -5*d2r)), fit_states=False
 )
 
 with open('guess_hl20.data', 'wb') as file:
