@@ -72,24 +72,17 @@ CD2 = k_dict['CD2']
 # (Smoothed) Control Limits
 alpha_max = k_dict['alpha_max']
 alpha_min = k_dict['alpha_min']
-n_max = k_dict['n_max']
-n_min = k_dict['n_min']
-k_lse = k_dict['k_lse']
+n2_max = k_dict['n2_max']
+n2_min = k_dict['n2_min']
 
 rho = k_dict['rho0'] * np.exp(-x_dict['h'] / k_dict['h_ref'])
 qdyn = 0.5 * rho * v ** 2
 s_ref = k_dict['s_ref']
-alpha_n_max = weight * n_max / (qdyn * s_ref * CL1) - CL0 / CL1
-alpha_n_min = weight * n_min / (qdyn * s_ref * CL1) - CL0 / CL1
 
-alpha_upper_limit = np.minimum(alpha_max, alpha_n_max)
-alpha_lower_limit = np.maximum(alpha_min, alpha_n_min)
-alpha_upper_limit_smooth = alpha_upper_limit - np.log(
-    np.exp(k_lse * -(alpha_max - alpha_upper_limit)) + np.exp(k_lse * -(alpha_n_max - alpha_upper_limit))
-) / k_lse
-alpha_lower_limit_smooth = alpha_lower_limit + np.log(
-    np.exp(k_lse * (alpha_min - alpha_lower_limit)) + np.exp(k_lse * (alpha_n_min - alpha_lower_limit))
-) / k_lse
+alpha_upper_limit = alpha_max + 0*sol.t
+alpha_lower_limit = alpha_min + 0*sol.t
+alpha_upper_limit_smooth = alpha_max + 0*sol.t
+alpha_lower_limit_smooth = alpha_min + 0*sol.t
 
 # De-regularize control
 eps_alpha = k_dict['eps_alpha']
@@ -210,10 +203,6 @@ if PLOT_AUXILIARY:
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
         ax.plot(sol.t, y)
-
-        if idx == 0:
-            ax.plot(sol.t, 0*sol.t + n_max, 'k--')
-            ax.plot(sol.t, 0*sol.t + n_min, 'k--')
 
         if idx == 2:
             ax.plot(sol.t, 0*sol.t + ld_max, 'k--')
