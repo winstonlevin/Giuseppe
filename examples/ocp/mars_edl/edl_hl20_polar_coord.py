@@ -166,11 +166,11 @@ hf = 10e3
 gf = mu / (rm + hf) ** 2
 weightf = gf * mass
 rhof = rho0 * np.exp(-hf/h_ref)
-vf = (2 * mass * gf / (rho0 * s_ref * CL1 * alpha0)) ** 0.5
+vf = (2 * mass * gf / (rhof * s_ref * CL1 * alpha0)) ** 0.5
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     hl20_dual, control=alpha_reg0, t_span=150., immutable_constants=immutable_constants,
-    initial_states=np.array((hf, 0., vf, 0.*d2r)), fit_states=False, reverse=True
+    initial_states=np.array((hf, 0., 0.8*vf, 0.*d2r)), fit_states=False, reverse=True
 )
 # TODO rase hf until gam0 occurs at h > 5 km
 
