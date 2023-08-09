@@ -149,16 +149,13 @@ class BisectionLinearSeries(LinearSeries):
         else:
             self.solution_set.damn_sol()
             if self.bisection_counter < self.max_bisections:
-                # Begin first half of a new bisection. This lowers the bisection level and introduces a new solution.
-                # Additionally, the substeps left counter was wrongly decremented, so it must be incremented twice.
+                # Begin first half of a new bisection. This lowers the bisection level and introduces a new solution,
+                # Requiring the substeps and number of steps to be incremented.
                 self.bisection_counter += 1
                 self.second_bisection_half = False
                 self.substeps_left += 1
                 self.num_steps += 1
                 next_constants = self._generate_next_constants()
-
-                # print(f'Last continuation {self.generate_mapping_str(self.solution_set[-1].k[self.constant_indices])}'
-                #       f' did not converge. Bisecting next step (depth = {self.bisection_counter})')
 
             else:
                 raise ContinuationError('Bisection limit exceeded!')

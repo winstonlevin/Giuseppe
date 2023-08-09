@@ -1,38 +1,22 @@
-from __future__ import annotations
-from collections.abc import Hashable, Mapping, Iterable
-from typing import Union, Optional
+from collections.abc import Hashable, Mapping, Iterator, Iterable
+from typing import Union, Optional, Callable
 from copy import copy
-
-import numpy as np
 
 from giuseppe.data_classes import SolutionSet, Annotations
 from .abstract import ContinuationSeries
-from ...utils.typing import NPArray
+from ...utils.exceptions import ContinuationError
 
 
-class UntilFailureSeries(ContinuationSeries):
+class CustomSeries(ContinuationSeries):
     def __init__(
-            self, step_mapping: Mapping[Hashable: float], solution_set: SolutionSet,
-            max_bisections: int = 3, constant_names: Optional[Union[Iterable[Hashable, ...], Annotations]] = None,
-            keep_bisections: bool = True
+            self, num_steps: int, get_next_constants: Callable, solution_set: SolutionSet,
+            max_bisections: int = 3, keep_bisections: bool = True, series_name: Optional[str] = None
     ):
-
         super().__init__(solution_set)
-        self.step_mapping: Mapping[Hashable: float] = step_mapping
+        self.num_steps: int = num_steps
+        self.get_next_constants: Callable = get_next_constants
 
-        if constant_names is None:
-            self.constant_names: tuple[Hashable, ...] = tuple(range(len(self.solution_set[-1].k)))
-        elif isinstance(constant_names, Annotations):
-            self.constant_names: tuple[Hashable, ...] = tuple(constant_names.constants)
-        else:
-            self.constant_names: tuple[Hashable, ...] = tuple(constant_names)
-
-        self.constant_indices = self._get_constant_indices()
-        self.constant_steps = np.fromiter(self.step_mapping.values(), dtype=float)
-        self.idx_tar_pairs: list[tuple[int, float]] = \
-            [(idx, tar) for idx, tar in zip(self._get_constant_indices(), step_mapping.values())]
-
-        self._step_size: NPArray
+        self._step_size: float = 1. / self.num_steps
         self.max_bisections: int = max_bisections
         self.bisection_counter: int = 0
         self.second_bisection_half: bool = True
@@ -40,8 +24,14 @@ class UntilFailureSeries(ContinuationSeries):
         self.keep_bisections = keep_bisections
         self.last_converged_solution = None
 
+        if series_name is not None:
+            self.series_name = series_name
+        else:
+            self.series_name = ''
+
     def __iter__(self):
         super().__iter__()
+        self.current_step = 0
         self.bisection_counter = 0
         self.second_bisection_half: bool = True
         self.substeps_left: int = 1
@@ -50,6 +40,11 @@ class UntilFailureSeries(ContinuationSeries):
     def __next__(self):
         if self.solution_set[-1].converged:
             self.last_converged_solution = self.solution_set[-1]
+
+            self.current_step += 1
+
+            if self.current_step == self.num_steps:
+                raise StopIteration
 
             self.current_step += 1
 
@@ -80,39 +75,24 @@ class UntilFailureSeries(ContinuationSeries):
             self.solution_set.damn_sol()
             if self.bisection_counter < self.max_bisections:
                 # Begin first half of a new bisection. This lowers the bisection level and introduces a new solution,
-                # Requiring the substeps and to be incremented.
+                # Requiring the substeps and number of steps to be incremented.
                 self.bisection_counter += 1
                 self.second_bisection_half = False
                 self.substeps_left += 1
+                self.num_steps += 1
                 next_constants = self._generate_next_constants()
 
             else:
-                raise StopIteration
+                raise ContinuationError('Bisection limit exceeded!')
 
         return next_constants, self.last_converged_solution
 
-    def __repr__(self):
-        return f'UntilFailureSeries({self.generate_target_mapping_str()})'
-
     def _generate_next_constants(self):
-        next_constants = copy(self.last_converged_solution.k)
-        next_constants[self.constant_indices] += self.constant_steps * 2 ** -self.bisection_counter
+        fraction_complete = (self.current_step - 1 + self.substeps_left * 2 ** -self.bisection_counter) / self.num_steps
+        next_constants = self.get_next_constants(
+            copy(self.last_converged_solution), fraction_complete
+        )
         return next_constants
 
-    def _get_constant_indices(self) -> list[int]:
-        indices = []
-        for constant_key, target_value in self.step_mapping.items():
-            try:
-                indices.append(self.constant_names.index(constant_key))
-            except ValueError:
-                raise KeyError(f'Cannot perform continuation on {constant_key} because it is not a defined constant')
-
-        return indices
-
-    def generate_target_mapping_str(self):
-        return self.generate_mapping_str(self.step_mapping.values())
-
-    def generate_mapping_str(self, values):
-        name_str = ', '.join(self.step_mapping.keys())
-        val_str = ', '.join(f'{float(val):.2}' for val in values)
-        return f'{name_str} += {val_str}'
+    def __repr__(self):
+        return f'CustomSeries({self.series_name})'

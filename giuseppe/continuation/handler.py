@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Hashable, Mapping
-from typing import Union, Optional, Iterable
+from typing import Union, Optional, Iterable, Callable
 
 from giuseppe.data_classes import Solution, SolutionSet, Annotations
 
 from .display import ContinuationDisplayManager, ProgressBarDisplay, NoDisplay
-from .methods import ContinuationSeries, LinearSeries, BisectionLinearSeries, LogarithmicSeries, \
+from .methods import ContinuationSeries, LinearSeries, BisectionLinearSeries, LogarithmicSeries, CustomSeries, \
     BisectionLogarithmicSeries, UntilFailureSeries
 from ..numeric_solvers import NumericSolver
 from ..utils.exceptions import ContinuationError
@@ -199,6 +199,52 @@ class ContinuationHandler:
         else:
             series = UntilFailureSeries(step_sizes, self.solution_set, max_bisections=False,
                                         constant_names=self.constant_names, keep_bisections=keep_bisections)
+
+        self.continuation_series.append(series)
+        return self
+
+    def add_custom_series(self, num_steps: int, get_next_constants: Callable, series_name,
+                          bisection: Union[bool, int] = True, keep_bisections: bool = True):
+        """
+        Add a linear series to the continuation handler
+
+        The linear series will take linearly spaced steps toward the specified target values using the last solution as
+        the next guess
+
+        Parameters
+        ----------
+        num_steps : int
+            number of steps in the continuation series
+
+        get_next_constants : Callable
+           Callable that receives 1. the previous solution and 2. the fraction of completion for the series in (0, 1].
+           0 Represents the initial solution, 1 represents the last solution in the series. Must return a NumPy array of
+           constant values for the next continuation step in the series.
+
+        bisection : Union[bool, int], default=False
+           If True or number, the continuation handler will retry to solve problem with bisected step length if solver
+           fails to converge.
+
+           If a number is given, the number specifies the maximum number of bisections that will occur before giving up.
+
+        keep_bisections : bool, default=True
+            If True then the steps with bisections will be kept as part of the solutions set. Otherwise, only solutions
+            with the original linear spacing will be kept.
+
+        Returns
+        -------
+        self : ContinuationHandler
+        """
+
+        if bisection is True:
+            series = CustomSeries(num_steps, get_next_constants, self.solution_set,
+                                  keep_bisections=keep_bisections, series_name=series_name)
+        elif bisection > 0:
+            series = CustomSeries(num_steps, get_next_constants, self.solution_set,
+                                  max_bisections=bisection, keep_bisections=keep_bisections, series_name=series_name)
+        else:
+            series = CustomSeries(num_steps, get_next_constants, self.solution_set,
+                                  max_bisections=0, series_name=series_name)
 
         self.continuation_series.append(series)
         return self
