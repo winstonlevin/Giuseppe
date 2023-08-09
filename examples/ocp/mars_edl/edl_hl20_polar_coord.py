@@ -67,9 +67,9 @@ hl20.add_constant('gam_scale', 5 * r2d)
 hl20.add_constant('alpha_scale', 30 * r2d)
 
 # Initial Conditions
-hl20.add_constant('h0', 30e3)
+hl20.add_constant('h0', 80e3)
 hl20.add_constant('theta0', 0.)
-hl20.add_constant('v0', 0.5e3)
+hl20.add_constant('v0', 4e3)
 hl20.add_constant('gam0', -5 * d2r)
 
 hl20.add_constraint('initial', 't/t_scale')
@@ -166,13 +166,12 @@ hf = 10e3
 gf = mu / (rm + hf) ** 2
 weightf = gf * mass
 rhof = rho0 * np.exp(-hf/h_ref)
-vf = (2 * mass * gf / (rhof * s_ref * CL1 * alpha0)) ** 0.5
-
+CLf = CL0 + CL1 * alpha0
+vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 guess = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=150., immutable_constants=immutable_constants,
-    initial_states=np.array((hf, 0., 0.8*vf, 0.*d2r)), fit_states=False, reverse=True
+    hl20_dual, control=alpha_reg0, t_span=25., immutable_constants=immutable_constants,
+    initial_states=np.array((hf, 0., vf, 0 * d2r)), fit_states=False, reverse=True
 )
-# TODO rase hf until gam0 occurs at h > 5 km
 
 with open('guess_hl20.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -183,20 +182,55 @@ seed_sol = num_solver.solve(guess)
 with open('seed_sol_hl20.data', 'wb') as file:
     pickle.dump(seed_sol, file)
 
-# Back propagate at max L/D to get continuation
 back_propagation = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_max_ld_reg, t_span=100., immutable_constants=immutable_constants,
+    hl20_dual, control=alpha_max_ld_reg, t_span=250., immutable_constants=immutable_constants,
     initial_states=seed_sol.x[:, 0], fit_states=False, reverse=True
 )
-print(back_propagation.x[-1, 0] * r2d)
 
 with open('guess_hl20.data', 'wb') as file:
     pickle.dump(back_propagation, file)
 
+# GLIDE SLOPE
+# The glide slope occurs for a given energy level at the combination of h/V where (1) L = W and (2) max(L/D)
+# The glide slope will be used to run continuations
+h0_0 = seed_sol.x[0, 0]
+h0_1 = 80e3
+CL_max_ld = CL0 + CL1 * alpha_max_ld
+CD_max_ld = CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld**2
+idx_h0 = seed_sol.annotations.constants.index('h0')
+idx_v0 = seed_sol.annotations.constants.index('v0')
+idx_gam0 = seed_sol.annotations.constants.index('gam0')
+
+
+def glide_slope_velocity_fpa(_h):
+    _rho = rho0 * np.exp(-_h / h_ref)
+    _g = mu / (rm + _h) ** 2
+    _v = (2 * mass * _g / (_rho * s_ref * CL_max_ld)) ** 0.5
+    _gam = - np.arcsin(
+        (_rho * _v**2 * s_ref * CD_max_ld)
+        / (mass/h_ref * _v**2 + 2 * mass * _g)
+    )
+    return _v, _gam
+
+
+def glide_slope_continuation(previous_sol, frac_complete):
+    _h0 = h0_0 + frac_complete * (h0_1 - h0_0)
+    _v0, _gam0 = glide_slope_velocity_fpa(_h0)
+    previous_sol.k[idx_h0] = _h0
+    previous_sol.k[idx_v0] = _v0
+    previous_sol.k[idx_gam0] = _gam0
+    return previous_sol.k
+
+
+v_glide_seed, gam_glide_seed = glide_slope_velocity_fpa(seed_sol.x[0, 0])
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(1, {'theta0': 0.})
-cont.add_linear_series_until_failure({'v0': 1., 'gam0': -1 * d2r})
+# cont.add_linear_series_until_failure({'v0': 10})
+cont.add_linear_series(100, {'v0': v_glide_seed, 'gam0': gam_glide_seed})
+cont.add_logarithmic_series(100, {'eps_h': 1.})
+cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+# cont.add_linear_series(100, {'h0': back_propagation.x[0, 0], 'v0': back_propagation.x[2, 0]})
 # cont.add_linear_series(100, {'vf': 10.})
 # cont.add_logarithmic_series(100, {'eps_alpha': 1e-6})
 # cont.add_linear_series_until_failure({'hf': -100.})

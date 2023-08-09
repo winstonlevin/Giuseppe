@@ -8,8 +8,9 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
+PLOT_SWEEP = True
 REG_METHOD = 'sin'
-DATA = 0
+DATA = 2
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -89,16 +90,26 @@ eps_alpha = k_dict['eps_alpha']
 alpha_reg = sol.u[0, :]
 
 if REG_METHOD in ['trig', 'sin']:
-    alpha = 0.5 * ((alpha_upper_limit_smooth - alpha_lower_limit_smooth) * np.sin(alpha_reg)
-                   + (alpha_upper_limit_smooth + alpha_lower_limit_smooth))
-    dcost_alpha_dt = -eps_alpha * np.cos(alpha_reg)
+    def reg2ctrl(_u_reg, _u_max, _u_min, _eps_u):
+        return 0.5 * ((_u_max - _u_min) * np.sin(_u_reg) + (_u_max + _u_min))
+
+    def reg2cost(_u_reg, _eps_u):
+        return -_eps_u * np.cos(_u_reg)
 elif REG_METHOD in ['atan', 'arctan']:
-    alpha = (alpha_upper_limit_smooth - alpha_lower_limit_smooth) / np.pi * np.arctan(alpha_reg / eps_alpha) \
-            + (alpha_upper_limit_smooth + alpha_lower_limit_smooth) / 2
-    dcost_alpha_dt = eps_alpha * np.log(1 + alpha_reg ** 2 / eps_alpha ** 2) / np.pi
+    def reg2ctrl(_u_reg, _u_max, _u_min, _eps_u):
+        return (_u_max - _u_min) / np.pi * np.arctan(_u_reg / _eps_u) + 0.5 * (_u_max + _u_min)
+
+    def reg2cost(_u_reg, _eps_u):
+        _eps_u * np.log(1 + _u_reg ** 2 / _eps_u ** 2 ) / np.pi
 else:
-    alpha = np.nan * sol.t
-    dcost_alpha_dt = np.nan * sol.t
+    def reg2ctrl(_u_reg, _u_max, _u_min, _eps_u):
+        return _u_reg
+
+    def reg2cost(_u_reg, _eps_u):
+        return 0 * _u_reg
+
+alpha = reg2ctrl(alpha_reg, alpha_max, alpha_min, eps_alpha)
+dcost_alpha_dt = reg2cost(alpha_reg, eps_alpha)
 
 u_dict['alpha'] = alpha
 
@@ -127,6 +138,15 @@ heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
 heat_rate = k_dict['k'] * (rho / k_dict['rn']) * v ** 3
 
+mass = k_dict['mass']
+mu = k_dict['mu']
+rm = k_dict['rm']
+rho0 = k_dict['rho0']
+h_ref = k_dict['h_ref']
+CL_max_ld = CL0 + CL1 * alpha_max_ld
+h_glide = np.linspace(0., 80e3, 1000)
+v_glide = _v = (2 * mass * (mu/(rm+h_glide)**2) / ((rho0 * np.exp(-h_glide/h_ref)) * s_ref * CL_max_ld)) ** 0.5
+
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
 
@@ -142,7 +162,12 @@ for idx, state in enumerate(list(sol.x)):
     ax.grid()
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
-    ax.plot(sol.t, state * ymult[idx])
+
+    if PLOT_SWEEP:
+        for sol_sweep in sols:
+            ax.plot(sol_sweep.t, sol_sweep.x[idx, :] * ymult[idx])
+    else:
+        ax.plot(sol.t, state * ymult[idx])
 
     if idx == 0:
         ax.plot(sol.t, 0*sol.t + k_dict['h_min'] * ymult[idx], 'k--')
@@ -210,6 +235,21 @@ if PLOT_AUXILIARY:
         if idx == 2:
             ax.plot(sol.t, 0*sol.t + ld_max, 'k--')
             ax.plot(sol.t, 0*sol.t + ld_min, 'k--')
+
+    # PLOT H-v
+    fig_hv = plt.figure()
+    ax_hv = fig_hv.add_subplot(111)
+    ax_hv.grid()
+    ax_hv.set_xlabel(xlabs[2])
+    ax_hv.set_ylabel(xlabs[0])
+
+    if PLOT_SWEEP:
+        for sol_sweep in sols:
+            ax_hv.plot(sol_sweep.x[2, :], sol_sweep.x[0, :])
+    else:
+        ax_hv.plot(sol.x[2, :], sol.x[0, :])
+
+    ax_hv.plot(v_glide, h_glide, 'k--')
 
     # PLOT HEAT RATE
     ydata = (heat_rate, qdyn)
