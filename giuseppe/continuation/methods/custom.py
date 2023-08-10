@@ -41,12 +41,8 @@ class CustomSeries(ContinuationSeries):
         if self.solution_set[-1].converged:
             self.last_converged_solution = self.solution_set[-1]
 
-            self.current_step += 1
-
             if self.current_step == self.num_steps:
                 raise StopIteration
-
-            self.current_step += 1
 
             if self.bisection_counter > 0:
                 # If the first half of a bisection is completed, move to the second half.
@@ -69,17 +65,21 @@ class CustomSeries(ContinuationSeries):
                 if not self.keep_bisections:
                     self.solution_set.damn_sol()
 
+            # Increment current step as a fraction
+            self.current_step += 2 ** -self.bisection_counter
+
             next_constants = self._generate_next_constants()
 
         else:
             self.solution_set.damn_sol()
             if self.bisection_counter < self.max_bisections:
                 # Begin first half of a new bisection. This lowers the bisection level and introduces a new solution,
-                # Requiring the substeps and number of steps to be incremented.
+                # Requiring the substeps to be incremented and the current step to be moved back by half the previous
+                # step size.
                 self.bisection_counter += 1
                 self.second_bisection_half = False
                 self.substeps_left += 1
-                self.num_steps += 1
+                self.current_step -= 2 ** -self.bisection_counter
                 next_constants = self._generate_next_constants()
 
             else:
@@ -88,7 +88,7 @@ class CustomSeries(ContinuationSeries):
         return next_constants, self.last_converged_solution
 
     def _generate_next_constants(self):
-        fraction_complete = (self.current_step - 1 + self.substeps_left * 2 ** -self.bisection_counter) / self.num_steps
+        fraction_complete = float(self.current_step / self.num_steps)
         next_constants = self.get_next_constants(
             copy(self.last_converged_solution), fraction_complete
         )
