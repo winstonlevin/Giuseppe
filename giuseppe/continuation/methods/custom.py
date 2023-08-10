@@ -52,21 +52,24 @@ class CustomSeries(ContinuationSeries):
                 else:
                     self.bisection_counter -= 1
 
-                # The bisection being successfully completed, there is one fewer substeps left.
-                self.substeps_left -= 1
-
-                # Reset Bisection counter when the original step is completed
-                if self.substeps_left == 0:
-                    self.bisection_counter = 0
-                    self.substeps_left = 1
-
                 # By default, the bisected solutions are inserted into the solution set. If the user does not want these
                 # solutions, damn them now.
                 if not self.keep_bisections:
                     self.solution_set.damn_sol()
 
-            # Increment current step as a fraction
-            self.current_step += 2 ** -self.bisection_counter
+            # The substep being successfully completed, there is one fewer substep left.
+            self.substeps_left -= 1
+
+            # When no substeps are left, the full step is complete
+            if self.substeps_left == 0:
+                self.bisection_counter = 0
+                self.substeps_left = 1
+
+                # Increment the current step to the next full step
+                self.current_step = round(self.current_step + 1)
+            else:
+                # Increment the full step by a fraction
+                self.current_step += 2 ** -self.bisection_counter
 
             next_constants = self._generate_next_constants()
 
