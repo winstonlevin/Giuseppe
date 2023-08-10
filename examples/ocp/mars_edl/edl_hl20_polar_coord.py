@@ -1,7 +1,11 @@
 import numpy as np
+from scipy.optimize import fsolve
 import pickle
 
 import giuseppe
+
+OPTIMIZATION = 'min_v'  # {'max_range', 'min_v'}
+OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
 r2d = 180 / np.pi
@@ -87,7 +91,6 @@ hl20.add_constant('vf', 10.)
 hl20.add_constraint('terminal', '(h - hf)/h_scale')
 # hl20.add_constraint('terminal', '(theta - thetaf)/theta_scale')
 hl20.add_constraint('terminal', '(gam - gamf)/gam_scale')
-hl20.add_constraint('terminal', '(v - vf)/v_scale')
 
 # CONSTRAINTS
 # G-Load Constraint
@@ -116,8 +119,10 @@ hl20.add_constant('heat_rate_max', 500e4)  # Max heat rate [W/m**2]
 hl20.add_expression('heat_rate', 'k * (rho / rn) * v ** 3')  # Heat Rate [W/m**2]
 
 # Path Constraint - Altitude
-hl20.add_constant('h_min', 5e3)
-hl20.add_constant('h_max', 120e3)
+h_min = 5e3
+h_max = 120e3
+hl20.add_constant('h_min', h_min)
+hl20.add_constant('h_max', h_max)
 hl20.add_constant('eps_h', 1e-3)
 hl20.add_inequality_constraint(
     'path', 'h', 'h_min', 'h_max', regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
@@ -126,33 +131,63 @@ hl20.add_inequality_constraint(
 )
 
 # COST FUNCTIONAL
-# Maximum range
-hl20.set_cost('0', '-v * cos(gam) / r', '0')
-
-# # Minimum range
-# hl20.set_cost('0', 'v * cos(gam) / r', '0')
+if OPTIMIZATION == 'max_range':
+    # Maximum range
+    hl20.set_cost('0', '-v * cos(gam) / r', '0')
+    hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constraint final velocity
+elif OPTIMIZATION == 'min_v':
+    # Minimum velocity
+    hl20.set_cost('0', '(-drag/mass - g * sin(gam)) / v_scale', '0')
+else:
+    raise RuntimeError(OPT_ERROR_MSG)
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
     num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=2, max_nodes=100, node_buffer=15)
 
+# GLIDE SLOPE
+# The glide slope occurs for a given energy level at the combination of h/V where:
+# (1) d(gam)/dt = gam = 0
+# (2) max(L/D) or min(L/D) [for max/min range]
+# The glide slope will be used to run continuations
+alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
+alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
+
+CL_glide = CL0 + CL1 * alpha_max_ld
+CD_glide = CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2
+
+alpha_guess0 = 29.5 * d2r
+
+
+def glide_slope_velocity_fpa(_h):
+    _rho = rho0 * np.exp(-_h / h_ref)
+    _r = rm + _h
+    _g = mu / _r ** 2
+    _v = (mass * _g / (0.5 * _rho * s_ref * CL_glide + mass / _r)) ** 0.5
+    _qdyn = 0.5 * _rho * _v**2
+    _drag = _qdyn * s_ref * CD_glide
+    _rSCL = _r * s_ref * CL_glide
+    _gam = - np.arcsin(
+        (_rho * _drag/mass + 2*_drag / _rSCL)
+        / (_qdyn/h_ref + _rho * _g + 2 * mass * _g / _rSCL)
+    )
+    return _v, _gam
+
+
 # SOLUTION -------------------------------------------------------------------------------------------------------------
 # Generate convergent guess
-alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
-# alpha0 = alpha_max_ld
-alpha0 = 29.5 * d2r
 if alpha_reg_method in ['trig', 'sin']:
-    alpha_reg0 = np.arcsin(2/(alpha_max - alpha_min) * (alpha0 - 0.5*(alpha_max + alpha_min)))
-    alpha_max_ld_reg = np.arcsin(2/(alpha_max - alpha_min) * (alpha_max_ld - 0.5*(alpha_max + alpha_min)))
+    def ctrl2reg(_alpha):
+        return np.arcsin(2/(alpha_max - alpha_min) * (_alpha - 0.5*(alpha_max + alpha_min)))
 elif alpha_reg_method in ['atan', 'arctan']:
-    alpha_reg0 = eps_alpha * np.tan(0.5 * (2*alpha0 - alpha_max - alpha_min) * np.pi / (alpha_max - alpha_min))
-    alpha_max_ld_reg = eps_alpha * np.tan(
-        0.5 * (2*alpha_max_ld - alpha_max - alpha_min) * np.pi / (alpha_max - alpha_min)
-    )
+    def ctrl2reg(_alpha):
+        return eps_alpha * np.tan(0.5 * (2*_alpha - alpha_max - alpha_min) * np.pi / (alpha_max - alpha_min))
 else:
-    alpha_reg0 = alpha0
-    alpha_max_ld_reg = alpha_max_ld
+    def ctrl2reg(_alpha):
+        return _alpha
+
+alpha_reg0 = ctrl2reg(alpha_guess0)
 
 immutable_constants = (
     'mu', 'rm', 'h_ref', 'rho0',
@@ -166,7 +201,7 @@ hf = 10e3
 gf = mu / (rm + hf) ** 2
 weightf = gf * mass
 rhof = rho0 * np.exp(-hf/h_ref)
-CLf = CL0 + CL1 * alpha0
+CLf = CL0 + CL1 * alpha_guess0
 vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 guess = giuseppe.guess_generation.auto_propagate_guess(
     hl20_dual, control=alpha_reg0, t_span=25., immutable_constants=immutable_constants,
@@ -182,37 +217,17 @@ seed_sol = num_solver.solve(guess)
 with open('seed_sol_hl20.data', 'wb') as file:
     pickle.dump(seed_sol, file)
 
-back_propagation = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_max_ld_reg, t_span=250., immutable_constants=immutable_constants,
-    initial_states=seed_sol.x[:, 0], fit_states=False, reverse=True
-)
-
-with open('guess_hl20.data', 'wb') as file:
-    pickle.dump(back_propagation, file)
-
-# GLIDE SLOPE
-# The glide slope occurs for a given energy level at the combination of h/V where (1) L = W and (2) max(L/D)
-# The glide slope will be used to run continuations
+# Continuation Series from Glide Slope
 h0_0 = seed_sol.x[0, 0]
 h0_1 = 80e3
-CL_max_ld = CL0 + CL1 * alpha_max_ld
-CD_max_ld = CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld**2
+v0_1 = 4e3
+
 idx_h0 = seed_sol.annotations.constants.index('h0')
 idx_v0 = seed_sol.annotations.constants.index('v0')
 idx_gam0 = seed_sol.annotations.constants.index('gam0')
 
 
-def glide_slope_velocity_fpa(_h):
-    _rho = rho0 * np.exp(-_h / h_ref)
-    _g = mu / (rm + _h) ** 2
-    _v = (2 * mass * _g / (_rho * s_ref * CL_max_ld)) ** 0.5
-    _gam = - np.arcsin(
-        (_rho * _v**2 * s_ref * CD_max_ld)
-        / (mass/h_ref * _v**2 + 2 * mass * _g)
-    )
-    return _v, _gam
-
-
+# Extend solution via glide slope
 def glide_slope_continuation(previous_sol, frac_complete):
     _h0 = h0_0 + frac_complete * (h0_1 - h0_0)
     _v0, _gam0 = glide_slope_velocity_fpa(_h0)
@@ -222,18 +237,16 @@ def glide_slope_continuation(previous_sol, frac_complete):
     return previous_sol.k
 
 
-v_glide_seed, gam_glide_seed = glide_slope_velocity_fpa(seed_sol.x[0, 0])
+v0_glide_seed, gam0_glide_seed = glide_slope_velocity_fpa(seed_sol.x[0, 0])
+
+# Run continuations
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(1, {'theta0': 0.})
-# cont.add_linear_series_until_failure({'v0': 10})
-cont.add_linear_series(100, {'v0': v_glide_seed, 'gam0': gam_glide_seed})
-cont.add_logarithmic_series(100, {'eps_h': 1.})
-cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
-# cont.add_linear_series(100, {'h0': back_propagation.x[0, 0], 'v0': back_propagation.x[2, 0]})
-# cont.add_linear_series(100, {'vf': 10.})
-# cont.add_logarithmic_series(100, {'eps_alpha': 1e-6})
-# cont.add_linear_series_until_failure({'hf': -100.})
+# cont.add_linear_series(1, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
+cont.add_linear_series_until_failure({'v0': 10})
+# cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+# cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
 sol_set = cont.run_continuation()
 
 # Save Solution

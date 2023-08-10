@@ -2,23 +2,28 @@ import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib as mpl
+from scipy.interpolate import PchipInterpolator
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-PLOT_SWEEP = True
+PLOT_SWEEP = False
 REG_METHOD = 'sin'
-DATA = 2
+DATA = 0
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
         sol = pickle.load(f)
         sol.cost = np.nan
+
+    sols = [sol]
 elif DATA == 1:
     with open('seed_sol_hl20.data', 'rb') as f:
         sol = pickle.load(f)
+
+    sols = [sol]
 else:
     with open('sol_set_hl20.data', 'rb') as f:
         sols = pickle.load(f)
@@ -55,11 +60,13 @@ if 'gam' in x_dict:
     v = x_dict['v']
     vx = v * np.cos(x_dict['gam'])
     xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]')
+    lamlabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$')
     xmult = np.array((1e-3, r2d, 1e-3, r2d))
 else:
     v = (x_dict['vx'] ** 2 + x_dict['vn'] ** 2) ** 0.5
     vx = x_dict['vx']
     xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V_x$ [km/s]', r'$V_n$ [km/s]')
+    lamlabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V_x}$', r'$\lambda_{V_n}$')
     xmult = np.array((1e-3, r2d, 1e-3, 1e-3))
 
 mach = v / speed_of_sound
@@ -144,8 +151,14 @@ rm = k_dict['rm']
 rho0 = k_dict['rho0']
 h_ref = k_dict['h_ref']
 CL_max_ld = CL0 + CL1 * alpha_max_ld
+
 h_glide = np.linspace(0., 80e3, 1000)
-v_glide = _v = (2 * mass * (mu/(rm+h_glide)**2) / ((rho0 * np.exp(-h_glide/h_ref)) * s_ref * CL_max_ld)) ** 0.5
+r_glide = rm + h_glide
+g_glide = mu / r_glide**2
+rho_glide = rho0 * np.exp(-h_glide/h_ref)
+v_glide = _v = ((mass * g_glide) / (0.5 * rho_glide * s_ref * CL_max_ld + mass / r_glide)) ** 0.5
+qdyn_glide = mass * (g_glide - v_glide**2 / r_glide) / (s_ref * CL_max_ld)
+qdyn_glide_interp = PchipInterpolator(x=h_glide, y=qdyn_glide)
 
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
@@ -201,7 +214,7 @@ fig_controls.tight_layout()
 
 if PLOT_COSTATE:
     # PLOT COSTATES
-    ylabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V_x}$', r'$\lambda_{V_n}$')
+    ylabs = lamlabs
     ymult = np.array((1., 1., 1., 1.))
     fig_costates = plt.figure()
     axes_costates = []
@@ -249,7 +262,8 @@ if PLOT_AUXILIARY:
     else:
         ax_hv.plot(sol.x[2, :], sol.x[0, :])
 
-    ax_hv.plot(v_glide, h_glide, 'k--')
+    ax_hv.plot(v_glide, h_glide, 'k--', label='Glide Slope')
+    ax_hv.legend()
 
     # PLOT HEAT RATE
     ydata = (heat_rate, qdyn)
@@ -265,6 +279,9 @@ if PLOT_AUXILIARY:
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
         ax.plot(sol.t, y)
+
+        if idx == 1:
+            ax.plot(sol.t, qdyn_glide_interp(x_dict['h']), 'k--')
 
     # ax_heat = fig_heat.add_subplot(111)
     # ax_heat.grid()
