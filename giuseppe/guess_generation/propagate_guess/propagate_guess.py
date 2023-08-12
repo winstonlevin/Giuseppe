@@ -151,9 +151,14 @@ def propagate_bvp_guess_from_guess(
     else:
         initial_states = guess.x[:, 0]
 
+    if len(t_span) > 2:
+        t_eval = t_span
+    else:
+        t_eval = None
+
     ivp_sol: _IVP_SOL = solve_ivp(
             lambda _t, _x: bvp.compute_dynamics(_t, _x, guess.p, guess.k),
-            t_span, initial_states, atol=abs_tol, rtol=rel_tol, max_step=max_step)
+            t_span[(0, -1), ], initial_states, atol=abs_tol, rtol=rel_tol, max_step=max_step, t_eval=t_eval)
     guess.t = ivp_sol.t
     guess.x = ivp_sol.y
 
@@ -231,8 +236,13 @@ def propagate_ocp_guess_from_guess(
         def _compute_dynamics_wrapped(_t, _x):
             return _compute_dynamics(_t, _x, u, p, k)
 
-    ivp_sol: _IVP_SOL = solve_ivp(_compute_dynamics_wrapped, t_span, initial_states,
-                                  atol=abs_tol, rtol=rel_tol, max_step=max_step)
+    if len(t_span) > 2:
+        t_eval = t_span
+    else:
+        t_eval = None
+
+    ivp_sol: _IVP_SOL = solve_ivp(_compute_dynamics_wrapped, t_span[(0, -1), ], initial_states,
+                                  atol=abs_tol, rtol=rel_tol, max_step=max_step, t_eval=t_eval)
 
     guess.t = ivp_sol.t
     guess.x = ivp_sol.y
@@ -327,9 +337,14 @@ def propagate_dual_guess_from_guess(
             _lam_dot = _compute_costate_dynamics(_t, _x, _lam, u, p, k)
             return np.concatenate((_x_dot, _lam_dot))
 
-    ivp_sol: _IVP_SOL = solve_ivp(_compute_dynamics_wrapped, t_span,
+    if len(t_span) > 2:
+        t_eval = t_span
+    else:
+        t_eval = None
+
+    ivp_sol: _IVP_SOL = solve_ivp(_compute_dynamics_wrapped, t_span[(0, -1), ],
                                   np.concatenate((initial_states, initial_costates)),
-                                  atol=abs_tol, rtol=rel_tol, max_step=max_step)
+                                  atol=abs_tol, rtol=rel_tol, max_step=max_step, t_eval=t_eval)
     guess.t = ivp_sol.t
     guess.x = ivp_sol.y[:num_states, :]
     guess.lam = ivp_sol.y[num_states:num_states + num_costates, :]
