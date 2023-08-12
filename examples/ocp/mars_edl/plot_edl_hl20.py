@@ -11,7 +11,7 @@ PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 PLOT_SWEEP = False
 REG_METHOD = 'sin'
-DATA = 0
+DATA = 2
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -160,9 +160,27 @@ v_glide = _v = ((mass * g_glide) / (0.5 * rho_glide * s_ref * CL_max_ld + mass /
 qdyn_glide = mass * (g_glide - v_glide**2 / r_glide) / (s_ref * CL_max_ld)
 qdyn_glide_interp = PchipInterpolator(x=h_glide, y=qdyn_glide)
 
-# PLOTS ----------------------------------------------------------------------------------------------------------------
-t_label = 'Time [s]'
+# Time scale
+tf = sol.t[-1]
 
+if tf < 60 * 3:
+    # Order of seconds
+    t_label = 'Time [s]'
+    t_mult = 1.
+elif tf < 60 * 60 * 3:
+    # Order of minutes
+    t_label = 'Time [min]'
+    t_mult = 1./60.
+elif tf < 60 * 60 * 25 * 3:
+    # Order of hours
+    t_label = 'Time [hours]'
+    t_mult = 1. / (60. * 60.)
+else:
+    # Order of days
+    t_label = 'Time [days]'
+    t_mult = 1. / (60. * 60. * 24.)
+
+# PLOTS ----------------------------------------------------------------------------------------------------------------
 # PLOT STATES
 ylabs = xlabs
 ymult = xmult
@@ -180,10 +198,10 @@ for idx, state in enumerate(list(sol.x)):
         for sol_sweep in sols:
             ax.plot(sol_sweep.t, sol_sweep.x[idx, :] * ymult[idx])
     else:
-        ax.plot(sol.t, state * ymult[idx])
+        ax.plot(sol.t * t_mult, state * ymult[idx])
 
     if idx == 0:
-        ax.plot(sol.t, 0*sol.t + k_dict['h_min'] * ymult[idx], 'k--')
+        ax.plot(sol.t * t_mult, 0*sol.t + k_dict['h_min'] * ymult[idx], 'k--')
 
 fig_states.tight_layout()
 
@@ -199,16 +217,16 @@ for idx, ctrl in enumerate(list((alpha, alpha_reg))):
     ax.grid()
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
-    ax.plot(sol.t, ctrl * ymult[idx])
+    ax.plot(sol.t * t_mult, ctrl * ymult[idx])
 
     if idx == 0:
-        ax.plot(sol.t, alpha_upper_limit_smooth * ymult[idx], '--', color='0.5')
-        ax.plot(sol.t, alpha_lower_limit_smooth * ymult[idx], '--', color='0.5')
-        ax.plot(sol.t, alpha_upper_limit * ymult[idx], 'k--')
-        ax.plot(sol.t, alpha_lower_limit * ymult[idx], 'k--')
+        ax.plot(sol.t * t_mult, alpha_upper_limit_smooth * ymult[idx], '--', color='0.5')
+        ax.plot(sol.t * t_mult, alpha_lower_limit_smooth * ymult[idx], '--', color='0.5')
+        ax.plot(sol.t * t_mult, alpha_upper_limit * ymult[idx], 'k--')
+        ax.plot(sol.t * t_mult, alpha_lower_limit * ymult[idx], 'k--')
     elif idx == 1:
-        ax.plot(sol.t, 0*sol.t + np.pi/2, 'k--')
-        ax.plot(sol.t, 0*sol.t - np.pi/2, 'k--')
+        ax.plot(sol.t * t_mult, 0*sol.t + np.pi/2, 'k--')
+        ax.plot(sol.t * t_mult, 0*sol.t - np.pi/2, 'k--')
 
 fig_controls.tight_layout()
 
@@ -225,7 +243,7 @@ if PLOT_COSTATE:
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
-        ax.plot(sol.t, costate * ymult[idx])
+        ax.plot(sol.t * t_mult, costate * ymult[idx])
 
     fig_costates.tight_layout()
 
@@ -243,11 +261,11 @@ if PLOT_AUXILIARY:
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
-        ax.plot(sol.t, y)
+        ax.plot(sol.t * t_mult, y)
 
         if idx == 2:
-            ax.plot(sol.t, 0*sol.t + ld_max, 'k--')
-            ax.plot(sol.t, 0*sol.t + ld_min, 'k--')
+            ax.plot(sol.t * t_mult, 0*sol.t + ld_max, 'k--')
+            ax.plot(sol.t * t_mult, 0*sol.t + ld_min, 'k--')
 
     # PLOT H-v
     fig_hv = plt.figure()
@@ -278,18 +296,18 @@ if PLOT_AUXILIARY:
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
-        ax.plot(sol.t, y)
+        ax.plot(sol.t * t_mult, y)
 
         if idx == 1:
-            ax.plot(sol.t, qdyn_glide_interp(x_dict['h']), 'k--')
+            ax.plot(sol.t * t_mult, qdyn_glide_interp(x_dict['h']), 'k--')
 
     # ax_heat = fig_heat.add_subplot(111)
     # ax_heat.grid()
     # ax_heat.set_xlabel('t_label')
     # ax_heat.set_ylabel(r'Heat Rate [W/m$^2$]')
-    # ax_heat.plot(sol.t, heat_rate)
-    # ax_heat.plot(sol.t, 0*sol.t + heat_rate_max, 'k--')
-    # ax_heat.plot(sol.t, 0 * sol.t + heat_rate_min, 'k--')
+    # ax_heat.plot(sol.t * t_mult, heat_rate)
+    # ax_heat.plot(sol.t * t_mult, 0*sol.t + heat_rate_max, 'k--')
+    # ax_heat.plot(sol.t * t_mult, 0 * sol.t + heat_rate_min, 'k--')
 
     fig_aux.tight_layout()
 
@@ -309,7 +327,7 @@ if PLOT_AUXILIARY:
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
-        ax.plot(sol.t, cost)
+        ax.plot(sol.t * t_mult, cost)
 
     fig_cost.suptitle(sup_title)
     fig_cost.tight_layout()

@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'min_v'  # {'max_range', 'min_v'}
+OPTIMIZATION = 'max_drag'  # {'max_range', 'min_time', 'min_velocity', 'max_drag'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -63,6 +63,13 @@ hl20.add_constant('mass', mass)  # Mass [kg]
 
 # BOUNDARY CONDITIONS
 # Scaling Factors
+# hl20.add_constant('t_scale', 1.)
+# hl20.add_constant('h_scale', 1.)
+# hl20.add_constant('theta_scale', 1,)
+# hl20.add_constant('v_scale', 1,)
+# hl20.add_constant('gam_scale', 1.)
+# hl20.add_constant('alpha_scale', 1.)
+
 hl20.add_constant('t_scale', 1.)
 hl20.add_constant('h_scale', 1e4)
 hl20.add_constant('theta_scale', r2d)
@@ -132,12 +139,20 @@ hl20.add_inequality_constraint(
 
 # COST FUNCTIONAL
 if OPTIMIZATION == 'max_range':
-    # Maximum range
-    hl20.set_cost('0', '-v * cos(gam) / r', '0')
-    hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constraint final velocity
-elif OPTIMIZATION == 'min_v':
-    # Minimum velocity
+    # Maximum range (path cost = -d(theta)/dt -> min J = theta0 - thetaf)
+    hl20.set_cost('0', '(-v * cos(gam) / r) / theta_scale', '0')
+    hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constrain final velocity
+elif OPTIMIZATION == 'min_velocity':
+    # Minimum velocity (path cost = d(V)/dt -> min J = vf - v0)
     hl20.set_cost('0', '(-drag/mass - g * sin(gam)) / v_scale', '0')
+elif OPTIMIZATION == 'min_time':
+    # Minimum time (path cost = 1 -> min J = tf - t0)
+    hl20.set_cost('0', '1 / t_scale', '0')
+    hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constrain final velocity
+elif OPTIMIZATION == 'max_drag':
+    # Maximum drag (path cost = -drag -> min J = -int(drag)
+    hl20.set_cost('0', '-drag / (rho0 * v_scale**2)', '0')
+    hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constrain final velocity
 else:
     raise RuntimeError(OPT_ERROR_MSG)
 
@@ -204,7 +219,7 @@ rhof = rho0 * np.exp(-hf/h_ref)
 CLf = CL0 + CL1 * alpha_guess0
 vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 guess = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=25., immutable_constants=immutable_constants,
+    hl20_dual, control=alpha_reg0, t_span=np.linspace(0., 25., 6), immutable_constants=immutable_constants,
     initial_states=np.array((hf, 0., vf, 0 * d2r)), fit_states=False, reverse=True
 )
 
@@ -239,14 +254,28 @@ def glide_slope_continuation(previous_sol, frac_complete):
 
 v0_glide_seed, gam0_glide_seed = glide_slope_velocity_fpa(seed_sol.x[0, 0])
 
-# Run continuations
 # Use continuations to achieve desired terminal conditions
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(1, {'theta0': 0.})
-# cont.add_linear_series(1, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
-cont.add_linear_series_until_failure({'v0': 10})
-# cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
-# cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+
+if OPTIMIZATION == 'max_range':
+    cont.add_linear_series(1, {'theta0': 0.})
+    cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
+    cont.add_linear_series_until_failure({'vf': -10})
+    cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+    cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+elif OPTIMIZATION == 'min_time':
+    cont.add_linear_series(1, {'theta0': 0.})
+    cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
+    cont.add_linear_series_until_failure({'vf': -10})
+    cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+    cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+elif OPTIMIZATION == 'max_drag':
+    cont.add_linear_series(1, {'theta0': 0.})
+    cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
+    cont.add_linear_series_until_failure({'vf': -10})
+    cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+    cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+
 sol_set = cont.run_continuation()
 
 # Save Solution
