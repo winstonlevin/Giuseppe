@@ -12,7 +12,7 @@ PLOT_AUXILIARY = True
 PLOT_SWEEP = True
 # REG_METHOD = 'sin'
 REG_METHOD = None
-DATA = 1
+DATA = 2
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:

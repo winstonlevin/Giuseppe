@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'min_heat'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat'}
+OPTIMIZATION = 'min_control'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat', 'min_control'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -174,6 +174,9 @@ elif OPTIMIZATION == 'max_drag':
 elif OPTIMIZATION == 'min_heat':
     hl20.set_cost('0', 'heat_rate / (k * (rho0 / rn) * v_scale ** 3)', '0')
     hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constrain final velocity
+elif OPTIMIZATION == 'min_control':
+    hl20.set_cost('0', '(alpha / alpha_scale)**2', '0')
+    hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constrain final velocity
 else:
     raise RuntimeError(OPT_ERROR_MSG)
 
@@ -212,6 +215,10 @@ def glide_slope_velocity_fpa(_h):
 
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
+# Desired initial conditions
+h0_1 = 80e3
+v0_1, gam0_1 = glide_slope_velocity_fpa(h0_1)
+
 # Generate convergent guess
 if alpha_reg_method in ['trig', 'sin']:
     def ctrl2reg(_alpha):
@@ -239,11 +246,18 @@ weightf = gf * mass
 rhof = rho0 * np.exp(-hf/h_ref)
 CLf = CL0 + CL1 * alpha_guess0
 vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
-guess = giuseppe.guess_generation.auto_propagate_guess(
-    hl20_dual, control=alpha_reg0, t_span=np.linspace(0., 25., 6), immutable_constants=immutable_constants,
-    initial_states=np.array((hf, 0., vf, 0 * d2r)), fit_states=False, reverse=True,
-    initial_costates=np.array((0.1, 0.1, -50, 0.1))
-)
+
+if OPTIMIZATION == 'min_control':
+    guess = giuseppe.guess_generation.auto_propagate_guess(
+        hl20_dual, control=ctrl2reg(0.), t_span=np.arange(0., 25., 5.), immutable_constants=immutable_constants,
+        initial_states=np.array((h0_1, 0., v0_1, gam0_1)), fit_states=False, reverse=False,
+    )
+else:
+    guess = giuseppe.guess_generation.auto_propagate_guess(
+        hl20_dual, control=alpha_reg0, t_span=np.linspace(0., 25., 6), immutable_constants=immutable_constants,
+        initial_states=np.array((hf, 0., vf, 0 * d2r)), fit_states=False, reverse=True,
+        initial_costates=np.array((0.1, 0.1, -50, 0.1))
+    )
 
 with open('guess_hl20.data', 'wb') as file:
     pickle.dump(guess, file)
@@ -255,16 +269,14 @@ with open('seed_sol_hl20.data', 'wb') as file:
     pickle.dump(seed_sol, file)
 
 # Continuation Series from Glide Slope
-h0_0 = seed_sol.x[0, 0]
-h0_1 = 80e3
-v0_1, gam0_1 = glide_slope_velocity_fpa(h0_1)
-
 idx_h0 = seed_sol.annotations.constants.index('h0')
 idx_v0 = seed_sol.annotations.constants.index('v0')
 idx_gam0 = seed_sol.annotations.constants.index('gam0')
 
-
 # Extend solution via glide slope
+h0_0 = seed_sol.x[0, 0]
+
+
 def glide_slope_continuation(previous_sol, frac_complete):
     _h0 = h0_0 + frac_complete * (h0_1 - h0_0)
     _v0, _gam0 = glide_slope_velocity_fpa(_h0)
@@ -277,9 +289,8 @@ def glide_slope_continuation(previous_sol, frac_complete):
 v0_glide_seed, gam0_glide_seed = glide_slope_velocity_fpa(seed_sol.x[0, 0])
 
 # Use continuations to achieve desired terminal conditions
-cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-
 if OPTIMIZATION == 'max_range':
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
     cont.add_linear_series_until_failure({'vf': -10})
@@ -287,19 +298,25 @@ if OPTIMIZATION == 'max_range':
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_h': 1e-10})
     # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+    sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_time':
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
     cont.add_linear_series_until_failure({'vf': -10})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+    sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'max_drag':
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
     cont.add_linear_series_until_failure({'vf': -10})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+    sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_heat':
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_logarithmic_series(100, {'eps_h': 1e-5})
     cont.add_linear_series(25, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
@@ -309,8 +326,19 @@ elif OPTIMIZATION == 'min_heat':
     #
     # cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     # cont.add_logarithmic_series(100, {'eps_h': 1e-10})
-
-sol_set = cont.run_continuation()
+    sol_set = cont.run_continuation()
+elif OPTIMIZATION == 'min_control':
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+    cont.add_linear_series(1, {'theta0': 0.})
+    cont.add_linear_series_until_failure({'vf': -10})
+    cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
+    cont.add_logarithmic_series(100, {'eps_h': 1e-5})
+    cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+    cont.add_logarithmic_series(100, {'eps_h': 1e-10})
+    # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+    sol_set = cont.run_continuation()
+else:
+    raise RuntimeError(OPT_ERROR_MSG)
 
 # Save Solution
 sol_set.save('sol_set_hl20.data')
