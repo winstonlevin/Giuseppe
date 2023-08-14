@@ -10,7 +10,8 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
 PLOT_SWEEP = False
-REG_METHOD = 'sin'
+# REG_METHOD = 'sin'
+REG_METHOD = None
 DATA = 2
 
 if DATA == 0:
@@ -121,8 +122,15 @@ dcost_alpha_dt = reg2cost(alpha_reg, eps_alpha)
 u_dict['alpha'] = alpha
 
 # Aerodynamic Analysis
-cl = CL0 + CL1 * alpha
-cd = CD0 + CD1 * alpha + CD2 * alpha ** 2
+
+# # Polynomial CL/CD Model
+# cl = CL0 + CL1 * alpha
+# cd = CD0 + CD1 * alpha + CD2 * alpha ** 2
+
+# Trigonometric CL/CD Model
+cl = CL1 * 0.5 * np.sin(2 * (alpha + CL0/CL1))
+cd = CD0 - CD1**2/(4*CD2) + CD2 * np.sin(alpha + CD1/(2*CD2))**2
+
 lift = qdyn * k_dict['s_ref'] * cl
 lift_g = lift / weight
 drag = qdyn * k_dict['s_ref'] * cd

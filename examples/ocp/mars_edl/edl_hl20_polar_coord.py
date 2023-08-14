@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'max_drag'  # {'max_range', 'min_time', 'min_velocity', 'max_drag'}
+OPTIMIZATION = 'max_range'  # {'max_range', 'min_time', 'min_velocity', 'max_drag'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -29,11 +29,17 @@ hl20.add_state('gam', 'lift / (mass * v) + (v/r - g/v) * cos(gam)')  # Flight pa
 hl20.add_expression('g', 'mu/r**2')  # Gravitational acceleration [m/s**2]
 hl20.add_expression('drag', 'qdyn * s_ref * CD')  # Drag [N]
 hl20.add_expression('lift', 'qdyn * s_ref * CL')  # Lift [N]
-hl20.add_expression('CD', 'CD0 + CD1 * alpha + CD2 * alpha**2')  # Drag Coefficient [-]
-hl20.add_expression('CL', 'CL0 + CL1 * alpha')  # Lift coefficient [-]
 hl20.add_expression('rho', 'rho0 * exp(-h / h_ref)')  # Density [kg/m**3]
 hl20.add_expression('qdyn', '0.5 * rho * v ** 2')  # Dynamic Pressure [N/m**2]
 hl20.add_expression('r', 'rm + h')  # Radius [m]
+
+# # Polynomial CL/CD Model
+# hl20.add_expression('CD', 'CD0 + CD1 * alpha + CD2 * alpha**2')  # Drag Coefficient [-]
+# hl20.add_expression('CL', 'CL0 + CL1 * alpha')  # Lift coefficient [-]
+
+# Trigonometric CL/CD Model
+hl20.add_expression('CD', 'CD0 - CD1**2/(4*CD2) + CD2 * sin(alpha + CD1/(2*CD2))**2')  # Drag Coefficient [-]
+hl20.add_expression('CL', 'CL1 * 0.5 * sin(2 * (alpha + CL0/CL1))')  # Lift coefficient [-]
 
 # Constants
 mu = 42828.371901e9
@@ -107,17 +113,29 @@ hl20.add_constant('n2_min', 0.)
 hl20.add_expression('g_load2', '(lift**2 + drag**2) / weight0**2')
 
 # Control Constraint - alpha
-alpha_reg_method = 'sin'
-alpha_max = 30 * d2r
+# alpha_reg_method = 'sin'
+# alpha_max = 30 * d2r
+# alpha_min = -alpha_max
+# eps_alpha = 1e-3
+# hl20.add_constant('alpha_max', alpha_max)
+# hl20.add_constant('alpha_min', alpha_min)
+# hl20.add_constant('eps_alpha', eps_alpha)
+# hl20.add_inequality_constraint(
+#     'control', 'alpha', 'alpha_min', 'alpha_max',
+#     regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method=alpha_reg_method)
+# )
+
+alpha_reg_method = None
+alpha_max = 90 * d2r
 alpha_min = -alpha_max
-eps_alpha = 1e-3
+eps_alpha = 0
 hl20.add_constant('alpha_max', alpha_max)
 hl20.add_constant('alpha_min', alpha_min)
 hl20.add_constant('eps_alpha', eps_alpha)
-hl20.add_inequality_constraint(
-    'control', 'alpha', 'alpha_min', 'alpha_max',
-    regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method=alpha_reg_method)
-)
+# hl20.add_inequality_constraint(
+#     'control', 'alpha', 'alpha_min', 'alpha_max',
+#     regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler('eps_alpha', method=alpha_reg_method)
+# )
 
 # Path Constraint - Heat Rate
 hl20.add_constant('k', 1.9027e-4)  # Heat rate constant for Mars [kg**0.5 / m]
@@ -220,7 +238,8 @@ CLf = CL0 + CL1 * alpha_guess0
 vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 guess = giuseppe.guess_generation.auto_propagate_guess(
     hl20_dual, control=alpha_reg0, t_span=np.linspace(0., 25., 6), immutable_constants=immutable_constants,
-    initial_states=np.array((hf, 0., vf, 0 * d2r)), fit_states=False, reverse=True
+    initial_states=np.array((hf, 0., vf, 0 * d2r)), fit_states=False, reverse=True,
+    initial_costates=np.array((0.1, 0.1, -50, 0.1))
 )
 
 with open('guess_hl20.data', 'wb') as file:
@@ -261,8 +280,10 @@ if OPTIMIZATION == 'max_range':
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
     cont.add_linear_series_until_failure({'vf': -10})
+    cont.add_logarithmic_series(100, {'eps_h': 1e-5})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
-    cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+    cont.add_logarithmic_series(100, {'eps_h': 1e-10})
+    # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
 elif OPTIMIZATION == 'min_time':
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
