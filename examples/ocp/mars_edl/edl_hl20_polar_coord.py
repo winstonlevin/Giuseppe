@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'max_range'  # {'max_range', 'min_time', 'min_velocity', 'max_drag'}
+OPTIMIZATION = 'min_heat'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -171,6 +171,9 @@ elif OPTIMIZATION == 'max_drag':
     # Maximum drag (path cost = -drag -> min J = -int(drag)
     hl20.set_cost('0', '-drag / (rho0 * v_scale**2)', '0')
     hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constrain final velocity
+elif OPTIMIZATION == 'min_heat':
+    hl20.set_cost('0', 'heat_rate / (k * (rho0 / rn) * v_scale ** 3)', '0')
+    hl20.add_constraint('terminal', '(v - vf)/v_scale')  # Constrain final velocity
 else:
     raise RuntimeError(OPT_ERROR_MSG)
 
@@ -254,7 +257,7 @@ with open('seed_sol_hl20.data', 'wb') as file:
 # Continuation Series from Glide Slope
 h0_0 = seed_sol.x[0, 0]
 h0_1 = 80e3
-v0_1 = 4e3
+v0_1, gam0_1 = glide_slope_velocity_fpa(h0_1)
 
 idx_h0 = seed_sol.annotations.constants.index('h0')
 idx_v0 = seed_sol.annotations.constants.index('v0')
@@ -296,6 +299,16 @@ elif OPTIMIZATION == 'max_drag':
     cont.add_linear_series_until_failure({'vf': -10})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+elif OPTIMIZATION == 'min_heat':
+    cont.add_linear_series(1, {'theta0': 0.})
+    cont.add_logarithmic_series(100, {'eps_h': 1e-5})
+    cont.add_linear_series(25, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
+    # cont.add_linear_series(25, {'gam0': gam0_glide_seed})
+    # cont.add_linear_series_until_failure({'vf': -10})
+    # cont.add_linear_series(100, {'v0': v0_1, 'h0': h0_1, 'gam0': gam0_1})
+    #
+    # cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+    # cont.add_logarithmic_series(100, {'eps_h': 1e-10})
 
 sol_set = cont.run_continuation()
 

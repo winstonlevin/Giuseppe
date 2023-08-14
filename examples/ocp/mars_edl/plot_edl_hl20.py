@@ -9,10 +9,10 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-PLOT_SWEEP = False
+PLOT_SWEEP = True
 # REG_METHOD = 'sin'
 REG_METHOD = None
-DATA = 2
+DATA = 1
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
