@@ -8,11 +8,11 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
-RESCALE_COSTATES = False
+RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = True
-OPTIMIZATION = 'max_range'
+PLOT_SWEEP = False
+OPTIMIZATION = 'min_time'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
@@ -156,7 +156,7 @@ if OPTIMIZATION == 'max_range':
     cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
     cost_lab = r'$J(\Delta{\theta})$'
 elif OPTIMIZATION == 'min_time':
-    dcost_dt = 1
+    dcost_dt = 0*sol.t + 1.
     cost = sol.t[-1] - sol.t[0]
     cost_lab = r'$J(\Delta{t})$'
 else:
@@ -164,9 +164,12 @@ else:
     cost = 0.
     cost_lab = '[Invalid Opt. Selected]'
 
-dcost_h = k_dict['eps_h'] / np.cos(
-    np.pi/2 * (2 * h - k_dict['h_max'] - k_dict['h_min']) / (k_dict['h_max'] - k_dict['h_min'])
-) - k_dict['eps_h']
+if OPTIMIZATION != 'min_time':
+    dcost_h = k_dict['eps_h'] / np.cos(
+        np.pi/2 * (2 * h - k_dict['h_max'] - k_dict['h_min']) / (k_dict['h_max'] - k_dict['h_min'])
+    ) - k_dict['eps_h']
+else:
+    dcost_h = 0. * sol.t
 
 heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
@@ -303,11 +306,12 @@ if PLOT_AUXILIARY:
 
     if PLOT_SWEEP:
         for sol_sweep in sols:
-            ax_hv.plot(sol_sweep.x[2, :], sol_sweep.x[0, :])
+            ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0])
     else:
-        ax_hv.plot(sol.x[2, :], sol.x[0, :])
+        ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[0])
 
-    ax_hv.plot(v_glide, h_glide, 'k--', label='Glide Slope')
+    ax_hv.plot(v_glide / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
+               'k--', label='Glide Slope')
     ax_hv.legend()
 
     # PLOT HEAT RATE

@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'max_range'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat', 'min_control'}
+OPTIMIZATION = 'min_time'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat', 'min_control'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -164,12 +164,13 @@ h_max = 120e3
 hl20.add_constant('h_min', h_min)
 hl20.add_constant('h_max', h_max)
 hl20.add_constant('eps_h', 1e-3)
-hl20.add_inequality_constraint(
-    'path', 'h_nd', 'h_min / h_scale', 'h_max / h_scale',
-    regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
-        'eps_h', method='utm'
+if OPTIMIZATION != 'min_time':
+    hl20.add_inequality_constraint(
+        'path', 'h_nd', 'h_min / h_scale', 'h_max / h_scale',
+        regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
+            'eps_h', method='utm'
+        )
     )
-)
 
 # COST FUNCTIONAL
 if OPTIMIZATION == 'max_range':
@@ -182,7 +183,7 @@ elif OPTIMIZATION == 'min_velocity':
 elif OPTIMIZATION == 'min_time':
     # Minimum time (path cost = 1 -> min J = tf - t0)
     hl20.set_cost('0', '1', '0')
-    hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
+    # hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
 elif OPTIMIZATION == 'max_drag':
     # Maximum drag (path cost = -drag -> min J = -int(drag)
     hl20.set_cost('0', '-drag / (rho0 * v_scale**2)', '0')
@@ -265,6 +266,13 @@ if OPTIMIZATION == 'min_control':
         hl20_dual, control=ctrl2reg(0.), t_span=np.arange(0., 25., 5.), immutable_constants=immutable_constants,
         initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
         fit_states=False, reverse=False, initial_costates=np.array((0., 0., -0.1, -0.1))
+    )
+elif OPTIMIZATION == 'min_time':
+    guess = giuseppe.guess_generation.auto_propagate_guess(
+        hl20_dual, control=ctrl2reg(alphaf), t_span=np.arange(0., 20., 5.),
+        immutable_constants=immutable_constants,
+        initial_states=np.array((5e3/h_scale, 0./theta_scale, 1e3/v_scale, 0./gam_scale)),
+        fit_states=False, reverse=True
     )
 else:
     guess = giuseppe.guess_generation.auto_propagate_guess(
