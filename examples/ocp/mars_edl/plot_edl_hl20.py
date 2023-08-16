@@ -8,8 +8,12 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
+RESCALE_COSTATES = False
+
 PLOT_AUXILIARY = True
 PLOT_SWEEP = True
+OPTIMIZATION = 'max_range'
+
 # REG_METHOD = 'sin'
 REG_METHOD = None
 DATA = 2
@@ -47,8 +51,13 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
 
 # PROCESS DATA ---------------------------------------------------------------------------------------------------------
+h = x_dict['h_nd'] * k_dict['h_scale']
+theta = x_dict['theta_nd'] * k_dict['theta_scale']
+v = x_dict['v_nd'] * k_dict['v_scale']
+gam = x_dict['gam_nd'] * k_dict['gam_scale']
+
 r2d = 180 / np.pi
-r = k_dict['rm'] + x_dict['h']
+r = k_dict['rm'] + h
 g = k_dict['mu'] / r ** 2
 g0 = k_dict['mu'] / k_dict['rm'] ** 2
 weight = k_dict['mass'] * g
@@ -57,18 +66,18 @@ gas_constant_mars = 8.31446261815324 / 43.34  # Universal gas constant R / mean 
 heat_ratio_mars = 1.29  # Mars' specific heat ratio [-]
 temperature = g0 * k_dict['h_ref'] / gas_constant_mars  # Sea-level temperature [K]
 speed_of_sound = (heat_ratio_mars * gas_constant_mars * temperature) ** 0.5  # Speed of sound [m/s]
-if 'gam' in x_dict:
-    v = x_dict['v']
-    vx = v * np.cos(x_dict['gam'])
-    xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]')
-    lamlabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$')
-    xmult = np.array((1e-3, r2d, 1e-3, r2d))
+
+xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]')
+lamlabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$')
+xmult = np.array(
+    (1e-3 * k_dict['h_scale'], r2d * k_dict['theta_scale'], 1e-3 * k_dict['v_scale'], r2d * k_dict['gam_scale'])
+)
+if RESCALE_COSTATES:
+    lammult = np.array((
+        1/k_dict['h_scale'], 1/k_dict['theta_scale'], 1/k_dict['v_scale'], 1/k_dict['gam_scale']
+    ))
 else:
-    v = (x_dict['vx'] ** 2 + x_dict['vn'] ** 2) ** 0.5
-    vx = x_dict['vx']
-    xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V_x$ [km/s]', r'$V_n$ [km/s]')
-    lamlabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V_x}$', r'$\lambda_{V_n}$')
-    xmult = np.array((1e-3, r2d, 1e-3, 1e-3))
+    lammult = np.ones((len(lam_dict),))
 
 mach = v / speed_of_sound
 
@@ -84,7 +93,7 @@ alpha_min = k_dict['alpha_min']
 n2_max = k_dict['n2_max']
 n2_min = k_dict['n2_min']
 
-rho = k_dict['rho0'] * np.exp(-x_dict['h'] / k_dict['h_ref'])
+rho = k_dict['rho0'] * np.exp(-h / k_dict['h_ref'])
 qdyn = 0.5 * rho * v ** 2
 s_ref = k_dict['s_ref']
 
@@ -142,11 +151,21 @@ alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) **
 ld_max = (CL0 + CL1 * alpha_max_ld) / (CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2)
 ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_min_ld ** 2)
 
-dtheta_dt = vx / r
-dtheta = x_dict["theta"][-1] - x_dict["theta"][0]
-cost_dtheta = dtheta / k_dict["theta_scale"]
+if OPTIMIZATION == 'max_range':
+    dcost_dt = (-v * np.cos(gam) / r) / k_dict['theta_scale']
+    cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
+    cost_lab = r'$J(\Delta{\theta})$'
+elif OPTIMIZATION == 'min_time':
+    dcost_dt = 1
+    cost = sol.t[-1] - sol.t[0]
+    cost_lab = r'$J(\Delta{t})$'
+else:
+    dcost_dt = 0 * sol.t
+    cost = 0.
+    cost_lab = '[Invalid Opt. Selected]'
+
 dcost_h = k_dict['eps_h'] / np.cos(
-    np.pi/2 * (2 * x_dict['h'] - k_dict['h_max'] - k_dict['h_min']) / (k_dict['h_max'] - k_dict['h_min'])
+    np.pi/2 * (2 * h - k_dict['h_max'] - k_dict['h_min']) / (k_dict['h_max'] - k_dict['h_min'])
 ) - k_dict['eps_h']
 
 heat_rate_max = k_dict['heat_rate_max']
@@ -204,12 +223,12 @@ for idx, state in enumerate(list(sol.x)):
 
     if PLOT_SWEEP:
         for sol_sweep in sols:
-            ax.plot(sol_sweep.t, sol_sweep.x[idx, :] * ymult[idx])
+            ax.plot(sol_sweep.t * t_mult, sol_sweep.x[idx, :] * ymult[idx])
     else:
         ax.plot(sol.t * t_mult, state * ymult[idx])
 
     if idx == 0:
-        ax.plot(sol.t * t_mult, 0*sol.t + k_dict['h_min'] * ymult[idx], 'k--')
+        ax.plot(sol.t * t_mult, 0*sol.t + k_dict['h_min'] / k_dict['h_scale'] * ymult[idx], 'k--')
 
 fig_states.tight_layout()
 
@@ -241,7 +260,7 @@ fig_controls.tight_layout()
 if PLOT_COSTATE:
     # PLOT COSTATES
     ylabs = lamlabs
-    ymult = np.array((1., 1., 1., 1.))
+    ymult = lammult
     fig_costates = plt.figure()
     axes_costates = []
 
@@ -307,7 +326,7 @@ if PLOT_AUXILIARY:
         ax.plot(sol.t * t_mult, y)
 
         if idx == 1:
-            ax.plot(sol.t * t_mult, qdyn_glide_interp(x_dict['h']), 'k--')
+            ax.plot(sol.t * t_mult, qdyn_glide_interp(h), 'k--')
 
     # ax_heat = fig_heat.add_subplot(111)
     # ax_heat.grid()
@@ -320,11 +339,11 @@ if PLOT_AUXILIARY:
     fig_aux.tight_layout()
 
     # PLOT COST CONTRIBUTIONS
-    ydata = ((dtheta_dt,
+    ydata = ((dcost_dt,
              dcost_alpha_dt,
              dcost_h))
-    ylabs = (r'$J(\Delta{\theta})$', r'$\Delta{J_{\alpha}}$', r'$\Delta{J_{h}}$')
-    sup_title = f'J = {sol.cost}\nJ(Dtheta) = {cost_dtheta} [{abs(cost_dtheta / sol.cost):.2%} of cost]'
+    ylabs = (cost_lab, r'$\Delta{J_{\alpha}}$', r'$\Delta{J_{h}}$')
+    sup_title = f'J_UTM = {sol.cost}\nJ = {cost} [{abs(cost / sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()
     axes_cost = []
