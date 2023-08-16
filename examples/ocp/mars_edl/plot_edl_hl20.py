@@ -11,12 +11,12 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = False
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = False
-OPTIMIZATION = 'min_time'
+PLOT_SWEEP = True
+OPTIMIZATION = 'max_range'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
-DATA = 0
+DATA = 2
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -156,8 +156,8 @@ if OPTIMIZATION == 'max_range':
     cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
     cost_lab = r'$J(\Delta{\theta})$'
 elif OPTIMIZATION == 'min_time':
-    dcost_dt = 0 * sol.t + 1. / k_dict['t_scale']
-    cost = (sol.t[-1] - sol.t[0]) / k_dict['t_scale']
+    dcost_dt = 1
+    cost = sol.t[-1] - sol.t[0]
     cost_lab = r'$J(\Delta{t})$'
 else:
     dcost_dt = 0 * sol.t
@@ -303,14 +303,11 @@ if PLOT_AUXILIARY:
 
     if PLOT_SWEEP:
         for sol_sweep in sols:
-            ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0])
+            ax_hv.plot(sol_sweep.x[2, :], sol_sweep.x[0, :])
     else:
-        ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[2])
+        ax_hv.plot(sol.x[2, :], sol.x[0, :])
 
-    ax_hv.plot(
-        v_glide / k_dict['v_scale'] * xmult[2],
-        h_glide / k_dict['h_scale'] * xmult[0], 'k--', label='Glide Slope'
-    )
+    ax_hv.plot(v_glide, h_glide, 'k--', label='Glide Slope')
     ax_hv.legend()
 
     # PLOT HEAT RATE
@@ -351,13 +348,13 @@ if PLOT_AUXILIARY:
     fig_cost = plt.figure()
     axes_cost = []
 
-    for idx, dcost_partial in enumerate(ydata):
+    for idx, cost in enumerate(ydata):
         axes_cost.append(fig_cost.add_subplot(3, 1, idx + 1))
         ax = axes_cost[-1]
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
-        ax.plot(sol.t * t_mult, dcost_partial)
+        ax.plot(sol.t * t_mult, cost)
 
     fig_cost.suptitle(sup_title)
     fig_cost.tight_layout()

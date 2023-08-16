@@ -79,21 +79,24 @@ hl20.add_constant('mass', mass)  # Mass [kg]
 # v_scale = 1.
 # gam_scale = 1.
 # alpha_scale = 1.
-# t_scale = 1.
 
-h_scale = 120e3
-theta_scale = 300 * d2r
-v_scale = 4e3
-gam_scale = 30 * d2r
+# h_scale = 1e4
+# theta_scale = r2d
+# v_scale = 1e4
+# gam_scale = 5 * r2d
+# alpha_scale = 30 * r2d
+
+h_scale = 1e4
+theta_scale = d2r
+v_scale = 1e3
+gam_scale = 5 * d2r
 alpha_scale = 30 * d2r
-t_scale = 11 * 60.
 
 hl20.add_constant('h_scale', h_scale)
 hl20.add_constant('theta_scale', theta_scale)
 hl20.add_constant('v_scale', v_scale)
 hl20.add_constant('gam_scale', gam_scale)
 hl20.add_constant('alpha_scale', alpha_scale)
-hl20.add_constant('t_scale', t_scale)
 
 # Initial Conditions
 hl20.add_constant('h0', 80e3)
@@ -178,7 +181,7 @@ elif OPTIMIZATION == 'min_velocity':
     hl20.set_cost('0', '(-drag/mass - g * sin(gam)) / v_scale', '0')
 elif OPTIMIZATION == 'min_time':
     # Minimum time (path cost = 1 -> min J = tf - t0)
-    hl20.set_cost('0', '1 / t_scale', '0')
+    hl20.set_cost('0', '1', '0')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
 elif OPTIMIZATION == 'max_drag':
     # Maximum drag (path cost = -drag -> min J = -int(drag)
@@ -195,7 +198,7 @@ else:
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
-    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=False)
+    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
     num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=2, max_nodes=100, node_buffer=15)
 
 # GLIDE SLOPE
@@ -206,10 +209,8 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
 alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
 
-# CL_glide = CL0 + CL1 * alpha_max_ld
-# CD_glide = CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2
-CL_glide = CL1 * 0.5 * np.sin(2 * (alpha_max_ld + CL0/CL1))
-CD_glide = CD0 - CD1**2/(4*CD2) + CD2 * np.sin(alpha_max_ld + CD1/(2*CD2))**2
+CL_glide = CL0 + CL1 * alpha_max_ld
+CD_glide = CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2
 
 
 def glide_slope_velocity_fpa(_h):
@@ -225,27 +226,6 @@ def glide_slope_velocity_fpa(_h):
         / (_qdyn/h_ref + _rho * _g + 2 * mass * _g / _rSCL)
     )
     return _v, _gam
-
-
-def u_gam_ss(_t, _x, _p, _k):
-    # Assuming gam = 0, AoA such that d(gam)/dt = 0
-    _h = _x[0] * h_scale
-    _v = _x[2] * v_scale
-    _gam = _x[3] * gam_scale
-
-    _r = rm + _h
-    _g = mu / _r ** 2
-    _rho = rho0 * np.exp(-_h / h_ref)
-    _lift_ff = (mass * _g - mass * _v**2/_r) * np.cos(_gam)  # Lift : d(gam)/dt = 0
-    _lift_fb = 0.
-    # _lift_fb = -(-_gam * mass * _v)  # Feedback to drive gam to 0 [d(gam)/dtgo = -gam]
-    _lift = _lift_ff + _lift_fb
-    _qdyn = 0.5 * _rho * _v**2
-
-    _sin = 2 * _lift / (_qdyn * s_ref * CL1)
-    _sin = max(min(_sin, 1.), -1.)  # Saturate control
-    _alpha = 0.5 * np.arcsin(_sin) - CL0 / CL1  # Convert Lift to AoA (trig)
-    return np.array((_alpha,))
 
 
 # SOLUTION -------------------------------------------------------------------------------------------------------------
@@ -272,27 +252,19 @@ immutable_constants = (
     'n2_max', 'n2_min',
 )
 
+alphaf = 29.5 * d2r
 hf = 10e3
-rf = rm + hf
-gf = mu / rf ** 2
+gf = mu / (rm + hf) ** 2
 weightf = gf * mass
 rhof = rho0 * np.exp(-hf/h_ref)
-alphaf = 29.5 * d2r
-# CLf = CL0 + CL1 * alphaf
-CLf = CL1 * 0.5 * np.sin(2 * (alphaf + CL0/CL1))
-vf = (mass * gf / (0.5 * rhof * s_ref * CLf + mass / rf)) ** 0.5
+CLf = CL0 + CL1 * alphaf
+vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 
 if OPTIMIZATION == 'min_control':
     guess = giuseppe.guess_generation.auto_propagate_guess(
         hl20_dual, control=ctrl2reg(0.), t_span=np.arange(0., 25., 5.), immutable_constants=immutable_constants,
         initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
         fit_states=False, reverse=False, initial_costates=np.array((0., 0., -0.1, -0.1))
-    )
-elif OPTIMIZATION == 'min_time':
-    guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=u_gam_ss, t_span=np.arange(0., 1e3, 5.), immutable_constants=immutable_constants,
-        initial_states=np.array((hf / h_scale, 0./theta_scale, vf/v_scale, 0./gam_scale)),
-        fit_states=False, reverse=True, initial_costates=np.array((0., 0., -0.1, -0.1))
     )
 else:
     guess = giuseppe.guess_generation.auto_propagate_guess(
@@ -314,10 +286,6 @@ with open('seed_sol_hl20.data', 'wb') as file:
 idx_h0 = seed_sol.annotations.constants.index('h0')
 idx_v0 = seed_sol.annotations.constants.index('v0')
 idx_gam0 = seed_sol.annotations.constants.index('gam0')
-idx_eps_h = seed_sol.annotations.constants.index('eps_h')
-idx_h_scale = seed_sol.annotations.constants.index('h_scale')
-idx_v_scale = seed_sol.annotations.constants.index('v_scale')
-idx_gam_scale = seed_sol.annotations.constants.index('gam_scale')
 
 # Extend solution via glide slope
 h0_0 = seed_sol.x[0, 0] * h_scale
@@ -325,30 +293,12 @@ v0_glide_seed, gam0_glide_seed = glide_slope_velocity_fpa(h0_0)
 
 
 def glide_slope_continuation(previous_sol, frac_complete):
-    # Copy constants dict
-    constants = previous_sol.k.copy()
-    # Move linearly in h and along glide slope in V, gam
     _h0 = h0_0 + frac_complete * (h0_1 - h0_0)
     _v0, _gam0 = glide_slope_velocity_fpa(_h0)
-    constants[idx_h0] = _h0
-    constants[idx_v0] = _v0
-    constants[idx_gam0] = _gam0
-
-    # Adjust eps_h to keep max norm on the order of 1 [ignore theta costate, since it should be constant]
-    lam_min = np.min(np.abs(previous_sol.lam[(0, 2, 3), :]))
-    lam_max = np.max(np.abs(previous_sol.lam[(0, 2, 3), :]))
-    if lam_min < 0.1 or lam_max > 10:  # Attempt to get lam on order of 1
-        lam_mean = np.mean(np.abs(previous_sol.lam[(0, 2, 3), :]))
-        constants[idx_eps_h] /= lam_mean
-    # if lam_min < 0.1:  # Don't let costates get too small (adjust by mean)
-    #     lam_mean = np.mean(np.abs(previous_sol.lam[(0, 2, 3), :]))
-    #     constants[idx_eps_h] /= lam_mean
-    # elif constants[idx_eps_h] > 1e-9:  # Get max costate to order of 1
-    #     lam_max = np.max(np.abs(previous_sol.lam[(0, 2, 3), :]))
-    #     constants[idx_eps_h] /= lam_max
-    #     constants[idx_eps_h] = max(constants[idx_eps_h], 1e-9)
-
-    return constants
+    previous_sol.k[idx_h0] = _h0
+    previous_sol.k[idx_v0] = _v0
+    previous_sol.k[idx_gam0] = _gam0
+    return previous_sol.k
 
 
 # Use continuations to achieve desired terminal conditions
@@ -365,15 +315,10 @@ if OPTIMIZATION == 'max_range':
 elif OPTIMIZATION == 'min_time':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
-    cont.add_logarithmic_series(10, {'eps_h': 1e-6})
-    cont.add_linear_series(10, {'v0': v0_glide_seed})
-    # cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
+    cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
     # cont.add_linear_series_until_failure({'vf': -10})
-    cont.add_linear_series(100, {'h_min': -10e3})
-    cont.add_linear_series(100, {'v0': v0_1})
-    # cont.add_logarithmic_series(10, {'eps_h': 1e-5})
-    # cont.add_linear_series(100, {'h_min': -20e3, 'h_max': 200e3})
-    # cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+    cont.add_linear_series(100, {'h_min': -20e3, 'h_max': 200e3})
+    cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_h': 1e-10})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'max_drag':
