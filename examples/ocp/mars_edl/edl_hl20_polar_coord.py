@@ -123,17 +123,21 @@ hl20.add_constraint('terminal', 'h - hf')
 hl20.add_constraint('terminal', 'gam - gamf')
 
 # CONSTRAINTS
-# G-Load Constraint (Total G's)
-n2_max = 4.5**2
-hl20.add_constant('n2_max', n2_max)
-# hl20.add_constant('n2_min', 0.)
-hl20.add_constant('n2_min', -n2_max)
-hl20.add_constant('eps_n2', 1e-3)
-hl20.add_expression('g_load2', '(lift**2 + drag**2) / weight0**2')  # sea-level g's of acceleration [-]
+# Vertical G-Load Constraint (Total G's)
+n_max = 4.5
+hl20.add_constant('n_max', n_max)
+hl20.add_constant('n_min', -n_max)
+hl20.add_constant('eps_n', 1e-3)
+hl20.add_expression('g_load_normal', 'lift / weight0')  # sea-level g's of acceleration [-]
+hl20.add_expression('g_load_axial', 'drag / weight0')  # sea-level g's of acceleration [-]
 if OPTIMIZATION == 'min_time':
     hl20.add_inequality_constraint(
-        'path', 'g_load2', 'n2_min', 'n2_max',
-        regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n2', method='utm')
+        'path', 'g_load_normal', 'n_min', 'n_max',
+        regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
+    )
+    hl20.add_inequality_constraint(
+        'path', 'g_load_axial', 'n_min', 'n_max',
+        regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
     )
 
 # Path Constraint - Heat Rate
@@ -157,6 +161,8 @@ if OPTIMIZATION != 'min_time':
     )
 
 # COST FUNCTIONAL
+hl20.add_constant('eps_cost_alpha', 1e-3)
+
 if OPTIMIZATION == 'max_range':
     # Maximum range (path cost = -d(theta)/dt -> min J = theta0 - thetaf)
     hl20.set_cost('0', '(-v * cos(gam) / r) / theta_scale', '0')
@@ -166,8 +172,7 @@ elif OPTIMIZATION == 'min_velocity':
     hl20.set_cost('0', '(-drag/mass - g * sin(gam)) / v_scale', '0')
 elif OPTIMIZATION == 'min_time':
     # Minimum time (path cost = 1 -> min J = tf - t0)
-    hl20.set_cost('0', '1 + k_cost_alpha * (alpha / alpha_scale) ** 2', '0')
-    hl20.add_constant('k_cost_alpha', 1e-3)
+    hl20.set_cost('0', '1 + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
     # hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
 elif OPTIMIZATION == 'max_drag':
     # Maximum drag (path cost = -drag -> min J = -int(drag)
@@ -223,7 +228,7 @@ immutable_constants = (
     'mu', 'rm', 'h_ref', 'rho0',
     'CL0', 'CL1', 'CD0', 'CD1', 'CD2', 's_ref', 'mass',
     'h_scale', 'theta_scale', 'v_scale', 'gam_scale',
-    'n2_max', 'n2_min', 'eps_n2'
+    'n_max', 'n_min', 'eps_n'
 )
 
 alphaf = 29.5 * d2r
@@ -282,28 +287,28 @@ def glide_slope_continuation(previous_sol, frac_complete):
     return previous_sol.k
 
 
-idx_eps_n2 = seed_sol.annotations.constants.index('eps_n2')
-idx_k_cost_alpha = seed_sol.annotations.constants.index('k_cost_alpha')
-
-eps_n2_0 = seed_sol.k[idx_eps_n2]
-log_eps_n2_0 = np.log(eps_n2_0)
-k_cost_alpha_0 = seed_sol.k[idx_k_cost_alpha]
-
-eps_n2_f = 1e-10
-log_eps_n2_f = np.log(eps_n2_f)
-k_cost_alpha_f = 1e-10
-
-
-def cost_continuation(previous_sol, frac_complete):
-    _constants = previous_sol.k.copy()
-
-    _log_eps_n2 = log_eps_n2_0 + frac_complete * (log_eps_n2_f - log_eps_n2_0)
-    _k_cost_alpha = k_cost_alpha_0 + frac_complete * (k_cost_alpha_f - k_cost_alpha_0)
-
-    _constants[idx_eps_n2] = np.exp(_log_eps_n2)
-    _constants[idx_k_cost_alpha] = _k_cost_alpha
-
-    return _constants
+# idx_eps_n2 = seed_sol.annotations.constants.index('eps_n2')
+# # idx_eps_cost_alpha = seed_sol.annotations.constants.index('eps_cost_alpha')
+#
+# eps_n2_0 = seed_sol.k[idx_eps_n2]
+# log_eps_n2_0 = np.log(eps_n2_0)
+# # eps_cost_alpha_0 = seed_sol.k[idx_eps_cost_alpha]
+#
+# eps_n2_f = 1e-10
+# log_eps_n2_f = np.log(eps_n2_f)
+# eps_cost_alpha_f = 1e-10
+#
+#
+# def cost_continuation(previous_sol, frac_complete):
+#     _constants = previous_sol.k.copy()
+#
+#     _log_eps_n2 = log_eps_n2_0 + frac_complete * (log_eps_n2_f - log_eps_n2_0)
+#     _eps_cost_alpha = eps_cost_alpha_0 + frac_complete * (eps_cost_alpha_f - eps_cost_alpha_0)
+#
+#     _constants[idx_eps_n2] = np.exp(_log_eps_n2)
+#     _constants[idx_eps_cost_alpha] = _eps_cost_alpha
+#
+#     return _constants
 
 
 # Use continuations to achieve desired terminal conditions
@@ -321,12 +326,12 @@ elif OPTIMIZATION == 'min_time':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
-    cont.add_linear_series(10, {'k_cost_alpha': 1e-1})
+    cont.add_logarithmic_series(10, {'eps_cost_alpha': 1e-1})
     # cont.add_linear_series(100, {'n2_max': 25.**2, 'n2_min': 25.**2, 'eps_n2': 1e-5})
     # cont.add_linear_series(100, {'h0': h0_1, 'v0': v0_1, 'gam0': -17 * d2r})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
-    cont.add_logarithmic_series(100, {'k_cost_alpha': 1e-3})
-    cont.add_logarithmic_series(100, {'eps_n2': 1e-5})
+    cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-3})
+    cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-6, 'eps_n': 1e-6})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'max_drag':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)

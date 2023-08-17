@@ -8,7 +8,7 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
-RESCALE_COSTATES = True
+RESCALE_COSTATES = False
 
 PLOT_AUXILIARY = True
 PLOT_SWEEP = False
@@ -62,6 +62,7 @@ r = k_dict['rm'] + h
 g = k_dict['mu'] / r ** 2
 g0 = k_dict['mu'] / k_dict['rm'] ** 2
 weight = k_dict['mass'] * g
+weight0 = k_dict['mass'] * g0
 
 gas_constant_mars = 8.31446261815324 / 43.34  # Universal gas constant R / mean molecular weight M [J/kg-K]
 heat_ratio_mars = 1.29  # Mars' specific heat ratio [-]
@@ -102,11 +103,15 @@ qdyn = 0.5 * rho * v**2
 # Trigonometric CL/CD Model
 cl = CL1 * 0.5 * np.sin(2 * (alpha + CL0/CL1))
 cd = CD0 - CD1**2/(4*CD2) + CD2 * np.sin(alpha + CD1/(2*CD2))**2
+cd_min = CD0 - CD1**2/(4*CD2)
 
 lift = qdyn * k_dict['s_ref'] * cl
 lift_g = lift / weight
 drag = qdyn * k_dict['s_ref'] * cd
+drag_min = qdyn * k_dict['s_ref'] * cd_min
 drag_g = drag / weight
+drag_min_g = drag_min / weight
+
 
 alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
 alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
@@ -114,9 +119,8 @@ alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) **
 ld_max = (CL0 + CL1 * alpha_max_ld) / (CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2)
 ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_min_ld ** 2)
 
-g_load2 = (lift**2 + drag**2) / (k_dict['mass'] * g0) ** 2
-g_load = g_load2 ** 0.5
-g_load_max = k_dict['n2_max'] ** 0.5
+n_max_g = k_dict['n_max'] * g0 / g
+n_min_g = k_dict['n_min'] * g0 / g
 
 if OPTIMIZATION == 'max_range':
     dcost_dt = (-v * np.cos(gam) / r) / k_dict['theta_scale']
@@ -131,22 +135,22 @@ else:
     cost = 0.
     cost_lab = '[Invalid Opt. Selected]'
 
+
+def dcost_utm_fun(_x_utm, _x_min_utm, _x_max_utm, _eps_utm):
+    return _eps_utm / np.cos(
+        np.pi / 2 * (2 * _x_utm - _x_max_utm - _x_min_utm) / (_x_max_utm - _x_min_utm)
+    ) - _eps_utm
+
+
 if OPTIMIZATION == 'min_time':
-    eps_utm = k_dict['eps_n2']
-    x_max_utm = k_dict['n2_max']
-    x_min_utm = k_dict['n2_min']
-    x_utm = g_load2
+    dcost_utm = dcost_utm_fun(lift / weight0, k_dict['n_min'], k_dict['n_max'], k_dict['eps_n'])\
+                + dcost_utm_fun(drag / weight0, k_dict['n_min'], k_dict['n_max'], k_dict['eps_n'])
     lab_utm = r'$\Delta{J_{n^2}}$'
 else:
-    eps_utm = k_dict['eps_h']
-    x_max_utm = k_dict['h_max'] / k_dict['h_scale']
-    x_min_utm = k_dict['h_min'] / k_dict['h_scale']
-    x_utm = h / k_dict['h_scale']
+    dcost_utm = dcost_utm_fun(
+        x_dict['h_nd'], k_dict['h_min'] / k_dict['h_scale'], k_dict['h_max'] / k_dict['h_scale'], k_dict['eps_h']
+    )
     lab_utm = r'$\Delta{J_{h}}$'
-
-dcost_utm = eps_utm / np.cos(
-    np.pi / 2 * (2 * x_utm - x_max_utm - x_min_utm) / (x_max_utm - x_min_utm)
-) - eps_utm
 
 heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
@@ -248,6 +252,8 @@ if PLOT_COSTATE:
 if PLOT_AUXILIARY:
     # PLOT AERODYNAMICS
     ydata = (lift_g, drag_g, lift/drag)
+    ymax = (n_max_g, n_max_g, 0*sol.t + ld_max)
+    ymin = (n_min_g, drag_min_g, 0*sol.t + ld_min)
     ylabs = (r'$L$ [g]', r'$D$ [g]', r'L/D')
 
     fig_aero = plt.figure()
@@ -260,10 +266,8 @@ if PLOT_AUXILIARY:
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
         ax.plot(sol.t * t_mult, y)
-
-        if idx == 2:
-            ax.plot(sol.t * t_mult, 0*sol.t + ld_max, 'k--')
-            ax.plot(sol.t * t_mult, 0*sol.t + ld_min, 'k--')
+        ax.plot(sol.t * t_mult, ymin[idx], 'k--')
+        ax.plot(sol.t * t_mult, ymax[idx], 'k--')
 
     # PLOT H-v
     fig_hv = plt.figure()
@@ -283,8 +287,8 @@ if PLOT_AUXILIARY:
     ax_hv.legend()
 
     # PLOT CONSTRAINTS
-    ydata = (heat_rate, qdyn, g_load)
-    yaux = (0*sol.t + k_dict['heat_rate_max'], qdyn_glide_interp(h), 0*sol.t + g_load_max)
+    ydata = (heat_rate, qdyn)
+    yaux = (0*sol.t + k_dict['heat_rate_max'], qdyn_glide_interp(h))
     ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', 'G-Load [g\'s]')
     yauxlabs = ('Max Heat Rate', 'Gliding Dynamic Pressure', 'Max G-Load')
 
@@ -292,7 +296,7 @@ if PLOT_AUXILIARY:
     axes_aux = []
 
     for idx, y in enumerate(ydata):
-        axes_aux.append(fig_aux.add_subplot(3, 1, idx+1))
+        axes_aux.append(fig_aux.add_subplot(2, 1, idx+1))
         ax = axes_aux[-1]
         ax.grid()
         ax.set_xlabel(t_label)
