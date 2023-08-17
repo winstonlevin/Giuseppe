@@ -16,7 +16,7 @@ OPTIMIZATION = 'min_time'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
-DATA = 2
+DATA = 1
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -55,6 +55,7 @@ h = x_dict['h_nd'] * k_dict['h_scale']
 theta = x_dict['theta_nd'] * k_dict['theta_scale']
 v = x_dict['v_nd'] * k_dict['v_scale']
 gam = x_dict['gam_nd'] * k_dict['gam_scale']
+alpha = x_dict['alpha_nd'] * k_dict['alpha_scale']
 
 r2d = 180 / np.pi
 r = k_dict['rm'] + h
@@ -67,14 +68,16 @@ heat_ratio_mars = 1.29  # Mars' specific heat ratio [-]
 temperature = g0 * k_dict['h_ref'] / gas_constant_mars  # Sea-level temperature [K]
 speed_of_sound = (heat_ratio_mars * gas_constant_mars * temperature) ** 0.5  # Speed of sound [m/s]
 
-xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]')
-lamlabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$')
+xlabs = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]', r'$\alpha$ [deg]')
+lamlabs = (r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$', r'$\lambda_{\alpha}$')
 xmult = np.array(
-    (1e-3 * k_dict['h_scale'], r2d * k_dict['theta_scale'], 1e-3 * k_dict['v_scale'], r2d * k_dict['gam_scale'])
+    (1e-3 * k_dict['h_scale'], r2d * k_dict['theta_scale'], 1e-3 * k_dict['v_scale'], r2d * k_dict['gam_scale'],
+     r2d * k_dict['alpha_scale'])
 )
 if RESCALE_COSTATES:
     lammult = np.array((
-        1/k_dict['h_scale'], 1/k_dict['theta_scale'], 1/k_dict['v_scale'], 1/k_dict['gam_scale']
+        1/k_dict['h_scale'], 1/k_dict['theta_scale'], 1/k_dict['v_scale'], 1/k_dict['gam_scale'],
+        1/k_dict['alpha_scale']
     ))
 else:
     lammult = np.ones((len(lam_dict),))
@@ -87,24 +90,13 @@ CD0 = k_dict['CD0']
 CD1 = k_dict['CD1']
 CD2 = k_dict['CD2']
 
-# (Smoothed) Control Limits
-alpha_max = k_dict['alpha_max']
-alpha_min = k_dict['alpha_min']
-n2_max = k_dict['n2_max']
-n2_min = k_dict['n2_min']
-
-rho = k_dict['rho0'] * np.exp(-h / k_dict['h_ref'])
-qdyn = 0.5 * rho * v ** 2
-s_ref = k_dict['s_ref']
-
-alpha_upper_limit = alpha_max + 0*sol.t
-alpha_lower_limit = alpha_min + 0*sol.t
-alpha_upper_limit_smooth = alpha_max + 0*sol.t
-alpha_lower_limit_smooth = alpha_min + 0*sol.t
+# Control Limits
+alpha_rate_max = k_dict['alpha_rate_max']
+alpha_rate_min = k_dict['alpha_rate_min']
 
 # De-regularize control
-eps_alpha = k_dict['eps_alpha']
-alpha_reg = sol.u[0, :]
+eps_alpha_rate = k_dict['eps_alpha_rate']
+alpha_rate_reg = sol.u[0, :]
 
 if REG_METHOD in ['trig', 'sin']:
     def reg2ctrl(_u_reg, _u_max, _u_min, _eps_u):
@@ -125,12 +117,13 @@ else:
     def reg2cost(_u_reg, _eps_u):
         return 0 * _u_reg
 
-alpha = reg2ctrl(alpha_reg, alpha_max, alpha_min, eps_alpha)
-dcost_alpha_dt = reg2cost(alpha_reg, eps_alpha)
-
-u_dict['alpha'] = alpha
+alpha_rate = reg2ctrl(alpha_rate_reg, alpha_rate_max, alpha_rate_min, eps_alpha_rate)
+dcost_alpha_dt = reg2cost(alpha_rate_reg, eps_alpha_rate)
 
 # Aerodynamic Analysis
+s_ref = k_dict['s_ref']
+rho = k_dict['rho0'] * np.exp(-h / k_dict['h_ref'])
+qdyn = 0.5 * rho * v**2
 
 # # Polynomial CL/CD Model
 # cl = CL0 + CL1 * alpha
@@ -151,6 +144,10 @@ alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) **
 ld_max = (CL0 + CL1 * alpha_max_ld) / (CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2)
 ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_min_ld ** 2)
 
+g_load2 = (lift**2 + drag**2) / (k_dict['mass'] * g0) ** 2
+g_load = g_load2 ** 0.5
+g_load_max = k_dict['n2_max'] ** 0.5
+
 if OPTIMIZATION == 'max_range':
     dcost_dt = (-v * np.cos(gam) / r) / k_dict['theta_scale']
     cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
@@ -164,12 +161,22 @@ else:
     cost = 0.
     cost_lab = '[Invalid Opt. Selected]'
 
-if OPTIMIZATION != 'min_time':
-    dcost_h = k_dict['eps_h'] / np.cos(
-        np.pi/2 * (2 * h - k_dict['h_max'] - k_dict['h_min']) / (k_dict['h_max'] - k_dict['h_min'])
-    ) - k_dict['eps_h']
+if OPTIMIZATION == 'min_time':
+    eps_utm = k_dict['eps_n2']
+    x_max_utm = k_dict['n2_max']
+    x_min_utm = k_dict['n2_min']
+    x_utm = g_load2
+    lab_utm = r'$\Delta{J_{n^2}}$'
 else:
-    dcost_h = 0. * sol.t
+    eps_utm = k_dict['eps_h']
+    x_max_utm = k_dict['h_max'] / k_dict['h_scale']
+    x_min_utm = k_dict['h_min'] / k_dict['h_scale']
+    x_utm = h / k_dict['h_scale']
+    lab_utm = r'$\Delta{J_{h}}$'
+
+dcost_utm = eps_utm / np.cos(
+    np.pi / 2 * (2 * x_utm - x_max_utm - x_min_utm) / (x_max_utm - x_min_utm)
+) - eps_utm
 
 heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
@@ -218,7 +225,7 @@ fig_states = plt.figure()
 axes_states = []
 
 for idx, state in enumerate(list(sol.x)):
-    axes_states.append(fig_states.add_subplot(2, 2, idx + 1))
+    axes_states.append(fig_states.add_subplot(3, 2, idx + 1))
     ax = axes_states[-1]
     ax.grid()
     ax.set_xlabel(t_label)
@@ -236,12 +243,12 @@ for idx, state in enumerate(list(sol.x)):
 fig_states.tight_layout()
 
 # PLOT CONTROL
-ylabs = (r'$\alpha$ [deg]', r'$\alpha_{reg}$ [deg]')
+ylabs = (r'$\dot{\alpha}$ [deg/s]', r'$\dot{\alpha}_{reg}$ [-]')
 ymult = np.array((r2d, 1))
 fig_controls = plt.figure()
 axes_u = []
 
-for idx, ctrl in enumerate(list((alpha, alpha_reg))):
+for idx, ctrl in enumerate(list((alpha_rate, alpha_rate_reg))):
     axes_u.append(fig_controls.add_subplot(2, 1, idx + 1))
     ax = axes_u[-1]
     ax.grid()
@@ -250,10 +257,8 @@ for idx, ctrl in enumerate(list((alpha, alpha_reg))):
     ax.plot(sol.t * t_mult, ctrl * ymult[idx])
 
     if idx == 0:
-        ax.plot(sol.t * t_mult, alpha_upper_limit_smooth * ymult[idx], '--', color='0.5')
-        ax.plot(sol.t * t_mult, alpha_lower_limit_smooth * ymult[idx], '--', color='0.5')
-        ax.plot(sol.t * t_mult, alpha_upper_limit * ymult[idx], 'k--')
-        ax.plot(sol.t * t_mult, alpha_lower_limit * ymult[idx], 'k--')
+        ax.plot(sol.t * t_mult, 0*sol.t + k_dict['alpha_rate_max'] * ymult[idx], 'k--')
+        ax.plot(sol.t * t_mult, 0*sol.t + k_dict['alpha_rate_min'] * ymult[idx], 'k--')
     elif idx == 1:
         ax.plot(sol.t * t_mult, 0*sol.t + np.pi/2, 'k--')
         ax.plot(sol.t * t_mult, 0*sol.t - np.pi/2, 'k--')
@@ -268,7 +273,7 @@ if PLOT_COSTATE:
     axes_costates = []
 
     for idx, costate in enumerate(list(sol.lam)):
-        axes_costates.append(fig_costates.add_subplot(2, 2, idx + 1))
+        axes_costates.append(fig_costates.add_subplot(3, 2, idx + 1))
         ax = axes_costates[-1]
         ax.grid()
         ax.set_xlabel(t_label)
@@ -314,23 +319,24 @@ if PLOT_AUXILIARY:
                'k--', label='Glide Slope')
     ax_hv.legend()
 
-    # PLOT HEAT RATE
-    ydata = (heat_rate, qdyn)
-    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]')
+    # PLOT CONSTRAINTS
+    ydata = (heat_rate, qdyn, g_load)
+    yaux = (0*sol.t + k_dict['heat_rate_max'], qdyn_glide_interp(h), 0*sol.t + g_load_max)
+    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', 'G-Load [g\'s]')
+    yauxlabs = ('Max Heat Rate', 'Gliding Dynamic Pressure', 'Max G-Load')
 
     fig_aux = plt.figure()
     axes_aux = []
 
     for idx, y in enumerate(ydata):
-        axes_aux.append(fig_aux.add_subplot(2, 1, idx+1))
+        axes_aux.append(fig_aux.add_subplot(3, 1, idx+1))
         ax = axes_aux[-1]
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
         ax.plot(sol.t * t_mult, y)
-
-        if idx == 1:
-            ax.plot(sol.t * t_mult, qdyn_glide_interp(h), 'k--')
+        ax.plot(sol.t * t_mult, yaux[idx], 'k--', label=yauxlabs[idx])
+        ax.legend()
 
     # ax_heat = fig_heat.add_subplot(111)
     # ax_heat.grid()
@@ -344,9 +350,9 @@ if PLOT_AUXILIARY:
 
     # PLOT COST CONTRIBUTIONS
     ydata = ((dcost_dt,
-             dcost_alpha_dt,
-             dcost_h))
-    ylabs = (cost_lab, r'$\Delta{J_{\alpha}}$', r'$\Delta{J_{h}}$')
+              dcost_alpha_dt,
+             dcost_utm))
+    ylabs = (cost_lab, r'$\Delta{J_{\dot{\alpha}}}$', lab_utm)
     sup_title = f'J_UTM = {sol.cost}\nJ = {cost} [{abs(cost / sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()

@@ -17,21 +17,25 @@ hl20 = giuseppe.problems.symbolic.StrInputProb()
 hl20.set_independent('t')
 
 # Controls
-hl20.add_control('alpha')
+hl20.add_control('alpha_rate')
 
 # States and Dynamics
-hl20.add_state('h_nd', '( v * sin(gam) ) / h_scale')  # Altitude [m]
-hl20.add_state('theta_nd', '( v * cos(gam) / r ) / theta_scale')  # Downrange angle [rad]
-hl20.add_state('v_nd', '( -drag/mass - g * sin(gam) ) / v_scale')  # Velocity [m/s]
-hl20.add_state('gam_nd', '( lift / (mass * v) + (v/r - g/v) * cos(gam) ) / gam_scale')  # Flight path angle [rad]
+hl20.add_state('h_nd', '( v * sin(gam) ) / h_scale')  # Altitude [m], nd [-]
+hl20.add_state('theta_nd', '( v * cos(gam) / r ) / theta_scale')  # Downrange angle [rad], nd [-]
+hl20.add_state('v_nd', '( -drag/mass - g * sin(gam) ) / v_scale')  # Velocity [m/s], nd [-]
+hl20.add_state('gam_nd', '( lift / (mass * v) + (v/r - g/v) * cos(gam) ) / gam_scale')  # Flight path ang. [rad], nd [-]
+hl20.add_state('alpha_nd', 'alpha_rate / alpha_scale')  # Angle of attack [rad], nd [-]
 
 hl20.add_expression('h', 'h_nd * h_scale')
 hl20.add_expression('theta', 'theta_nd * theta_scale')
 hl20.add_expression('v', 'v_nd * v_scale')
 hl20.add_expression('gam', 'gam_nd * gam_scale')
+hl20.add_expression('alpha', 'alpha_nd * alpha_scale')
 
 # Expressions
 hl20.add_expression('g', 'mu/r**2')  # Gravitational acceleration [m/s**2]
+hl20.add_expression('g0', 'mu/rm**2')  # Gravitational acceleration [m/s**2]
+hl20.add_expression('weight0', 'mass * g0')  # Gravitational acceleration [m/s**2]
 hl20.add_expression('drag', 'qdyn * s_ref * CD')  # Drag [N]
 hl20.add_expression('lift', 'qdyn * s_ref * CL')  # Lift [N]
 hl20.add_expression('rho', 'rho0 * exp(-h / h_ref)')  # Density [kg/m**3]
@@ -89,7 +93,10 @@ hl20.add_constant('mass', mass)  # Mass [kg]
 h_scale = 1e4
 theta_scale = d2r
 v_scale = 1e3
-gam_scale = 5 * d2r
+if OPTIMIZATION == 'min_time':
+    gam_scale = 90 * d2r
+else:
+    gam_scale = 5 * d2r
 alpha_scale = 30 * d2r
 
 hl20.add_constant('h_scale', h_scale)
@@ -121,11 +128,32 @@ hl20.add_constraint('terminal', 'h - hf')
 hl20.add_constraint('terminal', 'gam - gamf')
 
 # CONSTRAINTS
-# G-Load Constraint
+# G-Load Constraint (Total G's)
 n2_max = 4.5**2
 hl20.add_constant('n2_max', n2_max)
-hl20.add_constant('n2_min', 0.)
-hl20.add_expression('g_load2', '(lift**2 + drag**2) / weight0**2')
+# hl20.add_constant('n2_min', 0.)
+hl20.add_constant('n2_min', -n2_max)
+hl20.add_constant('eps_n2', 1e-3)
+hl20.add_expression('g_load2', '(lift**2 + drag**2) / weight0**2')  # sea-level g's of acceleration [-]
+if OPTIMIZATION == 'min_time':
+    hl20.add_inequality_constraint(
+        'path', 'g_load2', 'n2_min', 'n2_max',
+        regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n2', method='utm')
+    )
+
+# Control Constraint - alpha rate
+alpha_rate_reg_method = 'sin'
+alpha_rate_max = 1. * 2 * np.pi  # 1 hz limit
+alpha_rate_min = -alpha_rate_max
+hl20.add_constant('alpha_rate_max', alpha_rate_max)
+hl20.add_constant('alpha_rate_min', alpha_rate_min)
+hl20.add_constant('eps_alpha_rate', 1e-3)
+hl20.add_inequality_constraint(
+    'control', 'alpha_rate', 'alpha_rate_min', 'alpha_rate_max',
+    regularizer=giuseppe.problems.symbolic.regularization.ControlConstraintHandler(
+        'eps_alpha_rate', method=alpha_rate_reg_method
+    )
+)
 
 # Control Constraint - alpha
 # alpha_reg_method = 'sin'
@@ -235,22 +263,25 @@ h0_1 = 80e3
 v0_1, gam0_1 = glide_slope_velocity_fpa(h0_1)
 
 # Generate convergent guess
-if alpha_reg_method in ['trig', 'sin']:
-    def ctrl2reg(_alpha):
-        return np.arcsin(2/(alpha_max - alpha_min) * (_alpha - 0.5*(alpha_max + alpha_min)))
-elif alpha_reg_method in ['atan', 'arctan']:
-    def ctrl2reg(_alpha):
-        return eps_alpha * np.tan(0.5 * (2*_alpha - alpha_max - alpha_min) * np.pi / (alpha_max - alpha_min))
+if alpha_rate_reg_method in ['trig', 'sin']:
+    def ctrl2reg(_alpha_rate):
+        return np.arcsin(2/(alpha_rate_max - alpha_rate_min) * (_alpha_rate - 0.5*(alpha_rate_max + alpha_rate_min)))
+elif alpha_rate_reg_method in ['atan', 'arctan']:
+    def ctrl2reg(_alpha_rate):
+        return eps_alpha * np.tan(
+            0.5 * (2*_alpha_rate - alpha_rate_max - alpha_rate_min) * np.pi / (alpha_rate_max - alpha_rate_min)
+        )
 else:
-    def ctrl2reg(_alpha):
-        return _alpha
+    def ctrl2reg(_alpha_rate):
+        return _alpha_rate
 
 immutable_constants = (
     'mu', 'rm', 'h_ref', 'rho0',
     'CL0', 'CL1', 'CD0', 'CD1', 'CD2', 's_ref', 'mass',
     'h_scale', 'theta_scale', 'v_scale', 'gam_scale',
     'alpha_max', 'alpha_min', 'eps_alpha',
-    'n2_max', 'n2_min',
+    'alpha_rate_max', 'alpha_rate_min', 'eps_alpha_rate',
+    'n2_max', 'n2_min', 'eps_n2'
 )
 
 alphaf = 29.5 * d2r
@@ -264,21 +295,21 @@ vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 if OPTIMIZATION == 'min_control':
     guess = giuseppe.guess_generation.auto_propagate_guess(
         hl20_dual, control=ctrl2reg(0.), t_span=np.arange(0., 25., 5.), immutable_constants=immutable_constants,
-        initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
-        fit_states=False, reverse=False, initial_costates=np.array((0., 0., -0.1, -0.1))
+        initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale, 0./alpha_scale)),
+        fit_states=False, reverse=False
     )
 elif OPTIMIZATION == 'min_time':
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=ctrl2reg(alphaf), t_span=np.arange(0., 20., 5.),
+        hl20_dual, control=ctrl2reg(0.), t_span=np.arange(0., 20., 5.),
         immutable_constants=immutable_constants,
-        initial_states=np.array((5e3/h_scale, 0./theta_scale, 1e3/v_scale, 0./gam_scale)),
+        initial_states=np.array((5e3/h_scale, 0./theta_scale, 1e3/v_scale, 0./gam_scale, alphaf/alpha_scale)),
         fit_states=False, reverse=True
     )
 else:
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=ctrl2reg(alphaf), t_span=np.linspace(0., 25., 6), immutable_constants=immutable_constants,
-        initial_states=np.array((hf/h_scale, 0./theta_scale, vf/v_scale, 0 * d2r/gam_scale)),
-        fit_states=False, reverse=True, initial_costates=np.array((0., 0., -0.1, -0.1))
+        hl20_dual, control=ctrl2reg(0.), t_span=np.linspace(0., 25., 6), immutable_constants=immutable_constants,
+        initial_states=np.array((hf/h_scale, 0./theta_scale, vf/v_scale, 0 * d2r/gam_scale, alphaf/alpha_scale)),
+        fit_states=False, reverse=True
     )
 
 with open('guess_hl20.data', 'wb') as file:
@@ -294,6 +325,19 @@ with open('seed_sol_hl20.data', 'wb') as file:
 idx_h0 = seed_sol.annotations.constants.index('h0')
 idx_v0 = seed_sol.annotations.constants.index('v0')
 idx_gam0 = seed_sol.annotations.constants.index('gam0')
+idx_gam_scale = seed_sol.annotations.constants.index('gam_scale')
+idx_eps_alpha_rate = seed_sol.annotations.constants.index('eps_alpha_rate')
+
+k = guess.k.copy()
+k[idx_gam_scale] = 90 * d2r
+k[idx_eps_alpha_rate] = 1e-2
+guess = giuseppe.guess_generation.auto_propagate_guess(
+    hl20_dual, control=ctrl2reg(0.), t_span=np.arange(0., 20., 5.), k=k,
+    immutable_constants=immutable_constants,
+    initial_states=np.array((5e3 / h_scale, 0. / theta_scale, 1e3 / v_scale, 0. / k[idx_gam_scale], alphaf / alpha_scale)),
+    fit_states=False, reverse=True
+)
+seed_sol = num_solver.solve(guess)
 
 # Extend solution via glide slope
 h0_0 = seed_sol.x[0, 0] * h_scale
@@ -324,10 +368,9 @@ elif OPTIMIZATION == 'min_time':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
-    # cont.add_linear_series_until_failure({'vf': -10})
-    cont.add_linear_series(100, {'h_min': -20e3, 'h_max': 200e3})
+    cont.add_logarithmic_series(100, {'eps_n2': 1e0})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
-    cont.add_logarithmic_series(100, {'eps_h': 1e-10})
+    cont.add_logarithmic_series(100, {'eps_n2': 1e-10})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'max_drag':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
