@@ -8,7 +8,7 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
-RESCALE_COSTATES = False
+RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
 PLOT_SWEEP = False
@@ -102,15 +102,24 @@ qdyn = 0.5 * rho * v**2
 
 # Trigonometric CL/CD Model
 cl = CL1 * 0.5 * np.sin(2 * (alpha + CL0/CL1))
+cl_min = -CL1 * 0.5
+cl_max = CL1 * 0.5
 cd = CD0 - CD1**2/(4*CD2) + CD2 * np.sin(alpha + CD1/(2*CD2))**2
 cd_min = CD0 - CD1**2/(4*CD2)
+cd_max = CD0 - CD1**2/(4*CD2) + CD2
 
 lift = qdyn * k_dict['s_ref'] * cl
+lift_min = qdyn * k_dict['s_ref'] * cl_min
+lift_max = qdyn * k_dict['s_ref'] * cl_max
 lift_g = lift / weight
+lift_min_g = lift_min / weight
+lift_max_g = lift_max / weight
 drag = qdyn * k_dict['s_ref'] * cd
 drag_min = qdyn * k_dict['s_ref'] * cd_min
+drag_max = qdyn * k_dict['s_ref'] * cd_max
 drag_g = drag / weight
 drag_min_g = drag_min / weight
+drag_max_g = drag_max / weight
 
 
 alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
@@ -191,6 +200,11 @@ else:
     t_label = 'Time [days]'
     t_mult = 1. / (60. * 60. * 24.)
 
+dh_dt = v * np.sin(gam)
+dtheta_dt = v * np.cos(gam) / r
+dv_dt = -drag / mass - g * np.sin(gam)
+dgam_dt = lift / (mass * v) + (v/r - g/v) * np.cos(gam)
+
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 # PLOT STATES
 ylabs = xlabs
@@ -228,7 +242,12 @@ for idx, ctrl in enumerate(list(sol.u)):
     ax.grid()
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
-    ax.plot(sol.t * t_mult, ctrl * ymult[idx])
+
+    if PLOT_SWEEP:
+        for sol_sweep in sols:
+            ax.plot(sol_sweep.t * t_mult, sol_sweep.u[idx, :] * ymult[idx])
+    else:
+        ax.plot(sol.t * t_mult, ctrl * ymult[idx])
 
 fig_controls.tight_layout()
 
@@ -252,8 +271,8 @@ if PLOT_COSTATE:
 if PLOT_AUXILIARY:
     # PLOT AERODYNAMICS
     ydata = (lift_g, drag_g, lift/drag)
-    ymax = (n_max_g, n_max_g, 0*sol.t + ld_max)
-    ymin = (n_min_g, drag_min_g, 0*sol.t + ld_min)
+    ymax = (np.minimum(lift_max_g, n_max_g), np.minimum(drag_max_g, n_max_g), 0*sol.t + ld_max)
+    ymin = (np.maximum(lift_min_g, n_min_g), drag_min_g, 0*sol.t + ld_min)
     ylabs = (r'$L$ [g]', r'$D$ [g]', r'L/D')
 
     fig_aero = plt.figure()
@@ -286,24 +305,42 @@ if PLOT_AUXILIARY:
                'k--', label='Glide Slope')
     ax_hv.legend()
 
+    # PLOT DERIVATIVES
+    ydata = (dh_dt, dtheta_dt, dv_dt, dgam_dt)
+    ylabs = (r'$dh/dt$ [m/s]', r'$d{\theta}/dt$ [deg/s]', r'$dV/dt$ [m/s$^2$]', r'$d{\gamma}/dt$ [deg/s]')
+    ymult = (1., r2d, 1., r2d)
+    fig_deriv = plt.figure()
+    axes_deriv = []
+
+    for idx, y in enumerate(ydata):
+        axes_deriv.append(fig_deriv.add_subplot(2, 2, idx + 1))
+        ax = axes_deriv[-1]
+        ax.grid()
+        ax.set_xlabel(t_label)
+        ax.set_ylabel(ylabs[idx])
+        ax.plot(sol.t * t_mult, y * ymult[idx])
+
+    fig_deriv.tight_layout()
+
     # PLOT CONSTRAINTS
-    ydata = (heat_rate, qdyn)
-    yaux = (0*sol.t + k_dict['heat_rate_max'], qdyn_glide_interp(h))
-    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', 'G-Load [g\'s]')
-    yauxlabs = ('Max Heat Rate', 'Gliding Dynamic Pressure', 'Max G-Load')
+    ydata = (heat_rate, qdyn, dgam_dt * r2d)
+    yaux = (0*sol.t + k_dict['heat_rate_max'], qdyn_glide_interp(h), np.nan * sol.t)
+    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', r'$d{\gamma}/dt$ [deg/s]')
+    yauxlabs = ('Max Heat Rate', 'Gliding Dynamic Pressure', None)
 
     fig_aux = plt.figure()
     axes_aux = []
 
     for idx, y in enumerate(ydata):
-        axes_aux.append(fig_aux.add_subplot(2, 1, idx+1))
+        axes_aux.append(fig_aux.add_subplot(3, 1, idx+1))
         ax = axes_aux[-1]
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
         ax.plot(sol.t * t_mult, y)
         ax.plot(sol.t * t_mult, yaux[idx], 'k--', label=yauxlabs[idx])
-        ax.legend()
+        if yauxlabs[idx] is not None:
+            ax.legend()
 
     # ax_heat = fig_heat.add_subplot(111)
     # ax_heat.grid()
