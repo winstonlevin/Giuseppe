@@ -16,7 +16,7 @@ OPTIMIZATION = 'min_time'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
-DATA = 1
+DATA = 2
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -55,7 +55,7 @@ h = x_dict['h_nd'] * k_dict['h_scale']
 theta = x_dict['theta_nd'] * k_dict['theta_scale']
 v = x_dict['v_nd'] * k_dict['v_scale']
 gam = x_dict['gam_nd'] * k_dict['gam_scale']
-alpha = x_dict['alpha_nd'] * k_dict['alpha_scale']
+alpha = u_dict['alpha']
 
 r2d = 180 / np.pi
 r = k_dict['rm'] + h
@@ -89,36 +89,6 @@ CL1 = k_dict['CL1']
 CD0 = k_dict['CD0']
 CD1 = k_dict['CD1']
 CD2 = k_dict['CD2']
-
-# Control Limits
-alpha_rate_max = k_dict['alpha_rate_max']
-alpha_rate_min = k_dict['alpha_rate_min']
-
-# De-regularize control
-eps_alpha_rate = k_dict['eps_alpha_rate']
-alpha_rate_reg = sol.u[0, :]
-
-if REG_METHOD in ['trig', 'sin']:
-    def reg2ctrl(_u_reg, _u_max, _u_min, _eps_u):
-        return 0.5 * ((_u_max - _u_min) * np.sin(_u_reg) + (_u_max + _u_min))
-
-    def reg2cost(_u_reg, _eps_u):
-        return -_eps_u * np.cos(_u_reg)
-elif REG_METHOD in ['atan', 'arctan']:
-    def reg2ctrl(_u_reg, _u_max, _u_min, _eps_u):
-        return (_u_max - _u_min) / np.pi * np.arctan(_u_reg / _eps_u) + 0.5 * (_u_max + _u_min)
-
-    def reg2cost(_u_reg, _eps_u):
-        _eps_u * np.log(1 + _u_reg ** 2 / _eps_u ** 2 ) / np.pi
-else:
-    def reg2ctrl(_u_reg, _u_max, _u_min, _eps_u):
-        return _u_reg
-
-    def reg2cost(_u_reg, _eps_u):
-        return 0 * _u_reg
-
-alpha_rate = reg2ctrl(alpha_rate_reg, alpha_rate_max, alpha_rate_min, eps_alpha_rate)
-dcost_alpha_dt = reg2cost(alpha_rate_reg, eps_alpha_rate)
 
 # Aerodynamic Analysis
 s_ref = k_dict['s_ref']
@@ -225,7 +195,7 @@ fig_states = plt.figure()
 axes_states = []
 
 for idx, state in enumerate(list(sol.x)):
-    axes_states.append(fig_states.add_subplot(3, 2, idx + 1))
+    axes_states.append(fig_states.add_subplot(2, 2, idx + 1))
     ax = axes_states[-1]
     ax.grid()
     ax.set_xlabel(t_label)
@@ -248,20 +218,13 @@ ymult = np.array((r2d, 1))
 fig_controls = plt.figure()
 axes_u = []
 
-for idx, ctrl in enumerate(list((alpha_rate, alpha_rate_reg))):
-    axes_u.append(fig_controls.add_subplot(2, 1, idx + 1))
+for idx, ctrl in enumerate(list(sol.u)):
+    axes_u.append(fig_controls.add_subplot(len(u_dict), 1, idx + 1))
     ax = axes_u[-1]
     ax.grid()
     ax.set_xlabel(t_label)
     ax.set_ylabel(ylabs[idx])
     ax.plot(sol.t * t_mult, ctrl * ymult[idx])
-
-    if idx == 0:
-        ax.plot(sol.t * t_mult, 0*sol.t + k_dict['alpha_rate_max'] * ymult[idx], 'k--')
-        ax.plot(sol.t * t_mult, 0*sol.t + k_dict['alpha_rate_min'] * ymult[idx], 'k--')
-    elif idx == 1:
-        ax.plot(sol.t * t_mult, 0*sol.t + np.pi/2, 'k--')
-        ax.plot(sol.t * t_mult, 0*sol.t - np.pi/2, 'k--')
 
 fig_controls.tight_layout()
 
@@ -273,7 +236,7 @@ if PLOT_COSTATE:
     axes_costates = []
 
     for idx, costate in enumerate(list(sol.lam)):
-        axes_costates.append(fig_costates.add_subplot(3, 2, idx + 1))
+        axes_costates.append(fig_costates.add_subplot(2, 2, idx + 1))
         ax = axes_costates[-1]
         ax.grid()
         ax.set_xlabel(t_label)
@@ -350,16 +313,15 @@ if PLOT_AUXILIARY:
 
     # PLOT COST CONTRIBUTIONS
     ydata = ((dcost_dt,
-              dcost_alpha_dt,
              dcost_utm))
-    ylabs = (cost_lab, r'$\Delta{J_{\dot{\alpha}}}$', lab_utm)
+    ylabs = (cost_lab, lab_utm)
     sup_title = f'J_UTM = {sol.cost}\nJ = {cost} [{abs(cost / sol.cost):.2%} of cost]'
 
     fig_cost = plt.figure()
     axes_cost = []
 
     for idx, cost in enumerate(ydata):
-        axes_cost.append(fig_cost.add_subplot(3, 1, idx + 1))
+        axes_cost.append(fig_cost.add_subplot(2, 1, idx + 1))
         ax = axes_cost[-1]
         ax.grid()
         ax.set_xlabel(t_label)
