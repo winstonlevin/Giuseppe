@@ -331,8 +331,20 @@ elif OPTIMIZATION == 'min_time':
     # cont.add_linear_series(100, {'h0': h0_1, 'v0': v0_1, 'gam0': -17 * d2r})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-3})
-    cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-6, 'eps_n': 1e-6})
+    # cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-6, 'eps_n': 1e-6})
     sol_set = cont.run_continuation()
+
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
+    cont.add_linear_series_until_failure({'gam0': -0.1 * d2r}, keep_bisections=False)
+    sol_set_gam = cont.run_continuation()
+    sol_set_gam.solutions.reverse()
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set_gam)
+    cont.add_linear_series_until_failure({'gam0': 0.1 * d2r}, keep_bisections=False)
+    sol_set_gam = cont.run_continuation()
+
+    # Save Solution
+    sol_set_gam.save('sol_set_hl20_gam.data')
+
 elif OPTIMIZATION == 'max_drag':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})

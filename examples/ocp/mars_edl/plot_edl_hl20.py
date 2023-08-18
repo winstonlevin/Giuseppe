@@ -11,28 +11,32 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = False
+PLOT_SWEEP = True
 OPTIMIZATION = 'min_time'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
 DATA = 2
+SWEEP = 'gam'
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
         sol = pickle.load(f)
         sol.cost = np.nan
-
     sols = [sol]
 elif DATA == 1:
     with open('seed_sol_hl20.data', 'rb') as f:
         sol = pickle.load(f)
-
     sols = [sol]
 else:
-    with open('sol_set_hl20.data', 'rb') as f:
-        sols = pickle.load(f)
-        sol = sols[-1]
+    if SWEEP == 'gam':
+        with open('sol_set_hl20_gam.data', 'rb') as f:
+            sols = pickle.load(f)
+            sol = sols[-1]
+    else:
+        with open('sol_set_hl20.data', 'rb') as f:
+            sols = pickle.load(f)
+            sol = sols[-1]
 
 # Create Dicts
 k_dict = {}
@@ -108,15 +112,15 @@ cd = CD0 - CD1**2/(4*CD2) + CD2 * np.sin(alpha + CD1/(2*CD2))**2
 cd_min = CD0 - CD1**2/(4*CD2)
 cd_max = CD0 - CD1**2/(4*CD2) + CD2
 
-lift = qdyn * k_dict['s_ref'] * cl
-lift_min = qdyn * k_dict['s_ref'] * cl_min
-lift_max = qdyn * k_dict['s_ref'] * cl_max
+lift = qdyn * s_ref * cl
+lift_min = qdyn * s_ref * cl_min
+lift_max = qdyn * s_ref * cl_max
 lift_g = lift / weight
 lift_min_g = lift_min / weight
 lift_max_g = lift_max / weight
-drag = qdyn * k_dict['s_ref'] * cd
-drag_min = qdyn * k_dict['s_ref'] * cd_min
-drag_max = qdyn * k_dict['s_ref'] * cd_max
+drag = qdyn * s_ref * cd
+drag_min = qdyn * s_ref * cd_min
+drag_max = qdyn * s_ref * cd_max
 drag_g = drag / weight
 drag_min_g = drag_min / weight
 drag_max_g = drag_max / weight
@@ -205,6 +209,16 @@ dtheta_dt = v * np.cos(gam) / r
 dv_dt = -drag / mass - g * np.sin(gam)
 dgam_dt = lift / (mass * v) + (v/r - g/v) * np.cos(gam)
 
+# Hamiltonian Analysis
+lam_h = lam_dict['h_nd'] / k_dict['h_scale']
+lam_v = lam_dict['v_nd'] / k_dict['v_scale']
+lam_gam = lam_dict['gam_nd'] / k_dict['gam_scale']
+
+cd_alpha = CD2 * np.sin(2 * (alpha + CD1 / (2 * CD2)))
+cl_alpha = CL1 * np.cos(2 * (alpha + CL0 / CL1))
+dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref / (mass * v) \
+          + 2 * (k_dict['eps_cost_alpha']/k_dict['alpha_scale']**2) * alpha
+
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 # PLOT STATES
 ylabs = xlabs
@@ -264,7 +278,12 @@ if PLOT_COSTATE:
         ax.grid()
         ax.set_xlabel(t_label)
         ax.set_ylabel(ylabs[idx])
-        ax.plot(sol.t * t_mult, costate * ymult[idx])
+
+        if PLOT_SWEEP:
+            for sol_sweep in sols:
+                ax.plot(sol_sweep.t * t_mult, sol_sweep.lam[idx, :] * ymult[idx])
+        else:
+            ax.plot(sol.t * t_mult, costate * ymult[idx])
 
     fig_costates.tight_layout()
 
@@ -323,10 +342,10 @@ if PLOT_AUXILIARY:
     fig_deriv.tight_layout()
 
     # PLOT CONSTRAINTS
-    ydata = (heat_rate, qdyn, dgam_dt * r2d)
-    yaux = (0*sol.t + k_dict['heat_rate_max'], qdyn_glide_interp(h), np.nan * sol.t)
-    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', r'$d{\gamma}/dt$ [deg/s]')
-    yauxlabs = ('Max Heat Rate', 'Gliding Dynamic Pressure', None)
+    ydata = (heat_rate, qdyn, dham_du)
+    yaux = (0*sol.t + k_dict['heat_rate_max'], qdyn_glide_interp(h), 0 * sol.t)
+    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', r'$H_u$ [1/rad]')
+    yauxlabs = ('Max Heat Rate', 'Gliding Dynamic Pressure', r'$H_u = 0$')
 
     fig_aux = plt.figure()
     axes_aux = []
