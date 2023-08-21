@@ -327,13 +327,11 @@ elif OPTIMIZATION == 'min_time':
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
     cont.add_logarithmic_series(10, {'eps_cost_alpha': 1e-1})
-    # cont.add_linear_series(100, {'n2_max': 25.**2, 'n2_min': 25.**2, 'eps_n2': 1e-5})
-    # cont.add_linear_series(100, {'h0': h0_1, 'v0': v0_1, 'gam0': -17 * d2r})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-3})
-    # cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-6, 'eps_n': 1e-6})
     sol_set = cont.run_continuation()
 
+    # Sweep Gam (with smoothing factor)
     cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
     cont.add_linear_series_until_failure({'gam0': -0.1 * d2r}, keep_bisections=False)
     sol_set_gam = cont.run_continuation()
@@ -344,6 +342,11 @@ elif OPTIMIZATION == 'min_time':
 
     # Save Solution
     sol_set_gam.save('sol_set_hl20_gam.data')
+
+    # Solve for finer trajectory at nominal (gam0 = 0)
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set)
+    cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-6, 'eps_n': 1e-6})
+    sol_set = cont.run_continuation()
 
 elif OPTIMIZATION == 'max_drag':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)

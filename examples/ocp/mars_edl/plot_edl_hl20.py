@@ -1,3 +1,4 @@
+from typing import List
 import pickle
 import matplotlib.pyplot as plt
 import numpy as np
@@ -6,6 +7,7 @@ from scipy.interpolate import PchipInterpolator
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
+gradient = mpl.colormaps['viridis'].colors
 
 PLOT_COSTATE = True
 RESCALE_COSTATES = True
@@ -32,11 +34,23 @@ else:
     if SWEEP == 'gam':
         with open('sol_set_hl20_gam.data', 'rb') as f:
             sols = pickle.load(f)
-            sol = sols[-1]
+            sol = sols[-100]
     else:
         with open('sol_set_hl20.data', 'rb') as f:
             sols = pickle.load(f)
             sol = sols[-1]
+
+# Process Data
+# Generate color gradient
+if len(sols) == 1:
+    grad_idcs = np.array((0,), dtype=np.int32)
+else:
+    grad_idcs = np.int32(np.floor(np.linspace(0, 255, len(sols))))
+
+
+def cols_gradient(n):
+    return gradient[grad_idcs[n]]
+
 
 # Create Dicts
 k_dict = {}
@@ -62,11 +76,14 @@ gam = x_dict['gam_nd'] * k_dict['gam_scale']
 alpha = u_dict['alpha']
 
 r2d = 180 / np.pi
-r = k_dict['rm'] + h
-g = k_dict['mu'] / r ** 2
-g0 = k_dict['mu'] / k_dict['rm'] ** 2
-weight = k_dict['mass'] * g
-weight0 = k_dict['mass'] * g0
+mass = k_dict['mass']
+mu = k_dict['mu']
+rm = k_dict['rm']
+r = rm + h
+g = mu / r ** 2
+g0 = mu / rm ** 2
+weight = mass * g
+weight0 = mass * g0
 
 gas_constant_mars = 8.31446261815324 / 43.34  # Universal gas constant R / mean molecular weight M [J/kg-K]
 heat_ratio_mars = 1.29  # Mars' specific heat ratio [-]
@@ -97,7 +114,9 @@ CD2 = k_dict['CD2']
 
 # Aerodynamic Analysis
 s_ref = k_dict['s_ref']
-rho = k_dict['rho0'] * np.exp(-h / k_dict['h_ref'])
+rho0 = k_dict['rho0']
+h_ref = k_dict['h_ref']
+rho = rho0 * np.exp(-h / h_ref)
 qdyn = 0.5 * rho * v**2
 
 # # Polynomial CL/CD Model
@@ -135,6 +154,70 @@ ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_mi
 n_max_g = k_dict['n_max'] * g0 / g
 n_min_g = k_dict['n_min'] * g0 / g
 
+lift_max_con_g = np.minimum(lift_max_g, n_max_g)
+lift_min_con_g = np.maximum(lift_min_g, n_min_g)
+drag_max_con_g = np.minimum(drag_max_g, n_max_g)
+
+lift_frac = (lift_g - 0.5 * (lift_max_con_g + lift_min_con_g)) / (0.5 * (lift_max_con_g - lift_min_con_g))
+drag_frac = (drag_g - 0.5 * (drag_max_con_g + drag_min_g)) / (0.5 * (drag_max_con_g - drag_min_g))
+
+t_sweep_min = 0.
+t_sweep_max = 0.
+lift_sweep_frac: List[np.array] = [None] * len(sols)
+drag_sweep_frac: List[np.array] = [None] * len(sols)
+ld_sweep: List[np.array] = [None] * len(sols)
+
+if PLOT_SWEEP:
+    for idx, sweep_sol in enumerate(sols):
+        _x_dict = {}
+        for key, x_val, lam_val in zip(sweep_sol.annotations.states, list(sweep_sol.x), list(sweep_sol.lam)):
+            _x_dict[key] = x_val
+        _h = _x_dict['h_nd'] * k_dict['h_scale']
+        _v = _x_dict['v_nd'] * k_dict['v_scale']
+        _alpha = sweep_sol.u[0, :]
+
+        _rho = rho0 * np.exp(-_h/h_ref)
+        _qdyn = 0.5 * _rho * _v ** 2
+        _g = mu / (rm + _h)**2
+        _weight = _g * mass
+
+        _s_ref_qdyn_w = s_ref * _qdyn / _weight
+        _cl = CL1 * 0.5 * np.sin(2 * (_alpha + CL0/CL1))
+        _cd = CD0 - CD1**2/(4*CD2) + CD2 * np.sin(_alpha + CD1/(2*CD2))**2
+        _lift_g = _s_ref_qdyn_w * _cl
+        _drag_g = _s_ref_qdyn_w * _cd
+
+        _n_max_g = k_dict['n_max'] * g0 / _g
+        _n_min_g = k_dict['n_min'] * g0 / _g
+        _lift_max_g = _s_ref_qdyn_w * cl_max
+        _lift_min_g = _s_ref_qdyn_w * cl_min
+        _drag_max_g = _s_ref_qdyn_w * cd_max
+        _drag_min_g = _s_ref_qdyn_w * cd_min
+        _lift_max_con_g = np.minimum(_lift_max_g, _n_max_g)
+        _lift_min_con_g = np.maximum(_lift_min_g, _n_min_g)
+        _drag_max_con_g = np.minimum(_drag_max_g, _n_max_g)
+
+        lift_sweep_frac[idx] = (_lift_g - 0.5 * (_lift_max_con_g + _lift_min_con_g)) / (
+                    0.5 * (_lift_max_con_g - _lift_min_con_g))
+        drag_sweep_frac[idx] = (_drag_g - 0.5 * (_drag_max_con_g + _drag_min_g)) / (
+                    0.5 * (_drag_max_con_g - _drag_min_g))
+        ld_sweep[idx] = _lift_g / _drag_g
+
+        # Discard data where there is essentiall no lift or drag available
+        _invalid_lift = np.where(_lift_max_con_g - _lift_min_con_g < 1e-3)
+        _invalid_drag = np.where(_drag_max_con_g - _drag_min_g < 1e-3)
+        lift_sweep_frac[idx][_invalid_lift] = np.nan
+        drag_sweep_frac[idx][_invalid_drag] = np.nan
+        ld_sweep[idx][_invalid_lift] = np.nan
+        ld_sweep[idx][_invalid_drag] = np.nan
+
+        if sol.t[0] < t_sweep_min:
+            t_sweep_min = sol.t[0]
+        if sol.t[-1] > t_sweep_max:
+            t_sweep_max = sol.t[-1]
+
+t_sweep_span = np.array((t_sweep_min, t_sweep_max))
+
 if OPTIMIZATION == 'max_range':
     dcost_dt = (-v * np.cos(gam) / r) / k_dict['theta_scale']
     cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
@@ -169,11 +252,6 @@ heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
 heat_rate = k_dict['k'] * (rho / k_dict['rn']) * v ** 3
 
-mass = k_dict['mass']
-mu = k_dict['mu']
-rm = k_dict['rm']
-rho0 = k_dict['rho0']
-h_ref = k_dict['h_ref']
 CL_max_ld = CL0 + CL1 * alpha_max_ld
 
 h_glide = np.linspace(0., 80e3, 1000)
@@ -234,8 +312,8 @@ for idx, state in enumerate(list(sol.x)):
     ax.set_ylabel(ylabs[idx])
 
     if PLOT_SWEEP:
-        for sol_sweep in sols:
-            ax.plot(sol_sweep.t * t_mult, sol_sweep.x[idx, :] * ymult[idx])
+        for sol_idx, sol_sweep in enumerate(sols):
+            ax.plot(sol_sweep.t * t_mult, sol_sweep.x[idx, :] * ymult[idx], color=cols_gradient(sol_idx))
     else:
         ax.plot(sol.t * t_mult, state * ymult[idx])
 
@@ -258,8 +336,8 @@ for idx, ctrl in enumerate(list(sol.u)):
     ax.set_ylabel(ylabs[idx])
 
     if PLOT_SWEEP:
-        for sol_sweep in sols:
-            ax.plot(sol_sweep.t * t_mult, sol_sweep.u[idx, :] * ymult[idx])
+        for sol_idx, sol_sweep in enumerate(sols):
+            ax.plot(sol_sweep.t * t_mult, sol_sweep.u[idx, :] * ymult[idx], color=cols_gradient(sol_idx))
     else:
         ax.plot(sol.t * t_mult, ctrl * ymult[idx])
 
@@ -280,8 +358,8 @@ if PLOT_COSTATE:
         ax.set_ylabel(ylabs[idx])
 
         if PLOT_SWEEP:
-            for sol_sweep in sols:
-                ax.plot(sol_sweep.t * t_mult, sol_sweep.lam[idx, :] * ymult[idx])
+            for sol_idx, sol_sweep in enumerate(sols):
+                ax.plot(sol_sweep.t * t_mult, sol_sweep.lam[idx, :] * ymult[idx], color=cols_gradient(sol_idx))
         else:
             ax.plot(sol.t * t_mult, costate * ymult[idx])
 
@@ -289,23 +367,44 @@ if PLOT_COSTATE:
 
 if PLOT_AUXILIARY:
     # PLOT AERODYNAMICS
-    ydata = (lift_g, drag_g, lift/drag)
-    ymax = (np.minimum(lift_max_g, n_max_g), np.minimum(drag_max_g, n_max_g), 0*sol.t + ld_max)
-    ymin = (np.maximum(lift_min_g, n_min_g), drag_min_g, 0*sol.t + ld_min)
-    ylabs = (r'$L$ [g]', r'$D$ [g]', r'L/D')
+    if PLOT_SWEEP:
+        ydata = (lift_sweep_frac, drag_sweep_frac, ld_sweep)
+        ylabs = (r'%$L$ [g]', r'%$D$ [g]', r'L/D')
+        ymult = (100., 100., 1.)
+        ymax = (1., 1., ld_max)
+        ymin = (-1., -1., ld_min)
 
-    fig_aero = plt.figure()
-    axes_aero = []
+        fig_aero = plt.figure()
+        axes_aero = []
 
-    for idx, y in enumerate(ydata):
-        axes_aero.append(fig_aero.add_subplot(3, 1, idx + 1))
-        ax = axes_aero[-1]
-        ax.grid()
-        ax.set_xlabel(t_label)
-        ax.set_ylabel(ylabs[idx])
-        ax.plot(sol.t * t_mult, y)
-        ax.plot(sol.t * t_mult, ymin[idx], 'k--')
-        ax.plot(sol.t * t_mult, ymax[idx], 'k--')
+        for idx, ylist in enumerate(ydata):
+            axes_aero.append(fig_aero.add_subplot(3, 1, idx + 1))
+            ax = axes_aero[-1]
+            ax.grid()
+            ax.set_xlabel(t_label)
+            ax.set_ylabel(ylabs[idx])
+            for sol_idx, (sweep_sol, y) in enumerate(zip(sols, ylist)):
+                ax.plot(sweep_sol.t * t_mult, y * ymult[idx], color=cols_gradient(sol_idx))
+            ax.plot(t_sweep_span * t_mult, 0*t_sweep_span + ymax[idx] * ymult[idx], 'k--')
+            ax.plot(t_sweep_span * t_mult, 0*t_sweep_span + ymin[idx] * ymult[idx], 'k--')
+    else:
+        ydata = (lift_g, drag_g, lift/drag)
+        ymax = (lift_max_con_g, drag_max_con_g, 0 * sol.t + ld_max)
+        ymin = (lift_min_con_g, drag_min_g, 0 * sol.t + ld_min)
+        ylabs = (r'$L$ [g]', r'$D$ [g]', r'L/D')
+
+        fig_aero = plt.figure()
+        axes_aero = []
+
+        for idx, y in enumerate(ydata):
+            axes_aero.append(fig_aero.add_subplot(3, 1, idx + 1))
+            ax = axes_aero[-1]
+            ax.grid()
+            ax.set_xlabel(t_label)
+            ax.set_ylabel(ylabs[idx])
+            ax.plot(sol.t * t_mult, y)
+            ax.plot(sol.t * t_mult, ymin[idx], 'k--')
+            ax.plot(sol.t * t_mult, ymax[idx], 'k--')
 
     # PLOT H-v
     fig_hv = plt.figure()
@@ -315,8 +414,8 @@ if PLOT_AUXILIARY:
     ax_hv.set_ylabel(xlabs[0])
 
     if PLOT_SWEEP:
-        for sol_sweep in sols:
-            ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0])
+        for sol_idx, sol_sweep in enumerate(sols):
+            ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0], color=cols_gradient(sol_idx))
     else:
         ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[0])
 
@@ -343,9 +442,15 @@ if PLOT_AUXILIARY:
 
     # PLOT CONSTRAINTS
     ydata = (heat_rate, qdyn, dham_du)
-    yaux = (0*sol.t + k_dict['heat_rate_max'], qdyn_glide_interp(h), 0 * sol.t)
+    if np.max(heat_rate) < 0.1 * heat_rate_max:
+        heat_rate_aux = np.nan * sol.t
+        heat_rate_aux_lab = None
+    else:
+        heat_rate_aux = 0 * sol.t + k_dict['heat_rate_max']
+        heat_rate_aux_lab = 'Max Heat Rate'
+    yaux = (heat_rate_aux, qdyn_glide_interp(h), 0 * sol.t)
     ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', r'$H_u$ [1/rad]')
-    yauxlabs = ('Max Heat Rate', 'Gliding Dynamic Pressure', r'$H_u = 0$')
+    yauxlabs = (heat_rate_aux_lab, 'Gliding Dynamic Pressure', r'$H_u = 0$')
 
     fig_aux = plt.figure()
     axes_aux = []
