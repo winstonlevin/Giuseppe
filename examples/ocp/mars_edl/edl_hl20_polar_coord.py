@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'min_energy'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat', 'min_control'}
+OPTIMIZATION = 'min_time'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat', 'min_control'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -213,6 +213,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 # The glide slope will be used to run continuations
 alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
 alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
+alpha_max_lift = np.pi/4 - CL0/CL1
 
 CL_glide = CL0 + CL1 * alpha_max_ld
 CD_glide = CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2
@@ -268,7 +269,7 @@ elif OPTIMIZATION == 'min_time':
     )
 elif OPTIMIZATION == 'min_energy':
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=alphaf, t_span=np.arange(0., 25. + 5., 5.), immutable_constants=immutable_constants,
+        hl20_dual, control=alpha_max_lift, t_span=np.arange(0., 25. + 5., 5.), immutable_constants=immutable_constants,
         initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
         fit_states=False, reverse=False
     )

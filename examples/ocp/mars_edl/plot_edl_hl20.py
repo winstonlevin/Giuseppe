@@ -14,7 +14,7 @@ RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
 PLOT_SWEEP = False
-OPTIMIZATION = 'min_energy'
+OPTIMIZATION = 'min_time'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
@@ -309,6 +309,54 @@ dh_dt = v * np.sin(gam)
 dtheta_dt = v * np.cos(gam) / r
 dv_dt = -drag / mass - g * np.sin(gam)
 dgam_dt = lift / (mass * v) + (v/r - g/v) * np.cos(gam)
+
+
+# Compare estimate of terminal state
+idx_gam_min = np.where(gam == np.min(gam))
+gam0 = gam[idx_gam_min]
+h0 = h[idx_gam_min]
+V0 = v[idx_gam_min]
+
+
+def dhV_dgam(_gam, _hv):
+    _h = _hv[0]
+    _v = _hv[1]
+
+    _r = _h + rm
+    _g = mu / _r**2
+    _qdyn = 0.5 * rho0 * np.exp(-_h/h_ref) * _v **2
+    _lift_max = _qdyn * s_ref * cl_max
+    _lift_n_max = mass * g0 * k_dict['n_max']
+    _lift = min(_lift_max, _lift_n_max)
+    _sin = 2 * _lift / (_qdyn * s_ref * CL1)
+    _asin = np.arcsin(max(min(_sin, 1.), -1.))
+    _alpha = 0.5 * _asin - CL0 / CL1
+    _cd = CD0 - CD1**2/(4*CD2) + CD2 * np.sin(_alpha + CD1/(2*CD2))**2
+    _drag = _qdyn * s_ref * _cd
+
+    dh_dt = _v * np.sin(_gam)
+    dv_dt = -_drag/mass - _g * np.sin(_gam)
+    dgam_dt = _lift/(mass * _v) + (_v/_r - _g/_v) * np.cos(_gam)
+    return np.array((dh_dt / dgam_dt, dv_dt / dgam_dt))
+
+
+def estimate_hf(_h0, _v0, _gam0, _n_steps: int = 3):
+    # RK-4 Estimate of hf, Vf
+
+    _step = (0. - _gam0) / _n_steps
+    _x0 = np.array((_h0, _v0))
+    _x = _x0.copy()
+    _gam = _gam0.copy()
+    for _ in range(_n_steps):
+        _k1 = dhV_dgam(_gam, _x)
+        _k2 = dhV_dgam(_gam + _step/2., _x + _k1 * _step/2.)
+        _k3 = dhV_dgam(_gam + _step/2., _x + _k2 * _step/2.)
+        _k4 = dhV_dgam(_gam + _step, _x + _k3 * _step)
+        _x += (_k1/6. + _k2/3. + _k3/3. + _k4/6.) * _step
+        _gam += _step
+
+    return _x[0]
+
 
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 # PLOT STATES
