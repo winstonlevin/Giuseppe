@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'min_time'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat', 'min_control'}
+OPTIMIZATION = 'min_energy'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat', 'min_control'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -47,6 +47,11 @@ hl20.add_expression('r', 'rm + h')  # Radius [m]
 # Trigonometric CL/CD Model
 hl20.add_expression('CD', 'CD0 - CD1**2/(4*CD2) + CD2 * sin(alpha + CD1/(2*CD2))**2')  # Drag Coefficient [-]
 hl20.add_expression('CL', 'CL1 * 0.5 * sin(2 * (alpha + CL0/CL1))')  # Lift coefficient [-]
+
+# Energy
+hl20.add_expression('energy', 'g * h + 0.5 * v**2')
+hl20.add_expression('g_scale', 'mu/(rm + h_scale)**2')
+hl20.add_expression('energy_scale', 'g_scale * h_scale + 0.5 * v_scale**2')
 
 # Constants
 mu = 42828.371901e9
@@ -118,7 +123,6 @@ hl20.add_constant('thetaf', 1. * d2r)
 hl20.add_constant('gamf', 0. * d2r)
 hl20.add_constant('vf', 10.)
 
-hl20.add_constraint('terminal', 'h - hf')
 # hl20.add_constraint('terminal', 'theta - thetaf')
 hl20.add_constraint('terminal', 'gam - gamf')
 
@@ -166,24 +170,34 @@ hl20.add_constant('eps_cost_alpha', 1e-3)
 if OPTIMIZATION == 'max_range':
     # Maximum range (path cost = -d(theta)/dt -> min J = theta0 - thetaf)
     hl20.set_cost('0', '(-v * cos(gam) / r) / theta_scale', '0')
+    hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
 elif OPTIMIZATION == 'min_velocity':
     # Minimum velocity (path cost = d(V)/dt -> min J = vf - v0)
     hl20.set_cost('0', '(-drag/mass - g * sin(gam)) / v_scale', '0')
+    hl20.add_constraint('terminal', 'h - hf')
 elif OPTIMIZATION == 'min_time':
     # Minimum time (path cost = 1 -> min J = tf - t0)
     hl20.set_cost('0', '1 + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
+    hl20.add_constraint('terminal', 'h - hf')
     # hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
 elif OPTIMIZATION == 'max_drag':
     # Maximum drag (path cost = -drag -> min J = -int(drag)
     hl20.set_cost('0', '-drag / (rho0 * v_scale**2)', '0')
+    hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
 elif OPTIMIZATION == 'min_heat':
     hl20.set_cost('0', 'heat_rate / (k * (rho0 / rn) * v_scale ** 3)', '0')
+    hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
 elif OPTIMIZATION == 'min_control':
     hl20.set_cost('0', '(alpha / alpha_scale)**2', '0')
+    hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
+elif OPTIMIZATION == 'min_energy':
+    hl20.set_cost('-energy/energy_scale', '0', 'energy/energy_scale')
+    hl20.add_constraint('terminal', 't - tf')
+    hl20.add_constant('tf', 10.)
 else:
     raise RuntimeError(OPT_ERROR_MSG)
 
@@ -251,6 +265,12 @@ elif OPTIMIZATION == 'min_time':
         immutable_constants=immutable_constants,
         initial_states=np.array((5e3/h_scale, 0./theta_scale, 1e3/v_scale, 0./gam_scale)),
         fit_states=False, reverse=True
+    )
+elif OPTIMIZATION == 'min_energy':
+    guess = giuseppe.guess_generation.auto_propagate_guess(
+        hl20_dual, control=alphaf, t_span=np.arange(0., 25. + 5., 5.), immutable_constants=immutable_constants,
+        initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
+        fit_states=False, reverse=False
     )
 else:
     guess = giuseppe.guess_generation.auto_propagate_guess(
@@ -374,6 +394,14 @@ elif OPTIMIZATION == 'min_control':
     cont.add_linear_series_until_failure({'vf': -10})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+    cont.add_logarithmic_series(100, {'eps_h': 1e-10})
+    # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
+    sol_set = cont.run_continuation()
+elif OPTIMIZATION == 'min_energy':
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+    cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
+    cont.add_linear_series(100, {'tf': 10. * 60.})
+    # cont.add_linear_series_until_failure({'tf': 4.})
     cont.add_logarithmic_series(100, {'eps_h': 1e-10})
     # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
     sol_set = cont.run_continuation()

@@ -13,13 +13,13 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = True
-OPTIMIZATION = 'min_time'
+PLOT_SWEEP = False
+OPTIMIZATION = 'min_energy'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
 DATA = 2
-SWEEP = 'gam'
+SWEEP = None
 
 if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
@@ -84,6 +84,7 @@ g = mu / r ** 2
 g0 = mu / rm ** 2
 weight = mass * g
 weight0 = mass * g0
+energy = g * h + 0.5 * v ** 2
 
 gas_constant_mars = 8.31446261815324 / 43.34  # Universal gas constant R / mean molecular weight M [J/kg-K]
 heat_ratio_mars = 1.29  # Mars' specific heat ratio [-]
@@ -218,18 +219,40 @@ if PLOT_SWEEP:
 
 t_sweep_span = np.array((t_sweep_min, t_sweep_max))
 
+# Hamiltonian Analysis
+lam_h = lam_dict['h_nd'] / k_dict['h_scale']
+lam_v = lam_dict['v_nd'] / k_dict['v_scale']
+lam_gam = lam_dict['gam_nd'] / k_dict['gam_scale']
+
+cd_alpha = CD2 * np.sin(2 * (alpha + CD1 / (2 * CD2)))
+cl_alpha = CL1 * np.cos(2 * (alpha + CL0 / CL1))
+
 if OPTIMIZATION == 'max_range':
     dcost_dt = (-v * np.cos(gam) / r) / k_dict['theta_scale']
     cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
     cost_lab = r'$J(\Delta{\theta})$'
+    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref / (mass * v)
 elif OPTIMIZATION == 'min_time':
     dcost_dt = 0*sol.t + 1.
     cost = sol.t[-1] - sol.t[0]
     cost_lab = r'$J(\Delta{t})$'
+    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref / (mass * v) \
+              + 2 * (k_dict['eps_cost_alpha'] / k_dict['alpha_scale'] ** 2) * alpha
+elif OPTIMIZATION == 'min_energy':
+    dh_dt = v * np.sin(gam)
+    dg_dh = -2 * g / r
+    dv_dt = -drag/mass - g * np.sin(gam)
+    g_scale = mu / (rm + k_dict['h_scale'])**2
+    e_scale = g_scale * k_dict['h_scale'] + 0.5 * k_dict['v_scale'] ** 2
+    dcost_dt = (dh_dt * (dg_dh * h + g) + v * dv_dt)/e_scale
+    cost = (energy[-1] - energy[0])/e_scale
+    cost_lab = r'$J(\Delta{E})$'
+    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref / (mass * v)
 else:
-    dcost_dt = 0 * sol.t
+    dcost_dt = np.nan * sol.t
     cost = 0.
     cost_lab = '[Invalid Opt. Selected]'
+    dham_dt = np.nan * sol.t
 
 
 def dcost_utm_fun(_x_utm, _x_min_utm, _x_max_utm, _eps_utm):
@@ -286,16 +309,6 @@ dh_dt = v * np.sin(gam)
 dtheta_dt = v * np.cos(gam) / r
 dv_dt = -drag / mass - g * np.sin(gam)
 dgam_dt = lift / (mass * v) + (v/r - g/v) * np.cos(gam)
-
-# Hamiltonian Analysis
-lam_h = lam_dict['h_nd'] / k_dict['h_scale']
-lam_v = lam_dict['v_nd'] / k_dict['v_scale']
-lam_gam = lam_dict['gam_nd'] / k_dict['gam_scale']
-
-cd_alpha = CD2 * np.sin(2 * (alpha + CD1 / (2 * CD2)))
-cl_alpha = CL1 * np.cos(2 * (alpha + CL0 / CL1))
-dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref / (mass * v) \
-          + 2 * (k_dict['eps_cost_alpha']/k_dict['alpha_scale']**2) * alpha
 
 # PLOTS ----------------------------------------------------------------------------------------------------------------
 # PLOT STATES
