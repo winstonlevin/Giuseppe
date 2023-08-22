@@ -14,7 +14,7 @@ RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
 PLOT_SWEEP = False
-OPTIMIZATION = 'min_time'
+OPTIMIZATION = 'min_energy'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
@@ -227,16 +227,18 @@ lam_gam = lam_dict['gam_nd'] / k_dict['gam_scale']
 cd_alpha = CD2 * np.sin(2 * (alpha + CD1 / (2 * CD2)))
 cl_alpha = CL1 * np.cos(2 * (alpha + CL0 / CL1))
 
+-cd_alpha*lam_v*qdyn*s_ref/mass + cl_alpha*lam_gam*qdyn*s_ref/(mass*v)
+
 if OPTIMIZATION == 'max_range':
     dcost_dt = (-v * np.cos(gam) / r) / k_dict['theta_scale']
     cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
     cost_lab = r'$J(\Delta{\theta})$'
-    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref / (mass * v)
+    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref * cl_alpha / (mass * v)
 elif OPTIMIZATION == 'min_time':
     dcost_dt = 0*sol.t + 1.
     cost = sol.t[-1] - sol.t[0]
     cost_lab = r'$J(\Delta{t})$'
-    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref / (mass * v) \
+    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref * cl_alpha / (mass * v) \
               + 2 * (k_dict['eps_cost_alpha'] / k_dict['alpha_scale'] ** 2) * alpha
 elif OPTIMIZATION == 'min_energy':
     dh_dt = v * np.sin(gam)
@@ -247,12 +249,12 @@ elif OPTIMIZATION == 'min_energy':
     dcost_dt = (dh_dt * (dg_dh * h + g) + v * dv_dt)/e_scale
     cost = (energy[-1] - energy[0])/e_scale
     cost_lab = r'$J(\Delta{E})$'
-    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref / (mass * v)
+    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref * cl_alpha / (mass * v)
 else:
     dcost_dt = np.nan * sol.t
     cost = 0.
     cost_lab = '[Invalid Opt. Selected]'
-    dham_dt = np.nan * sol.t
+    dham_du = np.nan * sol.t
 
 
 def dcost_utm_fun(_x_utm, _x_min_utm, _x_max_utm, _eps_utm):

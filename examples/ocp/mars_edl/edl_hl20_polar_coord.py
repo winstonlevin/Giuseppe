@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'min_time'  # {'max_range', 'min_time', 'min_velocity', 'max_drag', 'min_heat', 'min_control'}
+OPTIMIZATION = 'min_energy'  # {'max_range', 'min_time', 'min_energy'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -124,7 +124,6 @@ hl20.add_constant('gamf', 0. * d2r)
 hl20.add_constant('vf', 10.)
 
 # hl20.add_constraint('terminal', 'theta - thetaf')
-hl20.add_constraint('terminal', 'gam - gamf')
 
 # CONSTRAINTS
 # Vertical G-Load Constraint (Total G's)
@@ -156,7 +155,7 @@ h_max = 120e3
 hl20.add_constant('h_min', h_min)
 hl20.add_constant('h_max', h_max)
 hl20.add_constant('eps_h', 1e-3)
-if OPTIMIZATION != 'min_time':
+if OPTIMIZATION != 'min_time' and OPTIMIZATION != 'min_energy':
     hl20.add_inequality_constraint(
         'path', 'h_nd', 'h_min / h_scale', 'h_max / h_scale',
         regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
@@ -172,28 +171,34 @@ if OPTIMIZATION == 'max_range':
     hl20.set_cost('0', '(-v * cos(gam) / r) / theta_scale', '0')
     hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
+    hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_velocity':
     # Minimum velocity (path cost = d(V)/dt -> min J = vf - v0)
     hl20.set_cost('0', '(-drag/mass - g * sin(gam)) / v_scale', '0')
     hl20.add_constraint('terminal', 'h - hf')
+    hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_time':
     # Minimum time (path cost = 1 -> min J = tf - t0)
     hl20.set_cost('0', '1 + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
     hl20.add_constraint('terminal', 'h - hf')
     # hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
+    hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'max_drag':
     # Maximum drag (path cost = -drag -> min J = -int(drag)
     hl20.set_cost('0', '-drag / (rho0 * v_scale**2)', '0')
     hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
+    hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_heat':
     hl20.set_cost('0', 'heat_rate / (k * (rho0 / rn) * v_scale ** 3)', '0')
     hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
+    hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_control':
     hl20.set_cost('0', '(alpha / alpha_scale)**2', '0')
     hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
+    hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_energy':
     hl20.set_cost('-energy/energy_scale', '0', 'energy/energy_scale')
     hl20.add_constraint('terminal', 't - tf')
@@ -400,10 +405,12 @@ elif OPTIMIZATION == 'min_control':
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_energy':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
+    # cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
     cont.add_linear_series(100, {'tf': 10. * 60.})
+    # cont.add_linear_series(100, {'gamf': -20. * d2r})
+    # cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
     # cont.add_linear_series_until_failure({'tf': 4.})
-    cont.add_logarithmic_series(100, {'eps_h': 1e-10})
+    # cont.add_logarithmic_series(100, {'eps_h': 1e-10})
     # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
     sol_set = cont.run_continuation()
 else:
