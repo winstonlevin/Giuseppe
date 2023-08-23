@@ -13,7 +13,7 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = False
+PLOT_SWEEP = True
 OPTIMIZATION = 'min_energy'
 
 # REG_METHOD = 'sin'
@@ -225,7 +225,9 @@ lam_v = lam_dict['v_nd'] / k_dict['v_scale']
 lam_gam = lam_dict['gam_nd'] / k_dict['gam_scale']
 
 cd_alpha = CD2 * np.sin(2 * (alpha + CD1 / (2 * CD2)))
+cd_alpha2 = 2 * CD2 * np.cos(2 * (alpha + CD1 / (2 * CD2)))
 cl_alpha = CL1 * np.cos(2 * (alpha + CL0 / CL1))
+cl_alpha2 = -2 * CL1 * np.sin(2 * (alpha + CL0 / CL1))
 
 -cd_alpha*lam_v*qdyn*s_ref/mass + cl_alpha*lam_gam*qdyn*s_ref/(mass*v)
 
@@ -234,12 +236,15 @@ if OPTIMIZATION == 'max_range':
     cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
     cost_lab = r'$J(\Delta{\theta})$'
     dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref * cl_alpha / (mass * v)
+    d2ham_du2 = -lam_v * qdyn * s_ref * cd_alpha2 / mass + lam_gam * qdyn * s_ref * cl_alpha2 / (mass * v)
 elif OPTIMIZATION == 'min_time':
     dcost_dt = 0*sol.t + 1.
     cost = sol.t[-1] - sol.t[0]
     cost_lab = r'$J(\Delta{t})$'
     dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref * cl_alpha / (mass * v) \
-              + 2 * (k_dict['eps_cost_alpha'] / k_dict['alpha_scale'] ** 2) * alpha
+        + 2 * (k_dict['eps_cost_alpha'] / k_dict['alpha_scale'] ** 2) * alpha
+    d2ham_du2 = -lam_v * qdyn * s_ref * cd_alpha2 / mass + lam_gam * qdyn * s_ref * cl_alpha2 / (mass * v) \
+        + 2 * (k_dict['eps_cost_alpha'] / k_dict['alpha_scale'] ** 2)
 elif OPTIMIZATION == 'min_energy':
     dh_dt = v * np.sin(gam)
     dg_dh = -2 * g / r
@@ -249,12 +254,16 @@ elif OPTIMIZATION == 'min_energy':
     dcost_dt = (dh_dt * (dg_dh * h + g) + v * dv_dt)/e_scale
     cost = (energy[-1] - energy[0])/e_scale
     cost_lab = r'$J(\Delta{E})$'
-    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref * cl_alpha / (mass * v)
+    dham_du = -lam_v * qdyn * s_ref * cd_alpha / mass + lam_gam * qdyn * s_ref * cl_alpha / (mass * v) \
+        + 2 * (k_dict['eps_cost_alpha'] / k_dict['alpha_scale'] ** 2) * alpha
+    d2ham_du2 = -lam_v * qdyn * s_ref * cd_alpha2 / mass + lam_gam * qdyn * s_ref * cl_alpha2 / (mass * v) \
+        + 2 * (k_dict['eps_cost_alpha'] / k_dict['alpha_scale'] ** 2)
 else:
     dcost_dt = np.nan * sol.t
     cost = 0.
     cost_lab = '[Invalid Opt. Selected]'
     dham_du = np.nan * sol.t
+    d2ham_du2 = np.nan * sol.t
 
 
 def dcost_utm_fun(_x_utm, _x_min_utm, _x_max_utm, _eps_utm):
@@ -504,22 +513,22 @@ if PLOT_AUXILIARY:
     fig_deriv.tight_layout()
 
     # PLOT CONSTRAINTS
-    ydata = (heat_rate, qdyn, dham_du)
+    ydata = (heat_rate, qdyn, dham_du, d2ham_du2)
     if np.max(heat_rate) < 0.1 * heat_rate_max:
         heat_rate_aux = np.nan * sol.t
         heat_rate_aux_lab = None
     else:
         heat_rate_aux = 0 * sol.t + k_dict['heat_rate_max']
         heat_rate_aux_lab = 'Max Heat Rate'
-    yaux = (heat_rate_aux, qdyn_glide_interp(h), 0 * sol.t)
-    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', r'$H_u$ [1/rad]')
-    yauxlabs = (heat_rate_aux_lab, 'Gliding Dynamic Pressure', r'$H_u = 0$')
+    yaux = (heat_rate_aux, qdyn_glide_interp(h), 0 * sol.t, 0 * sol.t)
+    ylabs = (r'Heat Rate [W/m$^2$]', r'$Q_{\infty}$ [N/m$^2$]', r'$H_u$ [1/rad]', r'$H_{uu}$ [1/rad$^2$]')
+    yauxlabs = (heat_rate_aux_lab, 'Gliding Dynamic Pressure', r'$H_u = 0$', r'$H_{uu} > 0$')
 
     fig_aux = plt.figure()
     axes_aux = []
 
     for idx, y in enumerate(ydata):
-        axes_aux.append(fig_aux.add_subplot(3, 1, idx+1))
+        axes_aux.append(fig_aux.add_subplot(2, 2, idx+1))
         ax = axes_aux[-1]
         ax.grid()
         ax.set_xlabel(t_label)

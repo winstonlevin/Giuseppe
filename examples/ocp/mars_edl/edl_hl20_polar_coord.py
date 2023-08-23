@@ -47,6 +47,7 @@ hl20.add_expression('r', 'rm + h')  # Radius [m]
 # Trigonometric CL/CD Model
 hl20.add_expression('CD', 'CD0 - CD1**2/(4*CD2) + CD2 * sin(alpha + CD1/(2*CD2))**2')  # Drag Coefficient [-]
 hl20.add_expression('CL', 'CL1 * 0.5 * sin(2 * (alpha + CL0/CL1))')  # Lift coefficient [-]
+hl20.add_expression('alpha_max_drag', 'pi/2 - CD1 / (2 * CD2)')  # Maximum drag positive angle of attack [rad]
 
 # Energy
 hl20.add_expression('energy', 'g * h + 0.5 * v**2')
@@ -133,7 +134,7 @@ hl20.add_constant('n_min', -n_max)
 hl20.add_constant('eps_n', 1e-3)
 hl20.add_expression('g_load_normal', 'lift / weight0')  # sea-level g's of acceleration [-]
 hl20.add_expression('g_load_axial', 'drag / weight0')  # sea-level g's of acceleration [-]
-if OPTIMIZATION == 'min_time':
+if OPTIMIZATION == 'min_time' or OPTIMIZATION == 'min_energy':
     hl20.add_inequality_constraint(
         'path', 'g_load_normal', 'n_min', 'n_max',
         regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
@@ -155,7 +156,7 @@ h_max = 120e3
 hl20.add_constant('h_min', h_min)
 hl20.add_constant('h_max', h_max)
 hl20.add_constant('eps_h', 1e-3)
-if OPTIMIZATION != 'min_time' and OPTIMIZATION != 'min_energy':
+if OPTIMIZATION != 'min_time':
     hl20.add_inequality_constraint(
         'path', 'h_nd', 'h_min / h_scale', 'h_max / h_scale',
         regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
@@ -179,6 +180,7 @@ elif OPTIMIZATION == 'min_velocity':
     hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_time':
     # Minimum time (path cost = 1 -> min J = tf - t0)
+    # Since Huu = 0 when a discontinuity in control exists, add small control cost to smooth discontinuity.
     hl20.set_cost('0', '1 + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
     hl20.add_constraint('terminal', 'h - hf')
     # hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
@@ -200,8 +202,17 @@ elif OPTIMIZATION == 'min_control':
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
     hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_energy':
-    hl20.set_cost('-energy/energy_scale', '0', 'energy/energy_scale')
+    # Cost is change in energy min(Ef - E0)
+    # Since Huu = 0 when a discontinuity in control exists, add small control cost to smooth discontinuity.
+    hl20.set_cost(
+        '-energy/energy_scale',  # -Initial Energy
+        # '0',
+        'eps_cost_alpha * (alpha / alpha_scale)**2',  # Small control effort cost
+                                                      # (deviation from max drag)
+        'energy/energy_scale'  # Terminal Energy
+    )
     hl20.add_constraint('terminal', 't - tf')
+    hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constant('tf', 10.)
 else:
     raise RuntimeError(OPT_ERROR_MSG)
@@ -209,7 +220,7 @@ else:
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=2, max_nodes=100, node_buffer=15)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=15)
 
 # GLIDE SLOPE
 # The glide slope occurs for a given energy level at the combination of h/V where:
@@ -219,6 +230,8 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
 alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
 alpha_max_lift = np.pi/4 - CL0/CL1
+alpha_max_drag = np.pi/2 - CD1 / (2 * CD2)
+# sin(alpha + CD1/(2*CD2))
 
 CL_glide = CL0 + CL1 * alpha_max_ld
 CD_glide = CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2
@@ -273,8 +286,13 @@ elif OPTIMIZATION == 'min_time':
         fit_states=False, reverse=True
     )
 elif OPTIMIZATION == 'min_energy':
+    idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
+    hl20_dual.default_values[idx_eps_cost_alpha] = 0.
+    k_max_d = 0.3
+    alpha_guess = (1 - k_max_d) * alpha_max_lift + k_max_d * alpha_max_drag
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=alpha_max_lift, t_span=np.arange(0., 25. + 5., 5.), immutable_constants=immutable_constants,
+        hl20_dual, control=alpha_guess, t_span=np.arange(0., 3*60. + 10., 10.),
+        immutable_constants=immutable_constants,
         initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
         fit_states=False, reverse=False
     )
@@ -406,7 +424,18 @@ elif OPTIMIZATION == 'min_control':
 elif OPTIMIZATION == 'min_energy':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     # cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
-    cont.add_linear_series(100, {'tf': 10. * 60.})
+    # cont.add_linear_series(100, {'eps_cost_alpha': 1e-1})
+    cont.add_linear_series_until_failure({'tf': 1.})
+    # cont.add_linear_series(10, {'hf': 40e3})
+    # cont.add_linear_series(10, {'tf': 8. * 60.})
+    # cont.add_linear_series(10, {'hf': 50e3})
+    # cont.add_linear_series(100, {'tf': 8. * 60., 'hf': 40e3})
+    # cont.add_linear_series(100, {'hf': 60e3})
+    # cont.add_linear_series_until_failure({'tf': 1.}, keep_bisections=False)
+    # cont.add_linear_series(100, {'tf': 15 * 60.})
+    # cont.add_linear_series(100, {'hf': 30e3})
+    # cont.add_linear_series(100, {'tf': 8 * 60.})
+    # cont.add_linear_series(100, {'tf': 20 * 60., 'hf': 10e3, 'eps_cost_alpha': 1e-3})
     # cont.add_linear_series(100, {'gamf': -20. * d2r})
     # cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
     # cont.add_linear_series_until_failure({'tf': 4.})
