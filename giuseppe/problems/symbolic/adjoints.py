@@ -37,6 +37,7 @@ class SymAdjoints(Symbolic):
 
         self.hamiltonian = ocp.cost.path + matrix_as_scalar(self.costates[:len(ocp.states.flat()), :].T @ ocp.dynamics)
         self.control_law = self.hamiltonian.diff(ocp.controls)
+        self.control_law_jac = self.control_law.jacobian(ocp.controls)
 
         self.costate_dynamics = -self.hamiltonian.diff(states_and_parameters)
 
@@ -124,6 +125,7 @@ class CompAdjoints(Adjoints):
 
         self.compute_hamiltonian = self._compile_hamiltonian(sym_adjoints)
         self.compute_control_law = self._compile_control_law(sym_adjoints)
+        self.compute_control_convexity = self._compile_control_convexity(sym_adjoints)
 
     def _compile_costate_dynamics(self, sym_adjoints: SymAdjoints) -> Callable:
         _compute_costate_dynamics = lambdify(
@@ -211,3 +213,17 @@ class CompAdjoints(Adjoints):
             compute_control_law = jit_compile(compute_control_law, self.args_numba_signature['dynamic'])
 
         return compute_control_law
+
+    def _compile_control_convexity(self, sym_adjoints: SymAdjoints) -> Callable:
+        _compute_h_uu = lambdify(self.sym_args['dynamic'], sym_adjoints.control_law_jac,
+                                 use_jit_compile=self.use_jit_compile)
+
+        def compute_control_convexity(independent: float, states: np.ndarray, costates: np.ndarray,
+                                      controls: np.ndarray, parameters: np.ndarray, constants: np.ndarray):
+            _h_uu = np.asarray(_compute_h_uu(independent, states, costates, controls, parameters, constants))
+            return np.linalg.eigvals(_h_uu)
+
+        if self.use_jit_compile:
+            compute_control_convexity = jit_compile(compute_control_convexity, self.args_numba_signature['dynamic'])
+
+        return compute_control_convexity

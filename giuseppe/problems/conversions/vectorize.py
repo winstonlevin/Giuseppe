@@ -70,6 +70,7 @@ def vectorize(
             _compute_costate_dynamics = input_prob.compute_costate_dynamics
             _compute_hamiltonian = input_prob.compute_hamiltonian
             _compute_control_law = input_prob.compute_control_law
+            _compute_control_convexity = input_prob.compute_control_convexity
 
             def _compute_costates_dynamics_vectorized(
                     independent: np.ndarray, states: np.ndarray, costates: np.ndarray, controls: np.ndarray,
@@ -100,6 +101,16 @@ def vectorize(
                               for ti, xi, lami, ui in zip(independent, states.T, costates.T, controls.T))).T
 
             prob.compute_control_law_vectorized = _compute_control_law_vectorized
+
+            def _compute_control_convexity_vectorized(
+                    independent: np.ndarray, states: np.ndarray, costates: np.ndarray, controls: np.ndarray,
+                    parameters: np.ndarray, constants: np.ndarray
+            ) -> np.ndarray:
+                return np.vstack(
+                        tuple(_compute_control_convexity(ti, xi, lami, ui, parameters, constants)
+                              for ti, xi, lami, ui in zip(independent, states.T, costates.T, controls.T))).T
+
+            prob.compute_control_convexity_vectorized = _compute_control_convexity_vectorized
 
             prob = cast(VectorizedAdjoints, prob)
 

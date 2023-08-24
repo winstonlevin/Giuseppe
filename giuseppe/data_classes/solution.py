@@ -25,6 +25,9 @@ class Solution:
     nu0: Optional[NPArray] = None
     nuf: Optional[NPArray] = None
 
+    h_u: Optional[NPArray] = None
+    eig_h_uu: Optional[NPArray] = None
+
     cost: Optional[float] = None
 
     aux: Optional[dict] = None

@@ -56,6 +56,13 @@ class Adjoints(Protocol):
     ) -> np.ndarray:
         ...
 
+    @staticmethod
+    def compute_control_convexity(
+            independent: float, states: np.ndarray, costates: np.ndarray, controls: np.ndarray,
+            parameters: np.ndarray, constants: np.ndarray
+    ) -> np.ndarray:
+        ...
+
 
 @runtime_checkable
 class VectorizedAdjoints(Adjoints, Protocol):
@@ -75,6 +82,13 @@ class VectorizedAdjoints(Adjoints, Protocol):
 
     @staticmethod
     def compute_control_law_vectorized(
+            independent: np.ndarray, states: np.ndarray, costates: np.ndarray, controls: np.ndarray,
+            parameters: np.ndarray, constants: np.ndarray
+    ) -> np.ndarray:
+        ...
+
+    @staticmethod
+    def compute_control_convexity_vectorized(
             independent: np.ndarray, states: np.ndarray, costates: np.ndarray, controls: np.ndarray,
             parameters: np.ndarray, constants: np.ndarray
     ) -> np.ndarray:

@@ -193,6 +193,8 @@ class BVPFromDual(BVP):
         _annotations = self.dual_annotations
 
         _compute_control = self.source_dual.control_handler.compute_control
+        _compute_control_law = self.source_dual.compute_control_law
+        _compute_control_convexity = self.source_dual.compute_control_convexity
 
         def post_process_data(in_data: Solution) -> Solution:
             t = in_data.t
@@ -203,10 +205,19 @@ class BVPFromDual(BVP):
             nuf = in_data.p[_nuf_slice]
             k = in_data.k
 
+            # TODO - allow for vectorized calculation of u, h_u and eig_h_uu
             u = np.array([_compute_control(ti, xi, lam_i, p, k) for ti, xi, lam_i in zip(t, x.T, lam.T)]).T
+            h_u = np.array([
+                _compute_control_law(ti, xi, lam_i, ui, p, k) for ti, xi, lam_i, ui in zip(t, x.T, lam.T, u.T)
+            ]).T
+            eig_h_uu = np.array([
+                _compute_control_convexity(ti, xi, lam_i, ui, p, k) for ti, xi, lam_i, ui in zip(t, x.T, lam.T, u.T)
+            ]).T
 
-            return Solution(t=t, x=x, lam=lam, u=u, p=p, nu0=nu0, nuf=nuf, k=k,
-                            converged=in_data.converged, annotations=_annotations)
+            sol = Solution(t=t, x=x, lam=lam, u=u, p=p, nu0=nu0, nuf=nuf, k=k, h_u=h_u, eig_h_uu=eig_h_uu,
+                           converged=in_data.converged, annotations=_annotations)
+
+            return self.source_dual.post_process_data(sol)
 
         return post_process_data
 
@@ -301,6 +312,8 @@ class BVPFromDual(BVP):
             self._x_slice, self._lam_slice, self._u_slice, self._p_slice, self._nu0_slice, self._nuf_slice
 
         _annotations = self.dual_annotations
+        _compute_control_law = self.source_dual.compute_control_law
+        _compute_control_convexity = self.source_dual.compute_control_convexity
 
         def post_process_data(in_data: Solution) -> Solution:
             t = in_data.t
@@ -312,7 +325,15 @@ class BVPFromDual(BVP):
             nuf = in_data.p[_nuf_slice]
             k = in_data.k
 
-            sol = Solution(t=t, x=x, lam=lam, u=u, p=p, nu0=nu0, nuf=nuf, k=k,
+            # TODO - allow for vectorized calculation of h_u and eig_h_uu
+            h_u = np.array([
+                _compute_control_law(ti, xi, lam_i, ui, p, k) for ti, xi, lam_i, ui in zip(t, x.T, lam.T, u.T)
+            ]).T
+            eig_h_uu = np.array([
+                _compute_control_convexity(ti, xi, lam_i, ui, p, k) for ti, xi, lam_i, ui in zip(t, x.T, lam.T, u.T)
+            ]).T
+
+            sol = Solution(t=t, x=x, lam=lam, u=u, p=p, nu0=nu0, nuf=nuf, k=k, h_u=h_u, eig_h_uu=eig_h_uu,
                            converged=in_data.converged, annotations=_annotations)
 
             return self.source_dual.post_process_data(sol)
