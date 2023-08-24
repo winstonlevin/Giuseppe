@@ -1,6 +1,6 @@
 from typing import List
 import pickle
-import matplotlib.pyplot as plt
+import matplotlib.pyplot  as plt
 import numpy as np
 import matplotlib as mpl
 from scipy.interpolate import PchipInterpolator
@@ -13,12 +13,12 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = True
+PLOT_SWEEP = False
 OPTIMIZATION = 'min_energy'
 
 # REG_METHOD = 'sin'
 REG_METHOD = None
-DATA = 2
+DATA = 1
 SWEEP = None
 
 if DATA == 0:
@@ -395,7 +395,7 @@ for idx, state in enumerate(list(sol.x)):
 fig_states.tight_layout()
 
 # PLOT CONTROL
-ylabs = (r'$\dot{\alpha}$ [deg/s]', r'$\dot{\alpha}_{reg}$ [-]')
+ylabs = (r'$\alpha$ [deg]', r'$\dot{\alpha}_{reg}$ [-]')
 ymult = np.array((r2d, 1))
 fig_controls = plt.figure()
 axes_u = []

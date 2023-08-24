@@ -20,10 +20,15 @@ hl20.set_independent('t')
 hl20.add_control('alpha')
 
 # States and Dynamics
-hl20.add_state('h_nd', '( v * sin(gam) ) / h_scale')  # Altitude [m], nd [-]
+hl20.add_state('h_nd', 'dh_dt / h_scale')  # Altitude [m], nd [-]
 hl20.add_state('theta_nd', '( v * cos(gam) / r ) / theta_scale')  # Downrange angle [rad], nd [-]
-hl20.add_state('v_nd', '( -drag/mass - g * sin(gam) ) / v_scale')  # Velocity [m/s], nd [-]
+hl20.add_state('v_nd', 'dv_dt / v_scale')  # Velocity [m/s], nd [-]
 hl20.add_state('gam_nd', '( lift / (mass * v) + (v/r - g/v) * cos(gam) ) / gam_scale')  # Flight path ang. [rad], nd [-]
+
+hl20.add_expression('dh_dt', 'v * sin(gam)')
+hl20.add_expression('dv_dt', '-drag/mass - g * sin(gam)')
+hl20.add_expression('dg_dh', '-2 * g / r')
+hl20.add_expression('de_dt', 'dh_dt * (dg_dh * h + g) + v * dv_dt')
 
 hl20.add_expression('h', 'h_nd * h_scale')
 hl20.add_expression('theta', 'theta_nd * theta_scale')
@@ -202,17 +207,18 @@ elif OPTIMIZATION == 'min_control':
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
     hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_energy':
-    # Cost is change in energy min(Ef - E0)
+    # Cost is change in energy min(Ef - E0) -> L = dE/dt
     # Since Huu = 0 when a discontinuity in control exists, add small control cost to smooth discontinuity.
-    hl20.set_cost(
-        '-energy/energy_scale',  # -Initial Energy
-        # '0',
-        'eps_cost_alpha * (alpha / alpha_scale)**2',  # Small control effort cost
-                                                      # (deviation from max drag)
-        'energy/energy_scale'  # Terminal Energy
-    )
+    # hl20.set_cost(
+    #     '-energy/energy_scale',  # -Initial Energy
+    #     # '0',
+    #     'eps_cost_alpha * (alpha / alpha_scale)**2',  # Small control effort cost
+    #                                                   # (deviation from max drag)
+    #     'energy/energy_scale'  # Terminal Energy
+    # )
+    hl20.set_cost('0', 'de_dt/energy_scale + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
     hl20.add_constraint('terminal', 't - tf')
-    hl20.add_constraint('terminal', 'h - hf')
+    # hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constant('tf', 10.)
 else:
     raise RuntimeError(OPT_ERROR_MSG)
@@ -220,7 +226,9 @@ else:
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(hl20_dual, verbose=False, max_nodes=100, node_buffer=15)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(
+        hl20_dual, verbose=False, max_nodes=100, node_buffer=15, bc_tol=1e-8
+    )
 
 # GLIDE SLOPE
 # The glide slope occurs for a given energy level at the combination of h/V where:
@@ -229,9 +237,14 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
 # The glide slope will be used to run continuations
 alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
 alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
+
+# CL ~ sin(2[alpha + CL0/CL1])
 alpha_max_lift = np.pi/4 - CL0/CL1
-alpha_max_drag = np.pi/2 - CD1 / (2 * CD2)
-# sin(alpha + CD1/(2*CD2))
+alpha_min_lift = -np.pi/4 - CL0/CL1
+
+# CD ~ sin(alpha + CD1/(2*CD2)) ** 2
+alpha_max_drag_positive = np.pi/2 - CD1 / (2 * CD2)
+alpha_max_drag_negative = -np.pi/2 - CD1 / (2 * CD2)
 
 CL_glide = CL0 + CL1 * alpha_max_ld
 CD_glide = CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2
@@ -288,13 +301,25 @@ elif OPTIMIZATION == 'min_time':
 elif OPTIMIZATION == 'min_energy':
     idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
     hl20_dual.default_values[idx_eps_cost_alpha] = 0.
-    k_max_d = 0.3
-    alpha_guess = (1 - k_max_d) * alpha_max_lift + k_max_d * alpha_max_drag
+
+    # Guess Initial States
+    reverse = True
+    h0_0 = 40e3
+    v0_0, _ = glide_slope_velocity_fpa(h0_0)
+    gam0_0 = -10. * d2r
+    # h0_0 = 50e3
+    # v0_0, gam0_0 = glide_slope_velocity_fpa(h0_0)
+    # v0_0 = 2. * v0_0
+
+    # Guess Control
+    # alpha_guess = alpha_max_drag_negative
+    k_max_d = 0.2
+    alpha_guess = (1 - k_max_d) * alpha_min_lift + k_max_d * alpha_max_drag_negative
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=alpha_guess, t_span=np.arange(0., 3*60. + 10., 10.),
+        hl20_dual, control=alpha_guess, t_span=np.arange(0., 1*60. + 10., 10.),
         immutable_constants=immutable_constants,
-        initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
-        fit_states=False, reverse=False
+        initial_states=np.array((h0_0/h_scale, 0./theta_scale, v0_0/v_scale, gam0_0/gam_scale)),
+        fit_states=False, reverse=reverse
     )
 else:
     guess = giuseppe.guess_generation.auto_propagate_guess(
@@ -307,7 +332,9 @@ with open('guess_hl20.data', 'wb') as file:
     pickle.dump(guess, file)
 
 # Seed Solution from guess
-seed_sol = num_solver.solve(guess)
+seed_sol = num_solver.solve(guess, bc_tol=1e-3, tol=1e-3, verbose=2)
+
+print(seed_sol.converged)
 
 with open('seed_sol_hl20.data', 'wb') as file:
     pickle.dump(seed_sol, file)
@@ -423,9 +450,11 @@ elif OPTIMIZATION == 'min_control':
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_energy':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+    # cont.add_linear_series(100, {'eps_cost_alpha': 1e-3})
+    cont.add_linear_series_until_failure({'tf': 5.})
     # cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
     # cont.add_linear_series(100, {'eps_cost_alpha': 1e-1})
-    cont.add_linear_series_until_failure({'tf': 1.})
+    # cont.add_linear_series_until_failure({'tf': 1.})
     # cont.add_linear_series(10, {'hf': 40e3})
     # cont.add_linear_series(10, {'tf': 8. * 60.})
     # cont.add_linear_series(10, {'hf': 50e3})
