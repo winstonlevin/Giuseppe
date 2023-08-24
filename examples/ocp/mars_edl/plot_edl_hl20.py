@@ -73,7 +73,7 @@ h = x_dict['h_nd'] * k_dict['h_scale']
 theta = x_dict['theta_nd'] * k_dict['theta_scale']
 v = x_dict['v_nd'] * k_dict['v_scale']
 gam = x_dict['gam_nd'] * k_dict['gam_scale']
-alpha = u_dict['alpha']
+alpha = u_dict['alpha_nd'] * k_dict['alpha_scale']
 
 r2d = 180 / np.pi
 mass = k_dict['mass']
@@ -175,7 +175,7 @@ if PLOT_SWEEP:
             _x_dict[key] = x_val
         _h = _x_dict['h_nd'] * k_dict['h_scale']
         _v = _x_dict['v_nd'] * k_dict['v_scale']
-        _alpha = sweep_sol.u[0, :]
+        _alpha = sweep_sol.u[0, :] * k_dict['alpha_scale']
 
         _rho = rho0 * np.exp(-_h/h_ref)
         _qdyn = 0.5 * _rho * _v ** 2
@@ -384,7 +384,7 @@ fig_states.tight_layout()
 
 # PLOT CONTROL
 ylabs = (r'$\alpha$ [deg]', r'$\dot{\alpha}_{reg}$ [-]')
-ymult = np.array((r2d, 1))
+ymult = np.array((r2d * k_dict['alpha_scale'], 1))
 fig_controls = plt.figure()
 axes_u = []
 

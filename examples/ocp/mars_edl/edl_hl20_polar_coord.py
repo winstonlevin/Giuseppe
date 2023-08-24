@@ -17,7 +17,8 @@ hl20 = giuseppe.problems.symbolic.StrInputProb()
 hl20.set_independent('t')
 
 # Controls
-hl20.add_control('alpha')
+hl20.add_control('alpha_nd')
+hl20.add_expression('alpha', 'alpha_nd * alpha_scale')
 
 # States and Dynamics
 hl20.add_state('h_nd', 'dh_dt / h_scale')  # Altitude [m], nd [-]
@@ -287,43 +288,35 @@ vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 
 if OPTIMIZATION == 'min_control':
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=0., t_span=np.arange(0., 25. + 5., 5.), immutable_constants=immutable_constants,
+        hl20_dual, control=0./alpha_scale, t_span=np.arange(0., 25. + 5., 5.), immutable_constants=immutable_constants,
         initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
         fit_states=False, reverse=False
     )
 elif OPTIMIZATION == 'min_time':
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=alphaf, t_span=np.arange(0., 15. + 5., 5.),
+        hl20_dual, control=alphaf/alpha_scale, t_span=np.arange(0., 15. + 5., 5.),
         immutable_constants=immutable_constants,
         initial_states=np.array((5e3/h_scale, 0./theta_scale, 1e3/v_scale, 0./gam_scale)),
         fit_states=False, reverse=True
     )
 elif OPTIMIZATION == 'min_energy':
     idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
-    hl20_dual.default_values[idx_eps_cost_alpha] = 0.
-
-    # Guess Initial States
-    reverse = True
-    h0_0 = 40e3
-    v0_0, _ = glide_slope_velocity_fpa(h0_0)
-    gam0_0 = -10. * d2r
-    # h0_0 = 50e3
-    # v0_0, gam0_0 = glide_slope_velocity_fpa(h0_0)
-    # v0_0 = 2. * v0_0
+    hl20_dual.default_values[idx_eps_cost_alpha] = 1e-10
 
     # Guess Control
     # alpha_guess = alpha_max_drag_negative
     k_max_d = 0.2
     alpha_guess = (1 - k_max_d) * alpha_min_lift + k_max_d * alpha_max_drag_negative
+
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=alpha_guess, t_span=np.arange(0., 1*60. + 10., 10.),
+        hl20_dual, control=alpha_guess/alpha_scale, t_span=np.arange(0., 1*60. + 10., 10.),
         immutable_constants=immutable_constants,
-        initial_states=np.array((h0_0/h_scale, 0./theta_scale, v0_0/v_scale, gam0_0/gam_scale)),
-        fit_states=False, reverse=reverse
+        initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
+        fit_states=False, reverse=False
     )
 else:
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=alphaf, t_span=np.linspace(0., 25., 6), immutable_constants=immutable_constants,
+        hl20_dual, control=alphaf/alpha_scale, t_span=np.linspace(0., 25., 6), immutable_constants=immutable_constants,
         initial_states=np.array((hf/h_scale, 0./theta_scale, vf/v_scale, 0 * d2r/gam_scale)),
         fit_states=False, reverse=True
     )
@@ -357,6 +350,27 @@ def glide_slope_continuation(previous_sol, frac_complete):
     previous_sol.k[idx_gam0] = _gam0
     return previous_sol.k
 
+
+# Extend time, but increment eps_cost_alpha to prevent Huu becoming singular
+min_eig_u_uu = 1e-3
+idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
+idx_tf = hl20_dual.annotations.constants.index('tf')
+tf_0 = seed_sol.t[-1]
+tf_1 = 8. * 60.  # Final time [s]
+
+
+def time_continuation(previous_sol, frac_complete):
+    _constants = previous_sol.k.copy()
+
+    # Increment final time
+    _constants[idx_tf] = tf_0 + frac_complete * (tf_1 - tf_0)
+
+    # Increment eps_cost_alpha is Huu near singular
+    _min_eig_h_uu = np.min(previous_sol.eig_h_uu)
+    if _min_eig_h_uu < min_eig_u_uu:
+        _constants[idx_eps_cost_alpha] += min_eig_u_uu - _min_eig_h_uu
+
+    return _constants
 
 # idx_eps_n2 = seed_sol.annotations.constants.index('eps_n2')
 # # idx_eps_cost_alpha = seed_sol.annotations.constants.index('eps_cost_alpha')
@@ -450,26 +464,15 @@ elif OPTIMIZATION == 'min_control':
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_energy':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    # cont.add_linear_series(100, {'eps_cost_alpha': 1e-3})
-    cont.add_linear_series_until_failure({'tf': 5.})
-    # cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
-    # cont.add_linear_series(100, {'eps_cost_alpha': 1e-1})
+    cont.add_custom_series(100, time_continuation, series_name='tf')
+    # cont.add_logarithmic_series(10, {'eps_cost_alpha': 1e-4})
+    # cont.add_linear_series(60, {'tf': 6.0 * 60.})
+    # cont.add_logarithmic_series(10, {'eps_cost_alpha': 3.5e-3})
+    # cont.add_linear_series(60, {'tf': 7.0 * 60.})
+    # cont.add_logarithmic_series(10, {'eps_cost_alpha': 1.25e-2})
+    # cont.add_linear_series(60, {'tf': 8.0 * 60.})
+    # cont.add_logarithmic_series(100, {'eps_cost_alpha': 1.5e-2})
     # cont.add_linear_series_until_failure({'tf': 1.})
-    # cont.add_linear_series(10, {'hf': 40e3})
-    # cont.add_linear_series(10, {'tf': 8. * 60.})
-    # cont.add_linear_series(10, {'hf': 50e3})
-    # cont.add_linear_series(100, {'tf': 8. * 60., 'hf': 40e3})
-    # cont.add_linear_series(100, {'hf': 60e3})
-    # cont.add_linear_series_until_failure({'tf': 1.}, keep_bisections=False)
-    # cont.add_linear_series(100, {'tf': 15 * 60.})
-    # cont.add_linear_series(100, {'hf': 30e3})
-    # cont.add_linear_series(100, {'tf': 8 * 60.})
-    # cont.add_linear_series(100, {'tf': 20 * 60., 'hf': 10e3, 'eps_cost_alpha': 1e-3})
-    # cont.add_linear_series(100, {'gamf': -20. * d2r})
-    # cont.add_linear_series(100, {'gamf': 0., 'tf': 100})
-    # cont.add_linear_series_until_failure({'tf': 4.})
-    # cont.add_logarithmic_series(100, {'eps_h': 1e-10})
-    # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
     sol_set = cont.run_continuation()
 else:
     raise RuntimeError(OPT_ERROR_MSG)
