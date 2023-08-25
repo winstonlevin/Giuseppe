@@ -16,9 +16,8 @@ PLOT_AUXILIARY = True
 PLOT_SWEEP = False
 OPTIMIZATION = 'min_energy'
 
-# REG_METHOD = 'sin'
-REG_METHOD = None
 DATA = 2
+# SWEEP = 'gam'
 SWEEP = None
 
 if DATA == 0:

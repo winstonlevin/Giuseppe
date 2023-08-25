@@ -104,7 +104,11 @@ h_scale = 1e4
 theta_scale = d2r
 v_scale = 1e3
 gam_scale = 5 * d2r
-alpha_scale = 30 * d2r
+
+if OPTIMIZATION == 'min_energy':
+    alpha_scale = 90 * d2r
+else:
+    alpha_scale = 30 * d2r
 
 hl20.add_constant('h_scale', h_scale)
 hl20.add_constant('theta_scale', theta_scale)
@@ -464,7 +468,7 @@ elif OPTIMIZATION == 'min_control':
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_energy':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_custom_series(100, time_continuation, series_name='tf')
+    cont.add_custom_series(1000, time_continuation, series_name='tf')
     # cont.add_logarithmic_series(10, {'eps_cost_alpha': 1e-4})
     # cont.add_linear_series(60, {'tf': 6.0 * 60.})
     # cont.add_logarithmic_series(10, {'eps_cost_alpha': 3.5e-3})
