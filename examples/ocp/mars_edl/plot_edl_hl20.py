@@ -14,9 +14,9 @@ RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
 PLOT_SWEEP = False
-OPTIMIZATION = 'min_energy'
+OPTIMIZATION = 'min_velocity'
 
-DATA = 0
+DATA = 1
 # SWEEP = 'gam'
 SWEEP = None
 
@@ -167,6 +167,8 @@ lift_sweep_frac: List[np.array] = [None] * len(sols)
 drag_sweep_frac: List[np.array] = [None] * len(sols)
 ld_sweep: List[np.array] = [None] * len(sols)
 
+v_max = np.max(v)
+
 if PLOT_SWEEP:
     for idx, sweep_sol in enumerate(sols):
         _x_dict = {}
@@ -203,7 +205,7 @@ if PLOT_SWEEP:
                     0.5 * (_drag_max_con_g - _drag_min_g))
         ld_sweep[idx] = _lift_g / _drag_g
 
-        # Discard data where there is essentiall no lift or drag available
+        # Discard data where there is essentially no lift or drag available
         _invalid_lift = np.where(_lift_max_con_g - _lift_min_con_g < 1e-3)
         _invalid_drag = np.where(_drag_max_con_g - _drag_min_g < 1e-3)
         lift_sweep_frac[idx][_invalid_lift] = np.nan
@@ -211,10 +213,14 @@ if PLOT_SWEEP:
         ld_sweep[idx][_invalid_lift] = np.nan
         ld_sweep[idx][_invalid_drag] = np.nan
 
+        _v_max = np.max(_v)
+
         if sol.t[0] < t_sweep_min:
             t_sweep_min = sol.t[0]
         if sol.t[-1] > t_sweep_max:
             t_sweep_max = sol.t[-1]
+        if _v_max > v_max:
+            v_max = _v_max
 
 t_sweep_span = np.array((t_sweep_min, t_sweep_max))
 
@@ -234,6 +240,10 @@ if OPTIMIZATION == 'max_range':
     dcost_dt = (-v * np.cos(gam) / r) / k_dict['theta_scale']
     cost = -(theta[-1] - theta[0]) / k_dict['theta_scale']
     cost_lab = r'$J(\Delta{\theta})$'
+elif OPTIMIZATION == 'min_velocity':
+    dcost_dt = (-drag/mass - g * np.sin(gam)) / k_dict['v_scale']
+    cost = (v[-1] - v[0]) / k_dict['v_scale']
+    cost_lab = r'$J(\Delta{V})$'
 elif OPTIMIZATION == 'min_time':
     dcost_dt = 0*sol.t + 1.
     cost = sol.t[-1] - sol.t[0]
@@ -271,7 +281,7 @@ else:
 
 heat_rate_max = k_dict['heat_rate_max']
 heat_rate_min = -heat_rate_max
-heat_rate = k_dict['k'] * (rho / k_dict['rn']) * v ** 3
+heat_rate = k_dict['k'] * (rho / k_dict['rn'])**0.5 * v ** 3
 
 CL_max_ld = CL0 + CL1 * alpha_max_ld
 
@@ -282,6 +292,8 @@ rho_glide = rho0 * np.exp(-h_glide/h_ref)
 v_glide = _v = ((mass * g_glide) / (0.5 * rho_glide * s_ref * CL_max_ld + mass / r_glide)) ** 0.5
 qdyn_glide = mass * (g_glide - v_glide**2 / r_glide) / (s_ref * CL_max_ld)
 qdyn_glide_interp = PchipInterpolator(x=h_glide, y=qdyn_glide)
+
+v_max_heat = (heat_rate_max / (k_dict['k'] * (rho_glide / k_dict['rn']) ** 0.5)) ** (1/3)
 
 # Time scale
 tf = sol.t[-1]
@@ -472,40 +484,25 @@ if PLOT_AUXILIARY:
     # TODO - remove
     ax_hv.set_xlabel('Velocity [km/s]')
     ax_hv.set_ylabel('Altitude [km]')
-    # ax_hv.set_yticks(ticks=(0., 0.75, ))
 
-    # ax_hv.grid()
-    # ax_hv.set_xlabel(xlabs[2])
-    # ax_hv.set_ylabel(xlabs[0])
-    #
-    # if PLOT_SWEEP:
-    #     for sol_idx, sol_sweep in enumerate(sols):
-    #         ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0], color=cols_gradient(sol_idx))
-    # else:
-    #     ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[0])
+    ax_hv.grid()
+    ax_hv.set_xlabel(xlabs[2])
+    ax_hv.set_ylabel(xlabs[0])
+    ax_hv.set_xlim(np.array((0., v_max * 1.05)) / k_dict['v_scale'] * xmult[2])
 
-    v_loft = 0.6e3
-    v_max = 2.e3
-    h_cruise = 5e3
-    h_max = 30.e3
+    if PLOT_SWEEP:
+        for sol_idx, sol_sweep in enumerate(sols):
+            ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0], color=cols_gradient(sol_idx))
+    else:
+        ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[0])
 
-    glide_plot_idces = np.where(h_glide >= h_cruise)
-
-    ax_hv.set_xlim((0., v_max / k_dict['v_scale'] * xmult[2]))
-    ax_hv.set_ylim((0., h_max / k_dict['h_scale'] * xmult[0]))
-    ax_hv.set_xticks(ticks=(0., v_loft / k_dict['v_scale'] * xmult[2], v_max / k_dict['v_scale'] * xmult[2]), labels=('0', r'$V_{loft}$', str(int(v_max / k_dict['v_scale'] * xmult[2]))))
-    ax_hv.set_yticks(ticks=(0., h_cruise / k_dict['h_scale'] * xmult[0], h_max / k_dict['h_scale'] * xmult[0]), labels=('0', r'$h_{cruise}$', str(int(h_max / k_dict['h_scale'] * xmult[0]))))
-
-    ax_hv.plot(v_glide[glide_plot_idces] / k_dict['v_scale'] * xmult[2], h_glide[glide_plot_idces] / k_dict['h_scale'] * xmult[0],
-               'k', label='Glide Slope', linewidth=3)
-    ax_hv.plot(0*h_glide + v_loft / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
-               'k', linewidth=3)
-    ax_hv.plot(v_glide / k_dict['v_scale'] * xmult[2], 0*h_glide + h_cruise / k_dict['h_scale'] * xmult[0],
-               'k', linewidth=3)
-    # ax_hv.plot((g_glide * (rm + h_glide))**0.5 / 1e3, h_glide / k_dict['h_scale'] * xmult[0], label='Orbital Velocity')
-    # ax_hv.plot(v_glide / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
-    #            'k--', label='Glide Slope')
-    # ax_hv.legend()
+    ax_hv.plot((g_glide * (rm + h_glide))**0.5 / 1e3, h_glide / k_dict['h_scale'] * xmult[0],
+               'k', label='Circular Orbital Velocity')
+    ax_hv.plot(v_glide / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
+               'k--', label='Glide Slope')
+    ax_hv.plot(v_max_heat / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
+               'k:', label='Max Heat Rate')
+    ax_hv.legend()
 
     # PLOT DERIVATIVES
     ydata = (dh_dt, dtheta_dt, dv_dt, dgam_dt)

@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'min_energy'  # {'max_range', 'min_time', 'min_energy'}
+OPTIMIZATION = 'min_velocity'  # {'max_range', 'min_time', 'min_energy', 'min_velocity'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -63,6 +63,7 @@ hl20.add_expression('energy_scale', 'g_scale * h_scale + 0.5 * v_scale**2')
 # Constants
 mu = 42828.371901e9
 rm = 3397.e3
+g0 = mu/rm**2
 h_ref = 11.1e3
 rho0 = 0.02
 hl20.add_constant('mu', mu)  # Mar's Gravitational Parameter [m**3/s**2]
@@ -121,20 +122,13 @@ hl20.add_constant('h0', 80e3)
 hl20.add_constant('theta0', 0.)
 hl20.add_constant('v0', 4e3)
 hl20.add_constant('gam0', -5 * d2r)
-
-hl20.add_constraint('initial', 't')
-hl20.add_constraint('initial', 'h - h0')
-hl20.add_constraint('initial', 'theta - theta0')
-hl20.add_constraint('initial', 'v - v0')
-hl20.add_constraint('initial', 'gam - gam0')
+hl20.add_constant('energy0', 80e3 * g0 + 0.5 * (4e3)**2)
 
 # Terminal conditions
 hl20.add_constant('hf', 10e3)
 hl20.add_constant('thetaf', 1. * d2r)
 hl20.add_constant('gamf', 0. * d2r)
 hl20.add_constant('vf', 10.)
-
-# hl20.add_constraint('terminal', 'theta - thetaf')
 
 # CONSTRAINTS
 # Vertical G-Load Constraint (Total G's)
@@ -157,8 +151,8 @@ if OPTIMIZATION == 'min_time' or OPTIMIZATION == 'min_energy':
 # Path Constraint - Heat Rate
 hl20.add_constant('k', 1.9027e-4)  # Heat rate constant for Mars [kg**0.5 / m]
 hl20.add_constant('rn', 1.)  # Nose radius [m]
-hl20.add_constant('heat_rate_max', 500e4)  # Max heat rate [W/m**2]
-hl20.add_expression('heat_rate', 'k * (rho / rn) * v ** 3')  # Heat Rate [W/m**2]
+hl20.add_constant('heat_rate_max', 125e4)  # Max heat rate [W/m**2]
+hl20.add_expression('heat_rate', 'k * (rho / rn)**0.5 * v ** 3')  # Heat Rate [W/m**2]
 
 # Path Constraint - Altitude
 h_min = 5e3
@@ -166,7 +160,7 @@ h_max = 120e3
 hl20.add_constant('h_min', h_min)
 hl20.add_constant('h_max', h_max)
 hl20.add_constant('eps_h', 1e-3)
-if OPTIMIZATION != 'min_time':
+if OPTIMIZATION == 'max_range' or OPTIMIZATION == 'min_energy':
     hl20.add_inequality_constraint(
         'path', 'h_nd', 'h_min / h_scale', 'h_max / h_scale',
         regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
@@ -181,50 +175,66 @@ hl20.add_constant('tf', 10.)
 if OPTIMIZATION == 'max_range':
     # Maximum range (path cost = -d(theta)/dt -> min J = theta0 - thetaf)
     hl20.set_cost('0', '(-v * cos(gam) / r) / theta_scale', '0')
+
+    # Initial States
+    hl20.add_constraint('initial', 't')
+    hl20.add_constraint('initial', 'theta - theta0')
+    hl20.add_constraint('initial', 'h - h0')
+    hl20.add_constraint('initial', 'v - v0')
+    hl20.add_constraint('initial', 'gam - gam0')
+
+    # Terminal States
     hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
     hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_velocity':
+    # For LOFT phase -- optimize h/V/gam to initial loft for given energy.
     # Minimum velocity (path cost = d(V)/dt -> min J = vf - v0)
     hl20.set_cost('0', '(-drag/mass - g * sin(gam)) / v_scale', '0')
+
+    # Initial States
+    hl20.add_constraint('initial', 't')
+    hl20.add_constraint('initial', 'theta - theta0')
+    hl20.add_constraint('initial', 'energy - energy0')
+    # hl20.add_constraint('initial', 'h - h0')
+    # hl20.add_constraint('initial', 'v - v0')
+    # hl20.add_constraint('initial', 'gam - gam0')
+
+    # Terminal States
     hl20.add_constraint('terminal', 'h - hf')
-    hl20.add_constraint('terminal', 'gam - gamf')
+    # hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_time':
+    # For DIVE phase -- optimize time taken to reach cruise condition.
     # Minimum time (path cost = 1 -> min J = tf - t0)
     # Since Huu = 0 when a discontinuity in control exists, add small control cost to smooth discontinuity.
     hl20.set_cost('0', '1 + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
+
+    # Initial States
+    hl20.add_constraint('initial', 't')
+    hl20.add_constraint('initial', 'theta - theta0')
+    hl20.add_constraint('initial', 'h - h0')
+    hl20.add_constraint('initial', 'v - v0')
+    hl20.add_constraint('initial', 'gam - gam0')
+
+    # Terminal States
+    hl20.add_constraint('initial', 't')
+    hl20.add_constraint('initial', 'theta - theta0')
     hl20.add_constraint('terminal', 'h - hf')
-    # hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
-    hl20.add_constraint('terminal', 'gam - gamf')
-elif OPTIMIZATION == 'max_drag':
-    # Maximum drag (path cost = -drag -> min J = -int(drag)
-    hl20.set_cost('0', '-drag / (rho0 * v_scale**2)', '0')
-    hl20.add_constraint('terminal', 'h - hf')
-    hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
-    hl20.add_constraint('terminal', 'gam - gamf')
-elif OPTIMIZATION == 'min_heat':
-    hl20.set_cost('0', 'heat_rate / (k * (rho0 / rn) * v_scale ** 3)', '0')
-    hl20.add_constraint('terminal', 'h - hf')
-    hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
-    hl20.add_constraint('terminal', 'gam - gamf')
-elif OPTIMIZATION == 'min_control':
-    hl20.set_cost('0', '(alpha / alpha_scale)**2', '0')
-    hl20.add_constraint('terminal', 'h - hf')
-    hl20.add_constraint('terminal', 'v - vf')  # Constrain final velocity
     hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_energy':
     # Cost is change in energy min(Ef - E0) -> L = dE/dt
     # Since Huu = 0 when a discontinuity in control exists, add small control cost to smooth discontinuity.
-    # hl20.set_cost(
-    #     '-energy/energy_scale',  # -Initial Energy
-    #     # '0',
-    #     'eps_cost_alpha * (alpha / alpha_scale)**2',  # Small control effort cost
-    #                                                   # (deviation from max drag)
-    #     'energy/energy_scale'  # Terminal Energy
-    # )
     hl20.set_cost('0', 'de_dt/energy_scale + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
+
+    # Initial States
+    hl20.add_constraint('initial', 't')
+    hl20.add_constraint('initial', 'theta - theta0')
+    hl20.add_constraint('initial', 'h - h0')
+    hl20.add_constraint('initial', 'v - v0')
+    hl20.add_constraint('initial', 'gam - gam0')
+
+    # Terminal States
     hl20.add_constraint('terminal', 't - tf')
-    # hl20.add_constraint('terminal', 'h - hf')
 else:
     raise RuntimeError(OPT_ERROR_MSG)
 
@@ -290,10 +300,16 @@ rhof = rho0 * np.exp(-hf/h_ref)
 CLf = CL0 + CL1 * alphaf
 vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 
-if OPTIMIZATION == 'min_control':
+if OPTIMIZATION == 'min_velocity':
+    h0_guess = 5e3
+    v0_guess, gam0_guess = glide_slope_velocity_fpa(h0_guess)
+    g0_guess = mu / (h0_guess + rm) ** 2
+    e0_guess = h0_guess * g0_guess + 0.5 * v0_guess**2
+
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        hl20_dual, control=0./alpha_scale, t_span=np.arange(0., 25. + 5., 5.), immutable_constants=immutable_constants,
-        initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
+        hl20_dual, control=alpha_max_lift/alpha_scale, t_span=np.arange(0., 10. + 5., 5.),
+        immutable_constants=immutable_constants,
+        initial_states=np.array((h0_guess/h_scale, 0./theta_scale, v0_guess/v_scale, gam0_guess/gam_scale)),
         fit_states=False, reverse=False
     )
 elif OPTIMIZATION == 'min_time':
@@ -312,13 +328,10 @@ elif OPTIMIZATION == 'min_energy':
     k_max_d = 0.2
     alpha_guess = (1 - k_max_d) * alpha_min_lift + k_max_d * alpha_max_drag_negative
 
-    h0_guess = 10e3
-    v0_guess, gam0_guess = glide_slope_velocity_fpa(h0_guess)
-
     guess = giuseppe.guess_generation.auto_propagate_guess(
         hl20_dual, control=alpha_guess/alpha_scale, t_span=np.arange(0., 1*60. + 10., 10.),
         immutable_constants=immutable_constants,
-        initial_states=np.array((h0_guess/h_scale, 0./theta_scale, v0_guess/v_scale, gam0_guess/gam_scale)),
+        initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
         fit_states=False, reverse=False
     )
 else:
@@ -414,6 +427,10 @@ if OPTIMIZATION == 'max_range':
     cont.add_logarithmic_series(100, {'eps_h': 1e-10})
     # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
     sol_set = cont.run_continuation()
+elif OPTIMIZATION == 'min_velocity':
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+    cont.add_linear_series_until_failure({'energy0': 10})
+    sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_time':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
@@ -438,36 +455,6 @@ elif OPTIMIZATION == 'min_time':
     # Solve for finer trajectory at nominal (gam0 = 0)
     cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set)
     cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-6, 'eps_n': 1e-6})
-    sol_set = cont.run_continuation()
-
-elif OPTIMIZATION == 'max_drag':
-    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_linear_series(1, {'theta0': 0.})
-    cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
-    cont.add_linear_series_until_failure({'vf': -10})
-    cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
-    cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
-    sol_set = cont.run_continuation()
-elif OPTIMIZATION == 'min_heat':
-    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_linear_series(1, {'theta0': 0.})
-    cont.add_logarithmic_series(100, {'eps_h': 1e-5})
-    cont.add_linear_series(25, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
-    # cont.add_linear_series(25, {'gam0': gam0_glide_seed})
-    # cont.add_linear_series_until_failure({'vf': -10})
-    # cont.add_linear_series(100, {'v0': v0_1, 'h0': h0_1, 'gam0': gam0_1})
-    #
-    # cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
-    # cont.add_logarithmic_series(100, {'eps_h': 1e-10})
-    sol_set = cont.run_continuation()
-elif OPTIMIZATION == 'min_control':
-    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_linear_series(1, {'theta0': 0.})
-    cont.add_linear_series_until_failure({'vf': -10})
-    cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
-    cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
-    cont.add_logarithmic_series(100, {'eps_h': 1e-10})
-    # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_energy':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
