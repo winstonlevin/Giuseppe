@@ -239,16 +239,16 @@ for idx, sol in enumerate(sols):
 
 # ---- PLOTTING --------------------------------------------------------------------------------------------------------
 gradient = mpl.colormaps['viridis'].colors
+colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 if len(sols) == 1:
-    grad_idcs = np.array((0,), dtype=np.int32)
+    def cols_gradient(n):
+        return colors[0]
 else:
     grad_idcs = np.int32(np.floor(np.linspace(0, 255, len(sols))))
 
-
-def cols_gradient(n):
-    return gradient[grad_idcs[n]]
-
+    def cols_gradient(n):
+        return gradient[grad_idcs[n]]
 
 t_label = r'$t$ [s]'
 r2d = 180 / np.pi
@@ -259,16 +259,29 @@ ymult = np.array((1e-3, r2d, 1e-3, r2d))
 fig_states = plt.figure()
 axes_states = []
 
-for idx, lab in enumerate(ylabs):
-    axes_states.append(fig_states.add_subplot(2, 2, idx + 1))
-    ax = axes_states[-1]
-    ax.grid()
-    ax.set_xlabel(t_label)
-    ax.set_ylabel(ylabs[idx])
+idx = 3
+axes_states.append(fig_states.add_subplot(111))
+ax = axes_states[-1]
+ax.grid()
+ax.set_xlabel(t_label)
+ax.set_ylabel(ylabs[idx])
 
-    for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
-        ax.plot(sol.t, sol.x[idx, :] * x_scale[idx] * ymult[idx], 'k--')
-        ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(jdx))
+for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
+    ax.plot(sol.t, sol.x[idx, :] * x_scale[idx] * ymult[idx], 'k--', label='Min. Time')
+    ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(jdx), label='Closed-Loop')
+
+ax.legend()
+
+# for idx, lab in enumerate(ylabs):
+#     axes_states.append(fig_states.add_subplot(2, 2, idx + 1))
+#     ax = axes_states[-1]
+#     ax.grid()
+#     ax.set_xlabel(t_label)
+#     ax.set_ylabel(ylabs[idx])
+#
+#     for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
+#         ax.plot(sol.t, sol.x[idx, :] * x_scale[idx] * ymult[idx], 'k--')
+#         ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(jdx))
 
 fig_states.tight_layout()
 

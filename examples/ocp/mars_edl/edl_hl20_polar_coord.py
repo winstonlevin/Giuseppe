@@ -176,6 +176,7 @@ if OPTIMIZATION != 'min_time':
 
 # COST FUNCTIONAL
 hl20.add_constant('eps_cost_alpha', 1e-3)
+hl20.add_constant('tf', 10.)
 
 if OPTIMIZATION == 'max_range':
     # Maximum range (path cost = -d(theta)/dt -> min J = theta0 - thetaf)
@@ -224,7 +225,6 @@ elif OPTIMIZATION == 'min_energy':
     hl20.set_cost('0', 'de_dt/energy_scale + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
     hl20.add_constraint('terminal', 't - tf')
     # hl20.add_constraint('terminal', 'h - hf')
-    hl20.add_constant('tf', 10.)
 else:
     raise RuntimeError(OPT_ERROR_MSG)
 
@@ -312,10 +312,13 @@ elif OPTIMIZATION == 'min_energy':
     k_max_d = 0.2
     alpha_guess = (1 - k_max_d) * alpha_min_lift + k_max_d * alpha_max_drag_negative
 
+    h0_guess = 10e3
+    v0_guess, gam0_guess = glide_slope_velocity_fpa(h0_guess)
+
     guess = giuseppe.guess_generation.auto_propagate_guess(
         hl20_dual, control=alpha_guess/alpha_scale, t_span=np.arange(0., 1*60. + 10., 10.),
         immutable_constants=immutable_constants,
-        initial_states=np.array((h0_1/h_scale, 0./theta_scale, v0_1/v_scale, gam0_1/gam_scale)),
+        initial_states=np.array((h0_guess/h_scale, 0./theta_scale, v0_guess/v_scale, gam0_guess/gam_scale)),
         fit_states=False, reverse=False
     )
 else:

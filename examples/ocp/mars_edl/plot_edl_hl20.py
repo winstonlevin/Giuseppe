@@ -16,7 +16,7 @@ PLOT_AUXILIARY = True
 PLOT_SWEEP = False
 OPTIMIZATION = 'min_energy'
 
-DATA = 2
+DATA = 0
 # SWEEP = 'gam'
 SWEEP = None
 
@@ -468,19 +468,44 @@ if PLOT_AUXILIARY:
     # PLOT H-v
     fig_hv = plt.figure()
     ax_hv = fig_hv.add_subplot(111)
-    ax_hv.grid()
-    ax_hv.set_xlabel(xlabs[2])
-    ax_hv.set_ylabel(xlabs[0])
 
-    if PLOT_SWEEP:
-        for sol_idx, sol_sweep in enumerate(sols):
-            ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0], color=cols_gradient(sol_idx))
-    else:
-        ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[0])
+    # TODO - remove
+    ax_hv.set_xlabel('Velocity [km/s]')
+    ax_hv.set_ylabel('Altitude [km]')
+    # ax_hv.set_yticks(ticks=(0., 0.75, ))
 
-    ax_hv.plot(v_glide / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
-               'k--', label='Glide Slope')
-    ax_hv.legend()
+    # ax_hv.grid()
+    # ax_hv.set_xlabel(xlabs[2])
+    # ax_hv.set_ylabel(xlabs[0])
+    #
+    # if PLOT_SWEEP:
+    #     for sol_idx, sol_sweep in enumerate(sols):
+    #         ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0], color=cols_gradient(sol_idx))
+    # else:
+    #     ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[0])
+
+    v_loft = 0.6e3
+    v_max = 2.e3
+    h_cruise = 5e3
+    h_max = 30.e3
+
+    glide_plot_idces = np.where(h_glide >= h_cruise)
+
+    ax_hv.set_xlim((0., v_max / k_dict['v_scale'] * xmult[2]))
+    ax_hv.set_ylim((0., h_max / k_dict['h_scale'] * xmult[0]))
+    ax_hv.set_xticks(ticks=(0., v_loft / k_dict['v_scale'] * xmult[2], v_max / k_dict['v_scale'] * xmult[2]), labels=('0', r'$V_{loft}$', str(int(v_max / k_dict['v_scale'] * xmult[2]))))
+    ax_hv.set_yticks(ticks=(0., h_cruise / k_dict['h_scale'] * xmult[0], h_max / k_dict['h_scale'] * xmult[0]), labels=('0', r'$h_{cruise}$', str(int(h_max / k_dict['h_scale'] * xmult[0]))))
+
+    ax_hv.plot(v_glide[glide_plot_idces] / k_dict['v_scale'] * xmult[2], h_glide[glide_plot_idces] / k_dict['h_scale'] * xmult[0],
+               'k', label='Glide Slope', linewidth=3)
+    ax_hv.plot(0*h_glide + v_loft / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
+               'k', linewidth=3)
+    ax_hv.plot(v_glide / k_dict['v_scale'] * xmult[2], 0*h_glide + h_cruise / k_dict['h_scale'] * xmult[0],
+               'k', linewidth=3)
+    # ax_hv.plot((g_glide * (rm + h_glide))**0.5 / 1e3, h_glide / k_dict['h_scale'] * xmult[0], label='Orbital Velocity')
+    # ax_hv.plot(v_glide / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
+    #            'k--', label='Glide Slope')
+    # ax_hv.legend()
 
     # PLOT DERIVATIVES
     ydata = (dh_dt, dtheta_dt, dv_dt, dgam_dt)
@@ -500,7 +525,17 @@ if PLOT_AUXILIARY:
     fig_deriv.tight_layout()
 
     # PLOT CONSTRAINTS
-    ydata = (heat_rate, qdyn, sol.h_u[0, :], sol.eig_h_uu[0, :])
+    if sol.h_u is not None:
+        h_u = sol.h_u[0, :]
+    else:
+        h_u = np.nan * sol.t
+
+    if sol.eig_h_uu is not None:
+        eig_h_uu = sol.eig_h_uu[0, :]
+    else:
+        eig_h_uu = np.nan * sol.t
+
+    ydata = (heat_rate, qdyn, h_u, eig_h_uu)
     if np.max(heat_rate) < 0.1 * heat_rate_max:
         heat_rate_aux = np.nan * sol.t
         heat_rate_aux_lab = None
