@@ -201,6 +201,7 @@ elif OPTIMIZATION == 'min_velocity':
     # hl20.add_constraint('initial', 'gam - gam0')
 
     # Terminal States
+    hl20.add_constraint('terminal', 't - tf')
     hl20.add_constraint('terminal', 'h - hf')
     # hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_time':
@@ -305,6 +306,9 @@ if OPTIMIZATION == 'min_velocity':
     v0_guess, gam0_guess = glide_slope_velocity_fpa(h0_guess)
     g0_guess = mu / (h0_guess + rm) ** 2
     e0_guess = h0_guess * g0_guess + 0.5 * v0_guess**2
+
+    k_max_d = 0.2
+    alpha_guess = (1 - k_max_d) * alpha_min_lift + k_max_d * alpha_max_drag_negative
 
     guess = giuseppe.guess_generation.auto_propagate_guess(
         hl20_dual, control=alpha_max_lift/alpha_scale, t_span=np.arange(0., 10. + 5., 5.),
@@ -429,7 +433,7 @@ if OPTIMIZATION == 'max_range':
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_velocity':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_linear_series_until_failure({'energy0': 10})
+    # cont.add_linear_series_until_failure({'energy0': 10})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_time':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
