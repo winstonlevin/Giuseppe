@@ -87,6 +87,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
 
         ham_sym = -dtha_dt + lam_e * de_dt + lam_h * dh_dt + lam_gam * dgam_dt
         ham_h_sym = ca.jacobian(ham_sym, h_sym)
+        ham_hh_sym = ca.jacobian(ham_h_sym, h_sym)
 
         # Zeroth order values
         lam_e_zo_sym = -mass / (drag_sym * r_sym)
@@ -96,35 +97,51 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         lift_zo_sym = mass * (g_sym - v_sym**2/r_sym)
 
         ham_h_zo_sym = ham_h_sym
+        ham_hh_zo_sym = ham_hh_sym
         zo_vars = (lam_e, lam_h, lam_gam, gam_sym, lift_sym)
         zo_vals = (lam_e_zo_sym, lam_h_zo_sym, lam_gam_zo_sym, gam_zo_sym, lift_zo_sym)
 
         for zo_var, zo_val in zip(zo_vars, zo_vals):
             ham_h_zo_sym = ca.substitute(ham_h_zo_sym, zo_var, zo_val)
+            ham_hh_zo_sym = ca.substitute(ham_hh_zo_sym, zo_var, zo_val)
 
         ham_h_zo_fun = ca.Function('dham_dh', (e_sym, h_sym), (ham_h_zo_sym,), ('E', 'h'), ('dham_dh',))
+        ham_hh_zo_fun = ca.Function('d2ham_dh2', (e_sym, h_sym), (ham_hh_zo_sym,), ('E', 'h'), ('d2ham_dh2',))
 
         def dham_dh(_e, _h):
             _dham_dh = float(ham_h_zo_fun(_e, _h))
             return _dham_dh
 
+        def d2ham_dh2(_e, _h):
+            _d2ham_dh2 = float(ham_hh_zo_fun(_e, _h))
+            return _d2ham_dh2
+
+    h_guess = h_min
+
     if energy_state:
         # Find glide slope by minimizing DR at each energy state
-        h_guess = h_min
-
         for idx, e_val in enumerate(e_vals):
             h_max_i = e_val / g0
-            x_min = optimize.minimize(
+            sol_min = optimize.minimize(
                 fun=lambda _x: energy_state_obj(e_val, _x[0]),
                 x0=np.array((h_guess,)),
                 jac=lambda _x: energy_state_grad(e_val, _x[0]),
                 bounds=((h_min, h_max_i),)
             )
-            h_guess = x_min[0]
-            h_vals[idx] = x_min[0]
+            h_sol = sol_min.x[0]
+            h_guess = h_sol
+            h_vals[idx] = h_sol
     else:
         # Find glide slope by solving d(hamiltonian)/dh = 0
-        raise RuntimeError('Not implemented!')
+        for idx, e_val in enumerate(e_vals):
+            h_max_i = e_val / g0
+            sol_zero = optimize.fsolve(
+                func=lambda _x: dham_dh(e_val, _x[0]),
+                x0=np.array((h_guess,)),
+            )
+            h_sol = sol_min.x[0]  # TODO: fix
+            h_guess = h_sol
+            h_vals[idx] = h_sol
 
     return e_vals, h_vals
 
@@ -132,7 +149,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
 if __name__ == '__main__':
     from matplotlib import pyplot as plt
 
-    e_vals, h_vals = get_glide_slope(energy_state=True)
+    e_vals, h_vals = get_glide_slope(energy_state=False)
 
     fig_ham_h = plt.figure()
     ax_ham_h = fig_ham_h.add_subplot(111)
