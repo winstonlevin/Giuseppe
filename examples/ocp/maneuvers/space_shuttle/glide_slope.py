@@ -1,10 +1,10 @@
-from typing import Optional
+from typing import Optional, Callable
 
 import casadi as ca
 import numpy as np
 from scipy import optimize
 
-from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, atm
+from space_shuttle_aero_atm import mu, re, mass, s_ref, CD0, CD1, CD2, atm
 
 _h_atm_max = atm.h_layers[-1]
 _f_zero_converged_flag = 1
@@ -122,106 +122,66 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
 
     if energy_state:
         # Find glide slope by minimizing DR at each energy state
-        tol = 1e-3
-
-        def solve_min(_e_val, _h_guess, _h_max_i):
-            _sol_min = optimize.minimize(
-                fun=lambda _x: energy_state_obj(_e_val, _x[0]),
-                x0=np.array((_h_guess,)),
-                jac=lambda _x: energy_state_grad(_e_val, _x[0]),
-                bounds=((h_min, _h_max_i),),
-                tol=tol
-            )
-            return _sol_min.x[0], _sol_min.fun, _sol_min.jac[0], _sol_min.success
-
-        for idx, e_val in enumerate(e_vals):
-            h_max_i = min(h_max, re**2*e_val/(mu - re*e_val))
-            h_sol, obj_sol, grad_sol, success = solve_min(e_val, h_guess, h_max_i)
-
-            if abs(grad_sol) > tol or not success:
-                # Solution is not at unconstrained minimum. Try other guesses.
-                h_guess0 = h_guess
-
-                h_search_vals = h_min + np.linspace(0., 1., 100) * (h_max_i - h_min)
-                grad_search_vals = np.empty(h_search_vals.shape)
-                for jdx, h_search_val in enumerate(h_search_vals):
-                    grad_search_vals[jdx] = energy_state_grad(e_val, h_search_val)
-                sign_flips = np.not_equal(np.sign(grad_search_vals[1:]), np.sign(grad_search_vals[:-1]))
-
-                if np.any(sign_flips):
-                    idx_sign_flips = np.where(sign_flips)[0]
-                    sol_list = []
-                    for idx_sign_flip in idx_sign_flips:
-                        h_guess = 0.5 * float(h_search_vals[idx_sign_flip] + h_search_vals[idx_sign_flip + 1])
-                        h_new, obj_new, grad_new, success_new = solve_min(e_val, h_guess, h_max_i)
-                        if success_new and obj_new < obj_sol:
-                            h_sol = h_new
-                            obj_sol = obj_new
-                            success = success_new
-
-            if success:
-                h_guess = h_sol
-                h_vals[idx] = h_sol
-            else:
-                h_vals[idx] = np.nan
+        fzero = energy_state_grad
+        fgrad = None
     else:
         # Find glide slope by solving d(hamiltonian)/dh = 0
+        fzero = dham_dh
+        fgrad = d2ham_dh2
 
-        if d2ham_dh2 is not None:
-            def solve_dham_dh_zero(_e_val, _h_guess):
-                _x_val, _, _flag, __ = optimize.fsolve(
-                    func=lambda _x: dham_dh(e_val, _x[0]),
-                    x0=np.array((h_guess,)),
-                    fprime=lambda _x: d2ham_dh2(e_val, _x[0]),
-                    full_output=True
-                )
-                return _x_val[0], _flag
-        else:
-            def solve_dham_dh_zero(_e_val, _h_guess):
-                _x_val, _, _flag, __ = optimize.fsolve(
-                    func=lambda _x: dham_dh(e_val, _x[0]),
-                    x0=np.array((h_guess,)),
-                    full_output=True
-                )
-                return _x_val[0], _flag
+    if fgrad is Callable:
+        def solve_dham_dh_zero(_e_val, _h_guess):
+            _x_val, _, _flag, __ = optimize.fsolve(
+                func=lambda _x: fzero(e_val, _x[0]),
+                x0=np.array((h_guess,)),
+                fprime=lambda _x: fgrad(e_val, _x[0]),
+                full_output=True
+            )
+            return _x_val[0], _flag
+    else:
+        def solve_dham_dh_zero(_e_val, _h_guess):
+            _x_val, _, _flag, __ = optimize.fsolve(
+                func=lambda _x: fzero(e_val, _x[0]),
+                x0=np.array((h_guess,)),
+                full_output=True
+            )
+            return _x_val[0], _flag
 
-        for idx, e_val in enumerate(e_vals):
-            h_max_i = min(h_max, re**2*e_val/(mu - re*e_val))
+    for idx, e_val in enumerate(e_vals):
+        h_max_i = min(h_max, re**2*e_val/(mu - re*e_val))
 
-            dict_guess = calc_zo_dict(e_val, h_guess)
+        h_sol, flag = solve_dham_dh_zero(e_val, h_guess)
+        if flag != _f_zero_converged_flag or h_sol > h_max_i:
+            # Solution did not converge, try other initial states.
+            h_guess0 = h_guess
 
-            h_sol, flag = solve_dham_dh_zero(e_val, h_guess)
-            if flag != _f_zero_converged_flag or h_sol > h_max_i:
-                # Solution did not converge, try other initial states.
-                h_guess0 = h_guess
+            h_search_vals = h_min + np.linspace(0., 1., 100) * (h_max_i - h_min)
+            dham_dh_search_vals = np.empty(h_search_vals.shape)
+            for jdx, h_search_val in enumerate(h_search_vals):
+                dham_dh_search_vals[jdx] = dham_dh(e_val, h_search_val)
+            sign_flips = np.not_equal(np.sign(dham_dh_search_vals[1:]), np.sign(dham_dh_search_vals[:-1]))
 
-                h_search_vals = h_min + np.linspace(0., 1., 100) * (h_max_i - h_min)
-                dham_dh_search_vals = np.empty(h_search_vals.shape)
-                for jdx, h_search_val in enumerate(h_search_vals):
-                    dham_dh_search_vals[jdx] = dham_dh(e_val, h_search_val)
-                sign_flips = np.not_equal(np.sign(dham_dh_search_vals[1:]), np.sign(dham_dh_search_vals[:-1]))
+            if np.any(sign_flips):
+                idx_sign_flips = np.where(sign_flips)[0]
+                sol_list = []
+                for idx_sign_flip in idx_sign_flips:
+                    h_guess = h_search_vals[idx_sign_flip]
+                    h_sol, flag = solve_dham_dh_zero(e_val, h_guess)
+                    if flag == _f_zero_converged_flag:
+                        sol_list.append(h_sol)
 
-                if np.any(sign_flips):
-                    idx_sign_flips = np.where(sign_flips)[0]
-                    sol_list = []
-                    for idx_sign_flip in idx_sign_flips:
-                        h_guess = h_search_vals[idx_sign_flip]
-                        h_sol, flag = solve_dham_dh_zero(e_val, h_guess)
-                        if flag == _f_zero_converged_flag:
-                            sol_list.append(h_sol)
+                if len(sol_list) > 0:
+                    sol_array = np.array(sol_list)
+                    sol_distance = (sol_array - h_guess0)**2
+                    h_sol = sol_array[np.where(sol_distance == np.min(sol_distance))]
 
-                    if len(sol_list) > 0:
-                        sol_array = np.array(sol_list)
-                        sol_distance = (sol_array - h_guess0)**2
-                        h_sol = sol_array[np.where(sol_distance == np.min(sol_distance))]
-
-
+        if flag == _f_zero_converged_flag and h_sol < h_max:
             h_guess = h_sol
-            if flag == _f_zero_converged_flag and h_sol < h_max:
-                h_sol = min(max(h_sol, h_min), h_max_i)
-                h_vals[idx] = h_sol
-            else:
-                h_vals[idx] = np.nan
+            h_sol = min(max(h_sol, h_min), h_max_i)
+            h_vals[idx] = h_sol
+        else:
+            h_guess = h_guess0
+            h_vals[idx] = np.nan
 
     return e_vals, h_vals
 
@@ -238,14 +198,14 @@ if __name__ == '__main__':
 
     fig_ham_h = plt.figure()
     ax_h = fig_ham_h.add_subplot(211)
-    ax_h.plot(e_vals, h_vals, label='dH/dh = 0')
-    ax_h.plot(e_vals, h_vals_es, '--', label='min(DR)')
-    ax_h.plot((e_vals[0], e_vals[-1]), (0., 0.), 'k--')
-    ax_h.plot((e_vals[0], e_vals[-1]), (h_max_plot, h_max_plot), 'k--')
+    ax_h.plot(e_vals, h_vals - h_vals_es, label='dH/dh = 0')
+    # ax_h.plot(e_vals, h_vals_es, '--', label='min(DR)')
+    # ax_h.plot((e_vals[0], e_vals[-1]), (0., 0.), 'k--')
+    # ax_h.plot((e_vals[0], e_vals[-1]), (h_max_plot, h_max_plot), 'k--')
     ax_h.legend()
 
     ax_v = fig_ham_h.add_subplot(212)
-    ax_v.plot(e_vals, v_vals, label='Hh = 0')
-    ax_v.plot(e_vals, v_vals_es, '--', label='Energy State')
+    ax_v.plot(e_vals, v_vals - v_vals_es, label='dH/dh = 0')
+    # ax_v.plot(e_vals, v_vals_es, '--', label='min(DR)')
 
     plt.show()
