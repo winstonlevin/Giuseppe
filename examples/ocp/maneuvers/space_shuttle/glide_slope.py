@@ -101,9 +101,10 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         _dict['drag'] = CD0 * _dict['qdyn_s_ref'] + CD1 * _dict['lift'] + CD2 / _dict['qdyn_s_ref'] * _dict['lift'] ** 2
         _dict['ddrag_dlift'] = CD1 + 2 * CD2 / _dict['qdyn_s_ref'] * _dict['lift']
 
-        _dict['lam_e'] = -mass / (_dict['drag'] * _dict['r'])
-        _dict['lam_h'] = 0.
+        _dict['lam_e'] = -mass * np.cos(_gam) / (_dict['drag'] * _dict['r'])
         _dict['lam_gam'] = _dict['lam_e'] * _dict['v']**2 * _dict['ddrag_dlift']
+        _dict['lam_h'] = ((_dict['lam_gam'] - 1) / _dict['r']
+                          - _dict['lam_gam'] * _dict['g'] / _dict['v']**2) * np.tan(_gam)
         return _dict
 
     def energy_state_obj(_e, _h):
@@ -126,7 +127,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
                     _dict['drag'] + _dict['r'] * _ddrag_dh + mass * _dict['v']**2/_dict['r'] * _ddrag_dl)
             return _dham_dh
 
-        d2ham_dh2 = None
+        dham_dh_grad = None
     else:
         ham_h_sym = ca.jacobian(hamiltonian_sym, h_sym)
         ham_hh_sym = ca.jacobian(ham_h_sym, h_sym)
@@ -139,22 +140,22 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         lift_zo_sym = mass * (g_sym - v_sym**2/r_sym)
 
         ham_h_zo_sym = ham_h_sym
-        ham_hh_zo_sym = ham_hh_sym
         zo_vars = (lam_e, lam_h, lam_gam, gam_sym, lift_sym)
         zo_vals = (lam_e_zo_sym, lam_h_zo_sym, lam_gam_zo_sym, gam_zo_sym, lift_zo_sym)
 
         for zo_var, zo_val in zip(zo_vars, zo_vals):
             ham_h_zo_sym = ca.substitute(ham_h_zo_sym, zo_var, zo_val)
-            ham_hh_zo_sym = ca.substitute(ham_hh_zo_sym, zo_var, zo_val)
 
         ham_h_zo_fun = ca.Function('dham_dh', (e_sym, h_sym), (ham_h_zo_sym,), ('E', 'h'), ('dham_dh',))
-        ham_hh_zo_fun = ca.Function('d2ham_dh2', (e_sym, h_sym), (ham_hh_zo_sym,), ('E', 'h'), ('d2ham_dh2',))
+        ham_h_zo_grad_fun = ca.Function('dham_dh_grad', (e_sym, h_sym),
+                                        (ca.jacobian(ham_h_zo_sym, h_sym),), ('E', 'h'), ('dham_dh_grad',))
+        # ham_hh_zo_fun = ca.Function('d2ham_dh2', (e_sym, h_sym), (ham_hh_zo_sym,), ('E', 'h'), ('d2ham_dh2',))
 
         def dham_dh(_e, _h):
             _dham_dh = float(ham_h_zo_fun(_e, _h))
             return _dham_dh
 
-        d2ham_dh2 = None
+        dham_dh_grad = ham_h_zo_grad_fun
 
     h_guess = h_min
 
@@ -165,7 +166,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     else:
         # Find glide slope by solving d(hamiltonian)/dh = 0
         fzero = dham_dh
-        fgrad = d2ham_dh2
+        fgrad = dham_dh_grad
 
     if fgrad is Callable:
         def solve_dham_dh_zero(_e_val, _h_guess):
@@ -278,7 +279,7 @@ if __name__ == '__main__':
 
     r2d = 180/np.pi
 
-    h_max_plot = _h_atm_max
+    h_max_plot = 275e3
     mach_max_plot = 40.
     glide_dict = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
     glide_dict_es = get_glide_slope(energy_state=True, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
@@ -293,19 +294,19 @@ if __name__ == '__main__':
 
     e_vals_es = glide_dict_es['E']
     h_vals_es = glide_dict_es['h']
-    gam_vals_es = glide_dict['gam']
-    v_vals_es = (2 * (e_vals + mu / re - mu / (re + h_vals_es))) ** 0.5
+    gam_vals_es = glide_dict_es['gam']
+    v_vals_es = (2 * (e_vals_es + mu / re - mu / (re + h_vals_es))) ** 0.5
 
     e_vals_gam0 = glide_dict_gam0['E']
-    k_h_vals_gam0 = glide_dict['k_h']
-    k_gam_vals_gam0 = glide_dict['k_gam']
+    k_h_vals_gam0 = glide_dict_gam0['k_h']
+    k_gam_vals_gam0 = glide_dict_gam0['k_gam']
 
     e_lab = r'$E$ [ft$^2$/s$^2$]'
 
     fig_glide_slope = plt.figure()
     ax_h = fig_glide_slope.add_subplot(221)
     ax_h.plot(e_vals, h_vals, label='dH/dh = 0')
-    ax_h.plot(e_vals, h_vals_es, '--', label='min(DR)')
+    ax_h.plot(e_vals_es, h_vals_es, '--', label='min(DR)')
     ax_h.plot((e_vals[0], e_vals[-1]), (0., 0.), 'k--')
     ax_h.plot((e_vals[0], e_vals[-1]), (h_max_plot, h_max_plot), 'k--')
     ax_h.legend()
@@ -314,13 +315,13 @@ if __name__ == '__main__':
 
     ax_v = fig_glide_slope.add_subplot(222)
     ax_v.plot(e_vals, v_vals, label='dH/dh = 0')
-    ax_v.plot(e_vals, v_vals_es, '--', label='min(DR)')
+    ax_v.plot(e_vals_es, v_vals_es, '--', label='min(DR)')
     ax_v.set_xlabel(e_lab)
     ax_v.set_ylabel(r'$V$ [ft/s]')
 
     ax_gam = fig_glide_slope.add_subplot(223)
     ax_gam.plot(e_vals, gam_vals * r2d, label='dH/dh = 0')
-    ax_gam.plot(e_vals, gam_vals_es * r2d, '--', label='min(DR)')
+    ax_gam.plot(e_vals_es, gam_vals_es * r2d, '--', label='min(DR)')
     ax_gam.set_xlabel(e_lab)
     ax_gam.set_ylabel(r'$\gamma$ [deg]')
 
@@ -333,6 +334,7 @@ if __name__ == '__main__':
     ax_k_h.plot(e_vals_gam0, k_h_vals_gam0, '--', label='gam = 0')
     ax_k_h.set_xlabel(e_lab)
     ax_k_h.set_ylabel(r'$K_h$')
+    ax_k_h.legend()
 
     ax_k_gam = fig_gains.add_subplot(212)
     ax_k_gam.plot(e_vals, k_gam_vals, label='Corrected')
