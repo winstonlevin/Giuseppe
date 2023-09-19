@@ -2,7 +2,7 @@ from typing import Optional, Callable
 
 import casadi as ca
 import numpy as np
-from scipy import optimize, interpolate
+import scipy as sp
 
 from space_shuttle_aero_atm import mu, re, mass, s_ref, CD0, CD1, CD2, atm
 
@@ -71,7 +71,16 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     n_noc_sym = ca.jacobian(ham_x, controls_sym)
     r_noc_sym = ca.jacobian(ham_u, controls_sym)
 
-    # TODO - convert to funcs and calculate ARE
+    a_noc_fun = ca.Function('A', (e_sym, h_sym, gam_sym, lam_e, lam_h, lam_gam, lift_sym),
+                            (a_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'L'), ('A',))
+    b_noc_fun = ca.Function('B', (e_sym, h_sym, gam_sym, lam_e, lam_h, lam_gam, lift_sym),
+                            (b_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'L'), ('B',))
+    q_noc_fun = ca.Function('Q', (e_sym, h_sym, gam_sym, lam_e, lam_h, lam_gam, lift_sym),
+                            (q_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'L'), ('Q',))
+    n_noc_fun = ca.Function('N', (e_sym, h_sym, gam_sym, lam_e, lam_h, lam_gam, lift_sym),
+                            (n_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'L'), ('N',))
+    r_noc_fun = ca.Function('R', (e_sym, h_sym, gam_sym, lam_e, lam_h, lam_gam, lift_sym),
+                            (r_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'L'), ('R',))
 
     def calc_zo_dict(_e, _h, _gam=None):
         _dict = {}
@@ -119,7 +128,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
 
         d2ham_dh2 = None
     else:
-        ham_h_sym = ca.jacobian(ham_sym, h_sym)
+        ham_h_sym = ca.jacobian(hamiltonian_sym, h_sym)
         ham_hh_sym = ca.jacobian(ham_h_sym, h_sym)
 
         # Zeroth order values
@@ -146,9 +155,6 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             return _dham_dh
 
         d2ham_dh2 = None
-        # def d2ham_dh2(_e, _h):
-        #     _d2ham_dh2 = np.asarray(ham_hh_zo_fun(_e, _h)).flatten()
-        #     return _d2ham_dh2
 
     h_guess = h_min
 
@@ -163,7 +169,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
 
     if fgrad is Callable:
         def solve_dham_dh_zero(_e_val, _h_guess):
-            _x_val, _, _flag, __ = optimize.fsolve(
+            _x_val, _, _flag, __ = sp.optimize.fsolve(
                 func=lambda _x: fzero(e_val, _x[0]),
                 x0=np.array((h_guess,)),
                 fprime=lambda _x: fgrad(e_val, _x[0]),
@@ -172,7 +178,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             return _x_val[0], _flag
     else:
         def solve_dham_dh_zero(_e_val, _h_guess):
-            _x_val, _, _flag, __ = optimize.fsolve(
+            _x_val, _, _flag, __ = sp.optimize.fsolve(
                 func=lambda _x: fzero(e_val, _x[0]),
                 x0=np.array((h_guess,)),
                 full_output=True
@@ -223,19 +229,46 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     if correct_gam:
         # Correct gamma vals based on interpolation dh/dE:
         # gam = - arcsin( [D/m] * [dh/dE] )
-        h_interp = interpolate.PchipInterpolator(e_vals, h_vals)
+        h_interp = sp.interpolate.PchipInterpolator(e_vals, h_vals)
         _zo_dict = calc_zo_dict(e_vals, h_vals)
         dh_de_interp = h_interp.derivative(1)
         gam_vals = - np.arcsin(_zo_dict['drag'] / mass * dh_de_interp(e_vals))
 
     else:
         # Use the zeroth order outer value of gamma, i.e. gam = 0
-        gam_vals = np.zeros(h_vals.shape)
+        gam_vals = np.zeros(e_vals.shape)
+
+    # Calculate neighboring feedback gains
+    k_h_vals = np.empty(e_vals.shape)
+    k_gam_vals = np.empty(e_vals.shape)
+    for idx, (e_val, h_val, gam_val) in enumerate(zip(e_vals, h_vals, gam_vals)):
+        zo_dict = calc_zo_dict(e_val, h_val, gam_val)
+        a_noc = np.asarray(a_noc_fun(
+            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['lift']
+        ))
+        b_noc = np.asarray(b_noc_fun(
+            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['lift']
+        ))
+        q_noc = np.asarray(q_noc_fun(
+            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['lift']
+        ))
+        n_noc = np.asarray(n_noc_fun(
+            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['lift']
+        ))
+        r_noc = np.asarray(r_noc_fun(
+            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['lift']
+        ))
+        p_noc = sp.linalg.solve_continuous_are(a=a_noc, b=b_noc, q=q_noc, s=n_noc, r=r_noc)
+        k_noc = np.linalg.solve(a=r_noc, b=(p_noc @ b_noc + n_noc).T)  # inv(R) * (PB + N)^T
+        k_h_vals[idx] = k_noc[0, 0]
+        k_gam_vals[idx] = k_noc[0, 1]
 
     glide_dict = {}
     glide_dict['E'] = e_vals
     glide_dict['h'] = h_vals
     glide_dict['gam'] = gam_vals
+    glide_dict['k_h'] = k_h_vals
+    glide_dict['k_gam'] = k_gam_vals
 
     return glide_dict
 
@@ -249,16 +282,23 @@ if __name__ == '__main__':
     mach_max_plot = 40.
     glide_dict = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
     glide_dict_es = get_glide_slope(energy_state=True, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
+    glide_dict_gam0 = get_glide_slope(energy_state=False, correct_gam=False, h_max=h_max_plot, mach_max=mach_max_plot)
 
     e_vals = glide_dict['E']
     h_vals = glide_dict['h']
     gam_vals = glide_dict['gam']
     v_vals = (2 * (e_vals + mu/re - mu/(re+h_vals)))**0.5
+    k_h_vals = glide_dict['k_h']
+    k_gam_vals = glide_dict['k_gam']
 
     e_vals_es = glide_dict_es['E']
     h_vals_es = glide_dict_es['h']
     gam_vals_es = glide_dict['gam']
     v_vals_es = (2 * (e_vals + mu / re - mu / (re + h_vals_es))) ** 0.5
+
+    e_vals_gam0 = glide_dict_gam0['E']
+    k_h_vals_gam0 = glide_dict['k_h']
+    k_gam_vals_gam0 = glide_dict['k_gam']
 
     e_lab = r'$E$ [ft$^2$/s$^2$]'
 
@@ -283,7 +323,23 @@ if __name__ == '__main__':
     ax_gam.plot(e_vals, gam_vals_es * r2d, '--', label='min(DR)')
     ax_gam.set_xlabel(e_lab)
     ax_gam.set_ylabel(r'$\gamma$ [deg]')
-    
+
     fig_glide_slope.tight_layout()
+
+    fig_gains = plt.figure()
+
+    ax_k_h = fig_gains.add_subplot(211)
+    ax_k_h.plot(e_vals, k_h_vals, label='Corrected')
+    ax_k_h.plot(e_vals_gam0, k_h_vals_gam0, '--', label='gam = 0')
+    ax_k_h.set_xlabel(e_lab)
+    ax_k_h.set_ylabel(r'$K_h$')
+
+    ax_k_gam = fig_gains.add_subplot(212)
+    ax_k_gam.plot(e_vals, k_gam_vals, label='Corrected')
+    ax_k_gam.plot(e_vals_gam0, k_gam_vals_gam0, '--', label='gam = 0')
+    ax_k_gam.set_xlabel(e_lab)
+    ax_k_gam.set_ylabel(r'$K_\gamma$')
+
+    fig_gains.tight_layout()
 
     plt.show()
