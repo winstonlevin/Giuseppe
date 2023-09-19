@@ -361,9 +361,9 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     glide_dict['E'] = e_vals
     glide_dict['h'] = h_vals
     glide_dict['gam'] = gam_vals
+    glide_dict.update(calc_zo_dict(e_vals, h_vals, gam_vals))
     glide_dict['k_h'] = k_h_vals
     glide_dict['k_gam'] = k_gam_vals
-
     return glide_dict
 
 
