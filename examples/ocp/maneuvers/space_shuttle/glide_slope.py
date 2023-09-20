@@ -94,9 +94,6 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         e_max = hv_to_e(h_max, atm.speed_of_sound(h_max)*mach_max)
         n_vals = int(np.ceil((h_max - h_min)/100.))  # Space out every 100 ft on average
         e_vals = np.linspace(e_min, e_max, n_vals)
-    else:
-        if e_vals[-1] < e_vals[0]:
-            e_vals = np.flip(e_vals)  # Put E in ascending order
 
     h_vals = np.empty(e_vals.shape)
 
@@ -118,7 +115,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     dens_fun = ca.Function('rho', (h_sym,), (rho_sym,), ('h',), ('rho',))
 
     # Jacobians (for use with neighboring feedback gains)
-    lam_e = ca.SX.sym('lam_e')
+    lam_e = ca.SX.sym('lam_E')
     lam_h = ca.SX.sym('lam_h')
     lam_gam = ca.SX.sym('lam_gam')
 
@@ -183,8 +180,8 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         _dict['drag'] = CD0 * _dict['qdyn_s_ref'] + CD1 * _dict['lift'] + CD2 / _dict['qdyn_s_ref'] * _dict['lift'] ** 2
         _dict['ddrag_dlift'] = CD1 + 2 * CD2 / _dict['qdyn_s_ref'] * _dict['lift']
 
-        _dict['lam_e'] = -mass * np.cos(_gam) / (_dict['drag'] * _dict['r'])
-        _dict['lam_gam'] = _dict['lam_e'] * _dict['v']**2 * _dict['ddrag_dlift']
+        _dict['lam_E'] = -mass * np.cos(_gam) / (_dict['drag'] * _dict['r'])
+        _dict['lam_gam'] = _dict['lam_E'] * _dict['v']**2 * _dict['ddrag_dlift']
         _dict['lam_h'] = ((_dict['lam_gam'] - 1) / _dict['r']
                           - _dict['lam_gam'] * _dict['g'] / _dict['v']**2) * np.tan(_gam)
         return _dict
@@ -287,10 +284,10 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         if flag != _f_zero_converged_flag or h_sol > h_max_i:
             # Solution did not converge, try other initial states.
             h_search_vals = h_min + np.linspace(0., 1., 100) * (h_max_i - h_min)
-            dham_dh_search_vals = np.empty(h_search_vals.shape)
+            fzero_search_vals = np.empty(h_search_vals.shape)
             for jdx, h_search_val in enumerate(h_search_vals):
-                dham_dh_search_vals[jdx] = dham_dh(e_val, h_search_val)
-            sign_flips = np.not_equal(np.sign(dham_dh_search_vals[1:]), np.sign(dham_dh_search_vals[:-1]))
+                fzero_search_vals[jdx] = fzero(e_val, h_search_val)
+            sign_flips = np.not_equal(np.sign(fzero_search_vals[1:]), np.sign(fzero_search_vals[:-1]))
 
             if np.any(sign_flips):
                 idx_sign_flips = np.where(sign_flips)[0]
@@ -323,7 +320,11 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     if correct_gam:
         # Correct gamma vals based on interpolation dh/dE:
         # gam = - arcsin( [D/m] * [dh/dE] )
-        h_interp = sp.interpolate.PchipInterpolator(e_vals, h_vals)
+        if e_vals[-1] > e_vals[0]:
+            h_interp = sp.interpolate.PchipInterpolator(e_vals, h_vals)
+        else:
+            h_interp = sp.interpolate.PchipInterpolator(np.flip(e_vals), np.flip(h_vals))
+
         _zo_dict = calc_zo_dict(e_vals, h_vals)
         dh_de_interp = h_interp.derivative(1)
         gam_vals = - np.arcsin(_zo_dict['drag'] / mass * dh_de_interp(e_vals))
@@ -338,19 +339,19 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     for idx, (e_val, h_val, gam_val) in enumerate(zip(e_vals, h_vals, gam_vals)):
         zo_dict = calc_zo_dict(e_val, h_val, gam_val)
         a_noc = np.asarray(a_noc_fun(
-            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            e_val, h_val, gam_val, zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
         ))
         b_noc = np.asarray(b_noc_fun(
-            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            e_val, h_val, gam_val, zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
         ))
         q_noc = np.asarray(q_noc_fun(
-            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            e_val, h_val, gam_val, zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
         ))
         n_noc = np.asarray(n_noc_fun(
-            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            e_val, h_val, gam_val, zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
         ))
         r_noc = np.asarray(r_noc_fun(
-            e_val, h_val, gam_val, zo_dict['lam_e'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            e_val, h_val, gam_val, zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
         ))
         p_noc = sp.linalg.solve_continuous_are(a=a_noc, b=b_noc, q=q_noc, s=n_noc, r=r_noc)
         k_noc = np.linalg.solve(a=r_noc, b=(p_noc @ b_noc + n_noc).T)  # inv(R) * (PB + N)^T
