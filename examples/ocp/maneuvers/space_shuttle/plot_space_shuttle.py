@@ -13,7 +13,7 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-DATA = 1
+DATA = 2
 
 if DATA == 0:
     with open('guess_range.data', 'rb') as f:
@@ -78,6 +78,9 @@ u_glide = glide_dict['u']
 lam_v_glide = glide_dict['lam_E'] * v_glide
 lam_h_glide = glide_dict['lam_h'] + g_glide * glide_dict['lam_E']
 lam_gam_glide = glide_dict['lam_gam']
+
+glide_dict_full = get_glide_slope()
+glide_dict_full_flat = get_glide_slope(flat_earth=True)
 
 # PLOTTING -------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
@@ -168,5 +171,16 @@ if PLOT_AUXILIARY:
         if yauxlabs[idx] is not None:
             ax.legend()
     fig_aux.tight_layout()
+
+    fig_hv = plt.figure()
+    ax_hv = fig_hv.add_subplot(111)
+    ax_hv.grid()
+    ax_hv.plot(x_dict['v'] / sped_fun(x_dict['h']), x_dict['h'] / 1e3)
+    ax_hv.plot(glide_dict_full['v'] / sped_fun(glide_dict_full['h']), glide_dict_full['h'] / 1e3,
+               'k--', label='Glide Slope (Sph.)')
+    ax_hv.plot(glide_dict_full_flat['v'] / sped_fun(glide_dict_full_flat['h']), glide_dict_full_flat['h'] / 1e3,
+               'k:', label='Glide Slope (Flat)')
+    ax_hv.set_xlabel('Mach')
+    ax_hv.set_ylabel(r'$h$ [1,000 ft]')
 
 plt.show()

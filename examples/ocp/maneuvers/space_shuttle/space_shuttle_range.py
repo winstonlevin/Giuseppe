@@ -1,10 +1,11 @@
 import casadi as ca
 import numpy as np
+import scipy as sp
 import pickle
 
 import giuseppe
 
-from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, atm
+from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, atm, sped_fun
 from glide_slope import get_glide_slope
 
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb()
@@ -120,7 +121,6 @@ if __name__ == '__main__':
     guess = giuseppe.guess_generation.auto_propagate_guess(
         adiff_dual, control=u_guess, t_span=30.,
         initial_states=np.array((h_guess / h_scale_val, 0., v_guess / v_scale_val, gam_guess)), fit_states=False,
-        initial_costates=np.array((lam_h_glide, lam_tha_guess, lam_v_glide, lam_gam_glide)),
         immutable_constants=('h_scale', 'v_scale')
     )
 
@@ -132,10 +132,17 @@ if __name__ == '__main__':
     with open('seed_sol_range.data', 'wb') as file:
         pickle.dump(seed_sol, file)
 
-    # cont1 = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)  # TODO - fix series.
-    # cont1.add_linear_series(100, {'h_f': 200_000, 'v_f': 20_000})
-    # cont1.add_linear_series(50, {'h_f': 80_000, 'v_f': 2_500, 'gam_f': -5 * np.pi / 180})
-    # cont1.add_linear_series(90, {'xi': 0.5 * np.pi}, bisection=True)
-    # sol_set1 = cont1.run_continuation()
-    #
-    # sol_set1.save('sol_set_range.data')
+    # Continue until the glide-slope Mach number is 1.5
+    # (Flat earth is used since Mach monotonically increases)
+    glide_dict_flat_full = get_glide_slope(flat_earth=True)
+    mach_interp = sp.interpolate.PchipInterpolator(
+        glide_dict_flat_full['v'] / np.asarray(sped_fun(glide_dict_flat_full['h'])).flatten(), glide_dict_flat_full['E']
+    )
+
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+    cont.add_logarithmic_series(100, {'e_f': mach_interp(1.5)})
+    sol_set = cont.run_continuation()
+    sol_set.save('sol_set_range.data')
+
+    # Sweep Solution Space
+
