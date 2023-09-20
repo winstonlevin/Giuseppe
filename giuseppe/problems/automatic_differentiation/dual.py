@@ -34,6 +34,7 @@ class ADiffDual(ADiffOCP, ADiffAdjoints, VectorizedDual):
 
         self.ca_hamiltonian = self.adjoints.ca_hamiltonian
         self.ca_dh_du = self.adjoints.ca_dh_du
+        self.ca_d2h_du2 = self.adjoints.ca_d2h_du2
         self.ca_dh_dt = self.adjoints.ca_dh_dt
 
         self.ca_initial_adjoint_cost = self.adjoints.ca_initial_adjoint_cost
@@ -46,6 +47,7 @@ class ADiffDual(ADiffOCP, ADiffAdjoints, VectorizedDual):
 
         self.compute_hamiltonian = lambdify_ca(self.ca_hamiltonian)
         self.compute_control_law = lambdify_ca(self.ca_dh_du)
+        self.compute_control_convexity = self.adjoints.compute_control_convexity
 
         self.compute_initial_adjoint_boundary_conditions = lambdify_ca(self.ca_initial_adjoint_boundary_conditions)
         self.compute_terminal_adjoint_boundary_conditions = lambdify_ca(self.ca_terminal_adjoint_boundary_conditions)
@@ -53,6 +55,7 @@ class ADiffDual(ADiffOCP, ADiffAdjoints, VectorizedDual):
         self.compute_costate_dynamics_vectorized = self.adjoints.compute_costate_dynamics_vectorized
         self.compute_hamiltonian_vectorized = self.adjoints.compute_hamiltonian_vectorized
         self.compute_control_law_vectorized = self.adjoints.compute_control_law_vectorized
+        self.compute_control_convexity_vectorized = self.adjoints.compute_control_convexity_vectorized
 
         self.control_handler = ADiffControlHandler(self)
 
