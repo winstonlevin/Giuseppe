@@ -130,7 +130,10 @@ class ADiffAdjoints(VectorizedAdjoints):
         def _compute_control_convexity(independent: float, states: np.ndarray, costates: np.ndarray,
                                        controls: np.ndarray, parameters: np.ndarray, constants: np.ndarray):
             _h_uu = np.asarray(self.ca_d2h_du2(independent, states, costates, controls, parameters, constants))
-            return np.linalg.eigvals(_h_uu)
+            if np.any(np.logical_or(np.isnan(_h_uu), np.isinf(_h_uu))):
+                return np.nan
+            else:
+                return np.linalg.eigvals(_h_uu)
 
         self.compute_costate_dynamics = lambdify_ca(self.ca_costate_dynamics)
 
