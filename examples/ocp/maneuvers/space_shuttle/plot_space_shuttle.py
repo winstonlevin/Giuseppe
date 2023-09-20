@@ -175,12 +175,12 @@ if PLOT_AUXILIARY:
     fig_hv = plt.figure()
     ax_hv = fig_hv.add_subplot(111)
     ax_hv.grid()
-    ax_hv.plot(x_dict['v'] / sped_fun(x_dict['h']), x_dict['h'] / 1e3)
-    ax_hv.plot(glide_dict_full['v'] / sped_fun(glide_dict_full['h']), glide_dict_full['h'] / 1e3,
+    ax_hv.plot(x_dict['v'] / 1e3, x_dict['h'] / 1e3)
+    ax_hv.plot(glide_dict_full['v'] / 1e3, glide_dict_full['h'] / 1e3,
                'k--', label='Glide Slope (Sph.)')
-    ax_hv.plot(glide_dict_full_flat['v'] / sped_fun(glide_dict_full_flat['h']), glide_dict_full_flat['h'] / 1e3,
+    ax_hv.plot(glide_dict_full_flat['v'] / 1e3, glide_dict_full_flat['h'] / 1e3,
                'k:', label='Glide Slope (Flat)')
-    ax_hv.set_xlabel('Mach')
+    ax_hv.set_xlabel(r'$V$ [1,000 ft/s]')
     ax_hv.set_ylabel(r'$h$ [1,000 ft]')
 
 plt.show()

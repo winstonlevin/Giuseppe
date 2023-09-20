@@ -8,6 +8,8 @@ import giuseppe
 from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, atm, sped_fun
 from glide_slope import get_glide_slope
 
+SWEEP_SOLUTION_SPACE = True
+
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb()
 
 # Independent Variables
@@ -145,4 +147,40 @@ if __name__ == '__main__':
     sol_set.save('sol_set_range.data')
 
     # Sweep Solution Space
+    if SWEEP_SOLUTION_SPACE:
+        # Cover:
+        # h in {25, 50, ..., 250} k ft
+        # V in {1, 2, ..., 25} k ft/s
+        h_vals = np.arange(25., 250. + 25., 25.) * 1e3
+        v_vals = np.arange(1., 25. + 1., 1.) * 1e3
+
+        glide_dict_full = get_glide_slope()
+        h_v_interp = sp.interpolate.PchipInterpolator(glide_dict_full['v'], glide_dict_full['h'])
+        gam_v_interp = sp.interpolate.PchipInterpolator(glide_dict_full['v'], glide_dict_full['gam'])
+
+        sol0 = sol_set.solutions[-1]
+        v0_0 = v_scale_val * sol0.x[2, 0]
+        v0_1 = v_vals[-1]
+
+        idx_h0 = adiff_dual.annotations.constants.index('h_0')
+        idx_v0 = adiff_dual.annotations.constants.index('v_0')
+        idx_gam0 = adiff_dual.annotations.constants.index('gam_0')
+
+        def glide_slope_continuation(previous_sol, frac_complete):
+            _v0 = v0_0 + frac_complete * (v0_1 - v0_0)
+            _h0 = h_v_interp(_v0)
+            _gam0 = gam_v_interp(_v0)
+            previous_sol.k[idx_h0] = _h0
+            previous_sol.k[idx_v0] = _v0
+            previous_sol.k[idx_gam0] = _gam0
+            return previous_sol.k
+
+        cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
+        cont.add_custom_series(200, get_next_constants=glide_slope_continuation, series_name='Glide Slope')
+        cont.add_linear_series(25, {'h_0': h_vals[-1], 'gam_0': 0.})
+        sol_set_glide_slope = cont.run_continuation()
+
+        # TODO - fill out remaining solutions
+        # for h_val in h_vals:
+        #     for v_val in v_vals:
 
