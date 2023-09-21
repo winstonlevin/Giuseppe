@@ -3,8 +3,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib as mpl
 
-import casadi as ca
-
 from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, sped_fun, dens_fun
 from glide_slope import get_glide_slope
 
@@ -61,7 +59,7 @@ drag = qdyn * s_ref * CD0 + CD1 * lift + CD2 / (qdyn * s_ref) * lift**2
 
 # Glide Slope
 ke = 0.5 * x_dict['v']**2
-pe = g * x_dict['h']
+pe = mu / re - mu / (re + x_dict['h'])
 e = ke + pe
 glide_dict = get_glide_slope(e_vals=e)
 e_glide = glide_dict['E']
@@ -130,8 +128,8 @@ if PLOT_COSTATE:
     ylabs = (
         r'$\lambda_{h}$', r'$\lambda_{\theta}$', r'$\lambda_{V}$', r'$\lambda_{\gamma}$'
     )
-    yaux = (lam_h_glide / k_dict['h_scale'], None, lam_v_glide / k_dict['v_scale'], lam_gam_glide)
-    ymult = np.array((k_dict['h_scale'], 1., k_dict['v_scale'], 1.))
+    yaux = (lam_h_glide * k_dict['h_scale'], None, lam_v_glide * k_dict['v_scale'], lam_gam_glide)
+    ymult = np.array((1 / k_dict['h_scale'], 1., 1 / k_dict['v_scale'], 1.))
     fig_costates = plt.figure()
     axes_costates = []
 

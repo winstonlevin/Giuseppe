@@ -1,3 +1,4 @@
+from copy import deepcopy
 import casadi as ca
 import numpy as np
 import scipy as sp
@@ -143,6 +144,7 @@ if __name__ == '__main__':
 
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_logarithmic_series(100, {'e_f': mach_interp(1.5)})
+    cont.add_linear_series(100, {'h_0': 250e3, 'v_0': 1e3, 'gam_0': 0.})
     sol_set = cont.run_continuation()
     sol_set.save('sol_set_range.data')
 
@@ -150,37 +152,78 @@ if __name__ == '__main__':
     if SWEEP_SOLUTION_SPACE:
         # Cover:
         # h in {25, 50, ..., 250} k ft
-        # V in {1, 2, ..., 25} k ft/s
-        h_vals = np.arange(25., 250. + 25., 25.) * 1e3
-        v_vals = np.arange(1., 25. + 1., 1.) * 1e3
+        # V in {1, 2, ..., 20} k ft/s
+        h_vals = np.arange(25., 250. + 12.5, 12.5) * 1e3
+        v_vals = np.arange(1., 20. + 1., 1.) * 1e3
+        n_h_vals = len(h_vals)
 
-        glide_dict_full = get_glide_slope()
-        h_v_interp = sp.interpolate.PchipInterpolator(glide_dict_full['v'], glide_dict_full['h'])
-        gam_v_interp = sp.interpolate.PchipInterpolator(glide_dict_full['v'], glide_dict_full['gam'])
+        def trim_mesh(_sol0, _n_nodes_max):
+            _sol0 = deepcopy(_sol0)
+            _dt_min = np.sort(np.diff(_sol0.t))[len(_sol0.t) - _n_nodes_max]
 
+            # Cycle through indices, removing nodes when the step size is lower than _dt_min
+            _idx = 1
+            while _idx < len(_sol0.t) - 2:
+                if _sol0.t[_idx] - _sol0.t[_idx - 1] < _dt_min:
+                    # Step is too small: remove
+                    _sol0.t = np.delete(_sol0.t, _idx, 0)
+                    _sol0.h_u = np.delete(_sol0.h_u, _idx, 1)
+                    _sol0.eig_h_uu = np.delete(_sol0.eig_h_uu, _idx, 1)
+                    _sol0.lam = np.delete(_sol0.lam, _idx, 1)
+                    _sol0.u = np.delete(_sol0.u, _idx, 1)
+                    _sol0.x = np.delete(_sol0.x, _idx, 1)
+                else:
+                    # Step is sufficiently large: keep, move to next idx.
+                    _idx += 1
+
+            return _sol0
+
+        def sweep_altitudes(_sol0):
+            # Decrease altitude to h_min
+            _cont = giuseppe.continuation.ContinuationHandler(num_solver, _sol0)
+            _cont.add_linear_series(n_h_vals - 1, {'h_0': h_vals[0]}, keep_bisections=False)
+            _sol_set_sweep_h = _cont.run_continuation()
+            return _sol_set_sweep_h
+
+        # Get solution set for first v_val
         sol0 = sol_set.solutions[-1]
-        v0_0 = v_scale_val * sol0.x[2, 0]
-        v0_1 = v_vals[-1]
+        sol_set_sweep = sweep_altitudes(sol0)
 
-        idx_h0 = adiff_dual.annotations.constants.index('h_0')
-        idx_v0 = adiff_dual.annotations.constants.index('v_0')
-        idx_gam0 = adiff_dual.annotations.constants.index('gam_0')
+        # Generate solution set for subsequent v_vals
+        for v_val in v_vals[1::]:
+            cont = giuseppe.continuation.ContinuationHandler(num_solver, sol0)
+            cont.add_linear_series(25, {'v_0': v_val})
+            sol0 = cont.run_continuation().solutions[-1]
+            _sol_set_v_val = sweep_altitudes(sol0)
+            sol_set_sweep.solutions.extend(_sol_set_v_val.solutions)
 
-        def glide_slope_continuation(previous_sol, frac_complete):
-            _v0 = v0_0 + frac_complete * (v0_1 - v0_0)
-            _h0 = h_v_interp(_v0)
-            _gam0 = gam_v_interp(_v0)
-            previous_sol.k[idx_h0] = _h0
-            previous_sol.k[idx_v0] = _v0
-            previous_sol.k[idx_gam0] = _gam0
-            return previous_sol.k
+        sol_set_sweep.save('sol_set_range_sweep_envelope.data')
 
-        cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
-        cont.add_custom_series(200, get_next_constants=glide_slope_continuation, series_name='Glide Slope')
-        cont.add_linear_series(25, {'h_0': h_vals[-1], 'gam_0': 0.})
-        sol_set_glide_slope = cont.run_continuation()
+        # glide_dict_full = get_glide_slope()
+        # h_v_interp = sp.interpolate.PchipInterpolator(glide_dict_full['v'], glide_dict_full['h'])
+        # gam_v_interp = sp.interpolate.PchipInterpolator(glide_dict_full['v'], glide_dict_full['gam'])
+        #
+        # sol0 = sol_set.solutions[-1]
+        # v0_0 = v_scale_val * sol0.x[2, 0]
+        # v0_1 = v_vals[-1]
+        #
+        # idx_h0 = adiff_dual.annotations.constants.index('h_0')
+        # idx_v0 = adiff_dual.annotations.constants.index('v_0')
+        # idx_gam0 = adiff_dual.annotations.constants.index('gam_0')
+        #
+        # def glide_slope_continuation(previous_sol, frac_complete):
+        #     _v0 = v0_0 + frac_complete * (v0_1 - v0_0)
+        #     _h0 = h_v_interp(_v0)
+        #     _gam0 = gam_v_interp(_v0)
+        #     previous_sol.k[idx_h0] = _h0
+        #     previous_sol.k[idx_v0] = _v0
+        #     previous_sol.k[idx_gam0] = _gam0
+        #     return previous_sol.k
 
-        # TODO - fill out remaining solutions
-        # for h_val in h_vals:
-        #     for v_val in v_vals:
+        # cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
+        # cont.add_custom_series(200, get_next_constants=glide_slope_continuation, series_name='Glide Slope')
+        # cont.add_linear_series(25, {'h_0': h_vals[-1], 'gam_0': 0.})
+        # sol_set_glide_slope = cont.run_continuation()
+
+        sol_set_sweep = giuseppe.SolutionSet([sol_set.solutions[-1]], annotations=adiff_dual.annotations)
 

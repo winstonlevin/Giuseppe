@@ -41,14 +41,18 @@ CD0 = b_0 - b_1/a_1 * a_0 + b_2 * (a_0/a_1)**2
 CD1 = b_1/a_1 - 2 * b_2*a_0/a_1**2
 CD2 = b_2/a_1**2
 
+CL0 = a_0
+CLa = a_1
 
-
+CL_max_ld = (CD0 / CD2) ** 0.5
+CD_max_ld = CD0 + CD1 * CL_max_ld + CD2 * CL_max_ld ** 2
+alpha_max_ld = (CL_max_ld - CL0) / CLa
 
 
 if __name__ == '__main__':
     from matplotlib import pyplot as plt
 
-    alp_vals = np.linspace(-10., 10., 100) * d2r
+    alp_vals = np.linspace(-10., 20., 100) * d2r
     CL_vals = a_0 + a_1 * alp_vals
     CD_vals_alp = b_0 + b_1 * alp_vals + b_2 * alp_vals**2
     CD_vals = CD0 + CD1 * CL_vals + CD2 * CL_vals**2
@@ -60,5 +64,14 @@ if __name__ == '__main__':
     ax_cd.set_xlabel('CL')
     ax_cd.set_ylabel('CD')
     ax_cd.legend()
+
+    fig_ld = plt.figure()
+    ax_ld = fig_ld.add_subplot(111)
+    ax_ld.plot(alp_vals * r2d, CL_vals / CD_vals)
+    ax_ld.plot(alpha_max_ld * r2d, CL_max_ld / CD_max_ld, '*', label='Max L/D')
+    ax_ld.set_xlabel(r'$\alpha$ [deg]')
+    ax_ld.set_ylabel(r'$C_L / C_D$')
+    ax_ld.grid()
+    ax_ld.legend()
 
     plt.show()
