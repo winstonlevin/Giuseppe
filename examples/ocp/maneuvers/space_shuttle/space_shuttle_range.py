@@ -86,12 +86,12 @@ ocp.add_constant(gam_0, gam_0_val)
 e_f = ca.SX.sym('e_f', 1)
 e_f_val = mu/re - mu/(re + 80e3) + 0.5 * 2_500.**2
 ocp.add_constant(e_f, e_f_val)
-# h_f = ca.SX.sym('h_f', 1)
-# v_f = ca.SX.sym('v_f', 1)
+h_f = ca.SX.sym('h_f', 1)
+v_f = ca.SX.sym('v_f', 1)
 gam_f = ca.SX.sym('gam_f', 1)
 
-# ocp.add_constant(h_f, 0.)
-# ocp.add_constant(v_f, 10.)
+ocp.add_constant(h_f, 0.)
+ocp.add_constant(v_f, 10.)
 ocp.add_constant(gam_f, 0.)
 
 # Initial state constrained
@@ -102,9 +102,9 @@ ocp.add_constraint('initial', v - v_0)
 ocp.add_constraint('initial', gam - gam_0)
 
 # Terminal state free (except for energy)
-ocp.add_constraint('terminal', e - e_f)
-# ocp.add_constraint('terminal', h - h_f)
-# ocp.add_constraint('terminal', v - v_f)
+# ocp.add_constraint('terminal', e - e_f)
+ocp.add_constraint('terminal', h - h_f)
+ocp.add_constraint('terminal', v - v_f)
 ocp.add_constraint('terminal', gam - gam_f)
 
 # # Add altitude constraint
@@ -186,6 +186,8 @@ if __name__ == '__main__':
         pickle.dump(seed_sol, file)
 
     idx_ef = adiff_dual.annotations.constants.index('e_f')
+    idx_hf = adiff_dual.annotations.constants.index('h_f')
+    idx_vf = adiff_dual.annotations.constants.index('v_f')
     idx_gamf = adiff_dual.annotations.constants.index('gam_f')
     idx_h0 = adiff_dual.annotations.constants.index('h_0')
     idx_v0 = adiff_dual.annotations.constants.index('v_0')
@@ -202,7 +204,11 @@ if __name__ == '__main__':
     def glide_slope_continuation_xf(previous_sol, frac_complete):
         _ef = ef_0 + frac_complete * (ef_f - ef_0)
         _gamf = gam_interp(_ef)
+        _hf = h_interp(_ef)
+        _vf = v_interp(_ef)
         previous_sol.k[idx_ef] = _ef
+        previous_sol.k[idx_hf] = _hf
+        previous_sol.k[idx_vf] = _vf
         previous_sol.k[idx_gamf] = _gamf
         return previous_sol.k
 
