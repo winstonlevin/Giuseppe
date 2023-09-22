@@ -66,7 +66,7 @@ ocp.add_state(gam, lift / (mass * v) + ca.cos(gam) * (v / r - g / v))
 ocp.set_cost(0, 0, -tha)
 
 # Boundary Values
-e_0 = ca.SX.sym('e_0', 1)
+# e_0 = ca.SX.sym('e_0', 1)
 h_0 = ca.SX.sym('h_0', 1)
 tha_0 = ca.SX.sym('tha_0', 1)
 v_0 = ca.SX.sym('v_0', 1)
@@ -77,21 +77,21 @@ v_0_val = 25_600
 e_0_val = mu/re - mu/(re + h_0_val) + 0.5 * v_0_val**2
 gam_0_val = -1 / 180 * np.pi
 
-ocp.add_constant(e_0, e_0_val)
+# ocp.add_constant(e_0, e_0_val)
 ocp.add_constant(h_0, h_0_val)
 ocp.add_constant(tha_0, 0.)
 ocp.add_constant(v_0, v_0_val)
 ocp.add_constant(gam_0, gam_0_val)
 
-# e_f = ca.SX.sym('e_f', 1)
-# e_f_val = mu/re - mu/(re + 80e3) + 0.5 * 2_500.**2
-# ocp.add_constant(e_f, e_f_val)
-h_f = ca.SX.sym('h_f', 1)
-v_f = ca.SX.sym('v_f', 1)
+e_f = ca.SX.sym('e_f', 1)
+e_f_val = mu/re - mu/(re + 80e3) + 0.5 * 2_500.**2
+ocp.add_constant(e_f, e_f_val)
+# h_f = ca.SX.sym('h_f', 1)
+# v_f = ca.SX.sym('v_f', 1)
 gam_f = ca.SX.sym('gam_f', 1)
 
-ocp.add_constant(h_f, 0.)
-ocp.add_constant(v_f, 10.)
+# ocp.add_constant(h_f, 0.)
+# ocp.add_constant(v_f, 10.)
 ocp.add_constant(gam_f, 0.)
 
 # Initial state constrained
@@ -102,10 +102,10 @@ ocp.add_constraint('initial', v - v_0)
 ocp.add_constraint('initial', gam - gam_0)
 
 # Terminal state free (except for energy)
-# ocp.add_constraint('terminal', e - e_f)
-ocp.add_constraint('terminal', h - h_f)
-ocp.add_constraint('terminal', v - v_f)
-# ocp.add_constraint('terminal', gam - gam_f)
+ocp.add_constraint('terminal', e - e_f)
+# ocp.add_constraint('terminal', h - h_f)
+# ocp.add_constraint('terminal', v - v_f)
+ocp.add_constraint('terminal', gam - gam_f)
 
 # # Add altitude constraint
 # h_max_val = atm.h_layers[-1]
@@ -132,53 +132,15 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
     )
 
 if __name__ == '__main__':
-    e_guess = np.linspace(1e7, 9e6, 10)
-    de = e_guess[1] - e_guess[0]
-    glide_dict = get_glide_slope(e_vals=e_guess)
-    h_guess = glide_dict['h']
-    v_guess = glide_dict['v']
-    drag_guess = glide_dict['drag']
-    gam_guess = glide_dict['gam']
-    u_guess = glide_dict['u']
-    r_guess = glide_dict['r']
+    e_vals = np.logspace(np.log10(64280), 7, 100)
+    glide_dict = get_glide_slope(e_vals=e_vals)
+    h_guess = glide_dict['h'][-1]
+    v_guess = glide_dict['v'][-1]
+    gam_guess = glide_dict['gam'][-1]
+    u_interp = sp.interpolate.PchipInterpolator(glide_dict['v'], glide_dict['u'])
 
-    # Determine costates from energy state (convert E, h, gam to V, h, gam)
-    # d(E)/dt = g d(h)/dt + V d(V)/dt
-    # -> lam_v = V lam_E
-    # -> lam_h = lam_h + g lam_E
-
-    lam_h_guess = glide_dict['lam_h'] + glide_dict['g'] * glide_dict['lam_E']
-    lam_tha_guess = -1. * np.ones(e_guess.shape)  # With terminal cost formulation, H = - d(tha)/dt + ... -> lam_tha = -1
-    lam_v_guess = glide_dict['lam_E'] * glide_dict['v']
-    lam_gam_guess = glide_dict['lam_gam']
-
-    # Determine downrange and time from dynamics
-    dt_de_guess = -mass / (v_guess * drag_guess)
-    dt_guess = dt_de_guess * de
-    dtha_de_guess = mass * np.cos(gam_guess) / (-r_guess * drag_guess)
-    dtha_guess = dtha_de_guess * de
-    t_guess = np.empty(e_guess.shape)
-    tha_guess = np.empty(e_guess.shape)
-    t_guess[0] = 0.
-    tha_guess[0] = 0.
-    for idx in range(len(e_guess[:-1])):
-        t_guess[idx+1] = t_guess[idx] + dt_guess[idx]
-        tha_guess[idx+1] = tha_guess[idx] + dtha_guess[idx]
-
-    # Build guess
-    x_guess = np.vstack((h_guess/h_scale_val, tha_guess, v_guess/v_scale_val, gam_guess))
-    lam_guess = np.vstack((lam_h_guess*h_scale_val, lam_tha_guess, lam_v_guess*v_scale_val, lam_gam_guess))
-    u_guess = u_guess.reshape((1, -1))
-    guess = giuseppe.guess_generation.initialize_guess(
-        prob=adiff_dual, t_span=t_guess, x=x_guess, u=u_guess, lam=lam_guess
-    )
-
-    e_0_guess = 1.e7
-    glide_dict = get_glide_slope(e_vals=np.array((0.9*e_0_guess, e_0_guess, 1.1*e_0_guess)))
-    h_guess = glide_dict['h'][1]
-    v_guess = glide_dict['v'][1]
-    gam_guess = glide_dict['gam'][1]
-    u_guess = glide_dict['u'][1]
+    def ctrl_law(_t, _x, _p, _k):
+        return np.array((u_interp(_x[2] * v_scale_val),))
 
     # Convert E, h, gam costates to V, h, gam costates
     # d(E)/dt = g d(h)/dt + V d(V)/dt
@@ -190,7 +152,7 @@ if __name__ == '__main__':
     lam_tha_guess = -1.  # With terminal cost formulation, H = - d(tha)/dt + ... -> lam_tha = -1
 
     guess = giuseppe.guess_generation.auto_propagate_guess(
-        adiff_dual, control=u_guess, t_span=20.,
+        adiff_dual, control=ctrl_law, t_span=np.linspace(0., 25., 5),
         initial_states=np.array((h_guess / h_scale_val, 0., v_guess / v_scale_val, gam_guess)), fit_states=False,
         immutable_constants=('h_scale', 'v_scale')
     )
@@ -203,32 +165,22 @@ if __name__ == '__main__':
     with open('seed_sol_range.data', 'wb') as file:
         pickle.dump(seed_sol, file)
 
-    # Continue until the glide-slope Mach number is 1.5
-    # (Flat earth is used since Mach monotonically increases)
-    # glide_dict_flat_full = get_glide_slope(flat_earth=True)
-    # mach_interp = sp.interpolate.PchipInterpolator(
-    #     glide_dict_flat_full['v'] / np.asarray(sped_fun(glide_dict_flat_full['h'])).flatten(), glide_dict_flat_full['E']
-    # )
-    # glide_dict_full = get_glide_slope()
+    idx_ef = adiff_dual.annotations.constants.index('e_f')
+    idx_gamf = adiff_dual.annotations.constants.index('gam_f')
+    ef_0 = e_vals[-1]
+    ef_f = e_vals[0]
+    gam_interp = sp.interpolate.PchipInterpolator(glide_dict['E'], glide_dict['gam'])
 
-    # idx_ef = adiff_dual.annotations.constants.index('e_f')
-    # idx_h_scale = adiff_dual.annotations.constants.index('h_scale')
-    #
-    #
-    # def find_hf_series(previous_sol, frac_complete):
-    #     _constants = previous_sol.k.copy()
-    #
-    #     _hf_last = previous_sol.x[0, -1] * previous_sol.k[idx_h_scale]
-    #     _ef_last = previous_sol.k[idx_ef]
-    #     # hf < 0 -> increase ef. hf > 0 -> decrease ef.
-    #     _constants[idx_ef] = _ef_last - _hf_last * g0
-    #     return _constants
+
+    def glide_slope_continuation(previous_sol, frac_complete):
+        _ef = ef_0 + frac_complete * (ef_f - ef_0)
+        _gamf = gam_interp(_ef)
+        previous_sol.k[idx_ef] = _ef
+        previous_sol.k[idx_gamf] = _gamf
+        return previous_sol.k
 
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    # cont.add_logarithmic_series(25, {'eps_h': 1e-6})
-    # cont.add_logarithmic_series(100, {'e_f': 100e3})
-    # cont.add_custom_series(100, find_hf_series, 'Find hf')
-    # cont.add_linear_series(100, {'h_0': 250e3, 'v_0': 1e3, 'gam_0': 0.})
+    cont.add_custom_series(100, glide_slope_continuation, 'Glide Slope (tf)')
     sol_set = cont.run_continuation()
     sol_set.save('sol_set_range.data')
 
