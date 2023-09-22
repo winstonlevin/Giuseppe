@@ -169,10 +169,7 @@ class Atmosphere1976:
 
     def atm_data(self, altitude_geometric):
         altitude_geopotential = self.geometric2geopotential(altitude_geometric)
-        if altitude_geopotential < self.h_layers[0]:
-            altitude_geopotential = self.h_layers[0]
-
-        layer_idx = np.sum(altitude_geopotential >= self.h_layers) - 1
+        layer_idx = np.maximum(0, np.sum(altitude_geopotential >= self.h_layers) - 1)
         lapse_rate = self.lapse_layers[layer_idx]
 
         # (altitude, dh, coeffs_T, coeffs_P, coeffs_rho, altitude_0):
@@ -240,7 +237,7 @@ class Atmosphere1976:
             altitude_geopotential = self.geometric2geopotential(altitude)
         else:
             altitude_geopotential = altitude
-        layer_idx = ca.sum1(altitude_geopotential >= self.h_layers) - 1
+        layer_idx = ca.fmax(ca.sum1(altitude_geopotential >= self.h_layers) - 1, 1)
 
         temperature = type_h(0)
         pressure = type_h(0)
@@ -319,7 +316,7 @@ class Atmosphere1976:
 if __name__ == "__main__":
     from matplotlib import pyplot as plt
 
-    altitudes = np.linspace(0, 260_000, 10_000)
+    altitudes = np.linspace(-10e3, 260e3, 10_000)
 
     rho_0 = 0.002378  # slug/ft**3
     h_ref = 23_800  # ft
