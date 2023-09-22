@@ -321,7 +321,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         valid_idces = np.arange(0, len(e_vals), 1)
 
     # Calculate gliding flight-path angle
-    if correct_gam:
+    if correct_gam and len(e_vals[valid_idces]) > 2:
         # Correct gamma vals based on interpolation dh/dE:
         # gam = - arcsin( [D/m] * [dh/dE] )
         if e_vals[-1] > e_vals[0]:

@@ -80,8 +80,11 @@ lam_gam_glide = glide_dict['lam_gam']
 glide_dict_full = get_glide_slope()
 glide_dict_full_flat = get_glide_slope(flat_earth=True)
 
+tha_f = x_dict['tha'][-1]
+
 # PLOTTING -------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
+title_str = f'Cost: {sol.cost}, Cost(h): {sol.cost + tha_f}'
 
 # PLOT STATES
 ylabs = (r'$h$ [1,000 ft]', r'$\theta$ [deg]', r'$V$ [1,000 ft/s]', r'$\gamma$ [deg]')
@@ -103,6 +106,7 @@ for idx, state in enumerate(list(sol.x)):
 
 axes_states[0].legend()
 
+fig_states.suptitle(title_str)
 fig_states.tight_layout()
 
 # PLOT U
