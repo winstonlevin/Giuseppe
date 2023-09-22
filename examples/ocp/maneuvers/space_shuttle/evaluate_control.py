@@ -13,13 +13,18 @@ from glide_slope import get_glide_slope
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-COMPARISON = 'max_range'
+COMPARE_SWEEP = False
 AOA_LAW = 'energy_climb'  # {weight, max_ld, energy_climb, 0}
 
-if COMPARISON == 'max_range':
+if COMPARE_SWEEP == 'max_range':
     with open('sol_set_range_sweep_envelope.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[0]
+else:
+    with open('sol_set_range.data', 'rb') as f:
+        sols = pickle.load(f)
+        sol = sols[0]
+        sols = [sol]
 
 # Create Dicts
 k_dict = {}
@@ -223,10 +228,11 @@ for idx, sol in enumerate(sols):
 gradient = mpl.colormaps['viridis'].colors
 
 n_cols = 100
-if len(sols) == 1:
-    grad_idcs = np.array((0,), dtype=np.int32)
-else:
-    grad_idcs = np.int32(np.floor(np.linspace(0, 255, n_cols)))
+grad_idcs = np.int32(np.floor(np.linspace(0, 255, n_cols)))
+# if len(sols) == 1:
+#     grad_idcs = np.array((0,), dtype=np.int32)
+# else:
+#     grad_idcs = np.int32(np.floor(np.linspace(0, 255, len(sols))))
 
 
 def cols_gradient(n):
@@ -234,7 +240,7 @@ def cols_gradient(n):
 
 
 t_label = r'$t$ [s]'
-title_str = f'Comparison for {COMPARISON}'
+title_str = f'Maximum Range Comparison'
 
 r2d = 180 / np.pi
 

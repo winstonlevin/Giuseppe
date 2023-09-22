@@ -9,7 +9,7 @@ import giuseppe
 from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, atm, sped_fun
 from glide_slope import get_glide_slope
 
-SWEEP_SOLUTION_SPACE = True
+SWEEP_SOLUTION_SPACE = False
 
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb()
 
@@ -86,6 +86,13 @@ ocp.add_constant(gam_0, gam_0_val)
 e_f = ca.SX.sym('e_f', 1)
 e_f_val = mu/re - mu/(re + 80e3) + 0.5 * 2_500.**2
 ocp.add_constant(e_f, e_f_val)
+# h_f = ca.SX.sym('h_f', 1)
+# v_f = ca.SX.sym('v_f', 1)
+# gam_f = ca.SX.sym('gam_f', 1)
+
+# ocp.add_constant(h_f, 0.)
+# ocp.add_constant(v_f, 10.)
+# ocp.add_constant(gam_f, 0.)
 
 # Initial state constrained
 ocp.add_constraint('initial', t)
@@ -96,12 +103,32 @@ ocp.add_constraint('initial', gam - gam_0)
 
 # Terminal state free (except for energy)
 ocp.add_constraint('terminal', e - e_f)
+# ocp.add_constraint('terminal', h - h_f)
+# ocp.add_constraint('terminal', v - v_f)
 # ocp.add_constraint('terminal', gam - gam_f)
+
+# # Add altitude constraint
+# h_max_val = atm.h_layers[-1]
+# h_min_val = 0.
+#
+# h_max = ca.SX.sym('h_max')
+# h_min = ca.SX.sym('h_min')
+# eps_h = ca.SX.sym('eps_h')
+#
+# ocp.add_constant(h_max, h_max_val)
+# ocp.add_constant(h_min, h_min_val)
+# ocp.add_constant(eps_h, 1e-4)
+# ocp.add_inequality_constraint(
+#     'path', h_nd, h_min/h_scale, h_max/h_scale,
+#     regularizer=giuseppe.problems.automatic_differentiation.regularization.ADiffPenaltyConstraintHandler(
+#         eps_h, method='utm'
+#     )
+# )
 
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
     num_solver = giuseppe.numeric_solvers.SciPySolver(
-        adiff_dual, verbose=2, max_nodes=100, node_buffer=10
+        adiff_dual, verbose=False, max_nodes=100, node_buffer=10
     )
 
 if __name__ == '__main__':
@@ -137,14 +164,29 @@ if __name__ == '__main__':
 
     # Continue until the glide-slope Mach number is 1.5
     # (Flat earth is used since Mach monotonically increases)
-    glide_dict_flat_full = get_glide_slope(flat_earth=True)
-    mach_interp = sp.interpolate.PchipInterpolator(
-        glide_dict_flat_full['v'] / np.asarray(sped_fun(glide_dict_flat_full['h'])).flatten(), glide_dict_flat_full['E']
-    )
+    # glide_dict_flat_full = get_glide_slope(flat_earth=True)
+    # mach_interp = sp.interpolate.PchipInterpolator(
+    #     glide_dict_flat_full['v'] / np.asarray(sped_fun(glide_dict_flat_full['h'])).flatten(), glide_dict_flat_full['E']
+    # )
+    # glide_dict_full = get_glide_slope()
+    idx_ef = adiff_dual.annotations.constants.index('e_f')
+    idx_h_scale = adiff_dual.annotations.constants.index('h_scale')
+
+
+    def find_hf_series(previous_sol, frac_complete):
+        _constants = previous_sol.k.copy()
+
+        _hf_last = previous_sol.x[0, -1] * previous_sol.k[idx_h_scale]
+        _ef_last = previous_sol.k[idx_ef]
+        # hf < 0 -> increase ef. hf > 0 -> decrease ef.
+        _constants[idx_ef] = _ef_last - _hf_last * g0
+        return _constants
 
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_logarithmic_series(100, {'e_f': mach_interp(1.5)})
-    cont.add_linear_series(100, {'h_0': 250e3, 'v_0': 1e3, 'gam_0': 0.})
+    cont.add_logarithmic_series(25, {'eps_h': 1e-6})
+    cont.add_logarithmic_series(100, {'e_f': 100e3})
+    # cont.add_custom_series(100, find_hf_series, 'Find hf')
+    # cont.add_linear_series(100, {'h_0': 250e3, 'v_0': 1e3, 'gam_0': 0.})
     sol_set = cont.run_continuation()
     sol_set.save('sol_set_range.data')
 
