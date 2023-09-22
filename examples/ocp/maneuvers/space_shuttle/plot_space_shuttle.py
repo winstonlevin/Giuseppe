@@ -11,7 +11,7 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-DATA = 2
+DATA = 0
 
 if DATA == 0:
     with open('guess_range.data', 'rb') as f:
@@ -61,7 +61,7 @@ drag = qdyn * s_ref * CD0 + CD1 * lift + CD2 / (qdyn * s_ref) * lift**2
 ke = 0.5 * x_dict['v']**2
 pe = mu / re - mu / (re + x_dict['h'])
 e = ke + pe
-glide_dict = get_glide_slope(e_vals=e)
+glide_dict = get_glide_slope(e_vals=e, remove_nan=False)
 e_glide = glide_dict['E']
 h_glide = glide_dict['h']
 v_glide = glide_dict['v']
@@ -149,7 +149,15 @@ if PLOT_COSTATE:
     fig_costates.tight_layout()
 
 if PLOT_AUXILIARY:
-    ydata = (sol.h_u[0, :], sol.eig_h_uu[0, :])
+    if sol.h_u is not None:
+        h_u = sol.h_u[0, :]
+    else:
+        h_u = None
+    if sol.eig_h_uu is not None:
+        eig_h_uu = sol.eig_h_uu[0, :]
+    else:
+        eig_h_uu = None
+    ydata = (h_u, eig_h_uu)
     yaux = (0 * sol.t, 0 * sol.t)
     ylabs = (r'$H_u$ [1/rad]', r'eig($H_{uu}$) [1/rad$^2$]')
     yauxlabs = (r'$H_u = 0$', r'$H_{uu} > 0$')
@@ -165,7 +173,8 @@ if PLOT_AUXILIARY:
         ax.set_ylabel(ylabs[idx])
         if y is not None:
             ax.plot(sol.t, y)
-        ax.plot(sol.t, yaux[idx], 'k--', label=yauxlabs[idx])
+        if yaux[idx] is not None:
+            ax.plot(sol.t, yaux[idx], 'k--', label=yauxlabs[idx])
         if yauxlabs[idx] is not None:
             ax.legend()
     fig_aux.tight_layout()
