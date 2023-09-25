@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable
 
 import pickle
 import matplotlib.pyplot as plt
@@ -6,7 +6,6 @@ import numpy as np
 import matplotlib as mpl
 import scipy as sp
 
-import giuseppe
 from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, CL0, CLa, alpha_max_ld, dens_fun, atm
 from glide_slope import get_glide_slope
 
@@ -15,7 +14,7 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-AOA_LAW = 'energy_climb'  # {weight, max_ld, energy_climb, interp, 0}
+AOA_LAW = 'max_ld'  # {weight, max_ld, energy_climb, interp, 0}
 
 if COMPARE_SWEEP:
     with open('sol_set_range_sweep.data', 'rb') as f:
@@ -109,7 +108,7 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _g = mu/_r**2
 
     _load = _lift_glide / (g0 * mass) + _k_h * (_h_glide - _h) + _k_gam * (_gam_glide - _gam)
-    # _load = saturate(_load, load_min, load_max)
+    _load = saturate(_load, load_min, load_max)
     _lift = _load * g0 * mass
     _cl = _lift / _qdyn_s_ref
     _alpha = (_cl - CL0) / CLa
@@ -203,6 +202,7 @@ v0_arr = np.empty((n_sols,))
 opt_arr = np.empty((n_sols,))
 ndmult = np.array((k_dict['h_scale'], 1., k_dict['v_scale'], 1.))
 
+print('____ Evaluation ____')
 for idx, sol in enumerate(sols):
     for key, val in zip(sol.annotations.states, list(sol.x)):
         x_dict[key] = val
@@ -236,6 +236,8 @@ for idx, sol in enumerate(sols):
     h0_arr[idx] = x_dict['h_nd'][0] * k_dict['h_scale']
     v0_arr[idx] = x_dict['v_nd'][0] * k_dict['v_scale']
     opt_arr[idx] = ivp_sols_dict[idx]['optimality']
+
+    print(f'{opt_arr[idx]:.2%} Optimal at h0 = {h0_arr[idx] / 1e3:.4} kft')
 
 # ---- PLOTTING --------------------------------------------------------------------------------------------------------
 gradient = mpl.colormaps['viridis'].colors

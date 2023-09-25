@@ -132,14 +132,13 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
     )
 
 if __name__ == '__main__':
-    mach_f = 1.5
-    e_val_guess_range = np.array((5e6, 5.5e6, 6e6))
+    h_f = 0.
+    e_val_guess_range = np.array((1., 3.5e6, 6e6))
     for idx in range(1000):
         # Binary search
         e_val_guess_range[1] = 0.5 * (e_val_guess_range[0] + e_val_guess_range[2])
-        _tmp = get_glide_slope(e_vals=np.array((e_val_guess_range[1],)))
-        _mach_f = _tmp['v'] / atm.speed_of_sound(_tmp['h'])
-        if _mach_f < mach_f:
+        _h_f = get_glide_slope(e_vals=np.array((e_val_guess_range[1],)), h_min=-2e3)['h']
+        if _h_f < h_f:
             # Too low energy, try higher.
             e_val_guess_range[0] = e_val_guess_range[1]
         else:
@@ -150,12 +149,10 @@ if __name__ == '__main__':
         if e_val_guess_range[2] - e_val_guess_range[1] < 1e-3:
             break
 
-    e_mach_f = e_val_guess_range[1]
-    glide_dict_e_mach_f = get_glide_slope(e_vals=np.array((e_mach_f,)))
+    e_h_f = e_val_guess_range[1]
+    glide_dict_e_mach_f = get_glide_slope(e_vals=np.array((e_h_f,)))
 
-    e0_guess = mu/re - mu/(re + 250e3) + 0.5 * (mach_f * atm.speed_of_sound(glide_dict_e_mach_f['h']))**2
-
-    e_vals = np.logspace(np.log10(e_mach_f), np.log10(e0_guess), 100)
+    e_vals = np.logspace(np.log10(e_h_f), np.log10(1e8), 100)
     glide_dict = get_glide_slope(e_vals=e_vals)
     h_guess = glide_dict['h'][-1]
     v_guess = glide_dict['v'][-1]
@@ -241,7 +238,7 @@ if __name__ == '__main__':
 
     # Sweep Solution Space (perturb initial h/v with gam0 = 0, e0 const.)
     if SWEEP_SOLUTION_SPACE:
-        qdyn_max = 300.
+        qdyn_max = 500.
 
 
         def generate_energy_sweep_continuation(_h0_0, _h0_f):
@@ -284,7 +281,7 @@ if __name__ == '__main__':
         vf = sol0.k[idx_vf]
         e0 = mu/re - mu/(re + h0_0) + 0.5 * v0_0**2
         v0_min = vf
-        h0_max = min(300e3, -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
+        h0_max = min(atm.h_layers[-1], -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
         h0_min = find_h_qdyn(e0, 1000., h0_0)
 
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
