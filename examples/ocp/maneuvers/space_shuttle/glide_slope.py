@@ -14,7 +14,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
                     h_min: float = 0., h_max: float = _h_atm_max,
                     mach_min: float = 0.3, mach_max: float = 30.,
                     manual_derivation=False, energy_state=False, correct_gam=True, flat_earth=False,
-                    nondimensionalize_control=True, remove_nan=True) -> dict:
+                    nondimensionalize_control=True, remove_nan=True, derive_with_e=False) -> dict:
     """
 
     Parameters
@@ -30,6 +30,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     flat_earth : bool, True -> use flat earth dynamics
     nondimensionalize_control : bool, True -> use u = L/W0. False -> use u = L
     remove_nan : bool, True -> remove values where glide slide could not be found. Otherwise, return NaN.
+    derive_with_e : bool, False -> Use E as state for LQR gain calculation
 
     Returns
     -------
@@ -137,9 +138,13 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     hamiltonian_sym = -dtha_dt + lam_e * de_dt + lam_h * dh_dt + lam_gam * dgam_dt
 
     # Derivation of values to calculate neighboring optimal control feedback gains from ARE
-    states_sym = ca.vcat((h_sym, gam_sym))
     controls_sym = u_sym
-    dynamics_sym = ca.vcat((dh_dt, dgam_dt))
+    if derive_with_e:
+        states_sym = ca.vcat((h_sym, gam_sym, e_sym))
+        dynamics_sym = ca.vcat((dh_dt, dgam_dt, de_dt))
+    else:
+        states_sym = ca.vcat((h_sym, gam_sym))
+        dynamics_sym = ca.vcat((dh_dt, dgam_dt))
 
     ham_x = ca.jacobian(hamiltonian_sym, states_sym)
     ham_u = ca.jacobian(hamiltonian_sym, controls_sym)
@@ -361,8 +366,11 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             r_noc = np.asarray(r_noc_fun(
                 e_val, h_val, gam_val, zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
             ))
-            p_noc = sp.linalg.solve_continuous_are(a=a_noc, b=b_noc, q=q_noc, s=n_noc, r=r_noc)
-            k_noc = np.linalg.solve(a=r_noc, b=(p_noc @ b_noc + n_noc).T)  # inv(R) * (PB + N)^T
+            try:
+                p_noc = sp.linalg.solve_continuous_are(a=a_noc, b=b_noc, q=q_noc, s=n_noc, r=r_noc)
+                k_noc = np.linalg.solve(a=r_noc, b=(p_noc @ b_noc + n_noc).T)  # inv(R) * (PB + N)^T
+            except:
+                k_noc = np.nan * np.zeros((1, 3))
             k_h_vals[idx] = k_noc[0, 0]
             k_gam_vals[idx] = k_noc[0, 1]
 
@@ -384,6 +392,7 @@ if __name__ == '__main__':
     h_max_plot = 275e3
     mach_max_plot = 40.
     glide_dict = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
+    glide_dict_e = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot, derive_with_e=True)
     # glide_dict_es = get_glide_slope(energy_state=True, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
     # glide_dict_gam0 = get_glide_slope(energy_state=False, correct_gam=False, h_max=h_max_plot, mach_max=mach_max_plot)
     glide_dict_flat = get_glide_slope(energy_state=False, correct_gam=True, flat_earth=True,
@@ -451,16 +460,18 @@ if __name__ == '__main__':
 
     ax_k_h = fig_gains.add_subplot(211)
     ax_k_h.plot(e_vals, k_h_vals, label='Spherical')
-    ax_k_h.plot(e_vals_flat, k_h_vals_flat, '--', label='Flat')
-    ax_k_h.plot(e_vals_flat_gam0, k_h_vals_flat_gam0, ':', label='Flat, gam = 0')
+    ax_k_h.plot(glide_dict_e['E'], glide_dict_e['k_h'], label='E')
+    # ax_k_h.plot(e_vals_flat, k_h_vals_flat, '--', label='Flat')
+    # ax_k_h.plot(e_vals_flat_gam0, k_h_vals_flat_gam0, ':', label='Flat, gam = 0')
     ax_k_h.set_xlabel(e_lab)
     ax_k_h.set_ylabel(r'$K_h$')
     ax_k_h.legend()
 
     ax_k_gam = fig_gains.add_subplot(212)
     ax_k_gam.plot(e_vals, k_gam_vals, label='Spherical')
-    ax_k_gam.plot(e_vals_flat, k_gam_vals_flat, '--', label='Flat')
-    ax_k_gam.plot(e_vals_flat_gam0, k_gam_vals_flat_gam0, '--', label='Flat, gam = 0')
+    ax_k_gam.plot(glide_dict_e['E'], glide_dict_e['k_gam'], label='E')
+    # ax_k_gam.plot(e_vals_flat, k_gam_vals_flat, '--', label='Flat')
+    # ax_k_gam.plot(e_vals_flat_gam0, k_gam_vals_flat_gam0, '--', label='Flat, gam = 0')
     ax_k_gam.set_xlabel(e_lab)
     ax_k_gam.set_ylabel(r'$K_\gamma$')
 

@@ -6,7 +6,8 @@ import numpy as np
 import matplotlib as mpl
 import scipy as sp
 
-from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, CL0, CLa, alpha_max_ld, dens_fun, atm
+from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, CL0, CLa, alpha_max_ld,\
+    CL_max_ld, CD_max_ld, dens_fun, atm
 from glide_slope import get_glide_slope
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
@@ -14,7 +15,7 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-AOA_LAW = 'max_ld'  # {weight, max_ld, energy_climb, interp, 0}
+AOA_LAW = 'lam_h0'  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
 
 if COMPARE_SWEEP:
     with open('sol_set_range_sweep.data', 'rb') as f:
@@ -107,11 +108,40 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _r = re + _h
     _g = mu/_r**2
 
-    _load = _lift_glide / (g0 * mass) + _k_h * (_h_glide - _h) + _k_gam * (_gam_glide - _gam)
-    _load = saturate(_load, load_min, load_max)
+    _load_ff = _lift_glide / (g0 * mass)
+    # _load_ff = CL_max_ld * _qdyn_s_ref / (g0 * mass)
+
+    # _load = _load_ff
+    # _load = _load_ff + _k_gam * (_gam_glide - _gam)
+    _load = _load_ff + _k_h * (_h_glide - _h) + _k_gam * (_gam_glide - _gam)
+    # _load = saturate(_load, load_min, load_max)
     _lift = _load * g0 * mass
     _cl = _lift / _qdyn_s_ref
     _alpha = (_cl - CL0) / CLa
+    _alpha = saturate(_alpha, alpha_min, alpha_max)
+    return _alpha
+
+
+def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+    # Assuming lam_h = 0, this control law ensures H = 0. Note that two values of alpha satisfy this, so the value
+    # which drives h -> h_glide is chosen.
+    # TODO - This causes chatter when near h_glide. _c -/-> 0!
+    _h = _x[0]
+    _v = _x[2]
+    _gam = _x[3]
+    _r = _h + re
+    _e = mu/re - mu/_r + 0.5 * _v**2
+
+    _h_glide = h_e_interp(_e)
+    _rg = re + _h_glide
+
+    CLg = CL_max_ld
+    CDg = CD_max_ld
+    _b = 2 * CL0/CLa + CD1*CL0/(CD2 * CLa) - 2 * CLg/CLa * np.cos(_gam)
+    _c = -CD0/CD2 + CD1/CD2 * CL0/CLa + (CDg/CD2 * _rg/_r - CD1/CD2 * CLg/CLa) * np.cos(_gam)
+
+    _alpha0 = -_b/2
+    _alpha = _alpha0 + np.sign(_h_glide - _h) * max(0., _alpha0**2 - _c)**0.5
     _alpha = saturate(_alpha, alpha_min, alpha_max)
     return _alpha
 
@@ -121,6 +151,8 @@ def generate_ctrl_law(_u_interp=None) -> Callable:
         _aoa_ctrl = alpha_max_ld_fun
     elif AOA_LAW == 'energy_climb':
         _aoa_ctrl = alpha_energy_climb
+    elif AOA_LAW == 'lam_h0':
+        _aoa_ctrl = alpha_lam_h0
     elif AOA_LAW == 'interp':
         def _aoa_ctrl(_t, _x, _p_dict, _k_dict):
             _h = _x[0]
@@ -223,8 +255,7 @@ for idx, sol in enumerate(sols):
         fun=lambda t, x: eom(t, x, ctrl_law(t, x, p_dict, k_dict), p_dict, k_dict),
         t_span=t_span,
         y0=x0,
-        events=termination_events,
-        rtol=1e-6, atol=1e-8
+        events=termination_events
     )
 
     ivp_sols_dict[idx] = {
