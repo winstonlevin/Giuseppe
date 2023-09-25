@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib as mpl
 import scipy as sp
 
+import giuseppe
 from space_shuttle_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, CL0, CLa, alpha_max_ld, dens_fun, atm
 from glide_slope import get_glide_slope
 
@@ -14,7 +15,7 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-AOA_LAW = 'max_ld'  # {weight, max_ld, energy_climb, 0}
+AOA_LAW = 'energy_climb'  # {weight, max_ld, energy_climb, interp, 0}
 
 if COMPARE_SWEEP:
     with open('sol_set_range_sweep.data', 'rb') as f:
@@ -116,11 +117,21 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     return _alpha
 
 
-def generate_ctrl_law() -> Callable:
+def generate_ctrl_law(_u_interp=None) -> Callable:
     if AOA_LAW == 'max_ld':
         _aoa_ctrl = alpha_max_ld_fun
     elif AOA_LAW == 'energy_climb':
         _aoa_ctrl = alpha_energy_climb
+    elif AOA_LAW == 'interp':
+        def _aoa_ctrl(_t, _x, _p_dict, _k_dict):
+            _h = _x[0]
+            _v = _x[2]
+            _qdyn_s_ref = 0.5 * atm.density(_h) * _v ** 2 * s_ref
+            _load = _u_interp(_t)
+            _cl = _load * g0 * mass / _qdyn_s_ref
+            _alpha = (_cl - CL0) / CLa
+            _alpha = saturate(_alpha, alpha_min, alpha_max)
+            return _alpha
     else:
         _aoa_ctrl = generate_constant_ctrl(0.)
 
@@ -196,6 +207,7 @@ for idx, sol in enumerate(sols):
     for key, val in zip(sol.annotations.states, list(sol.x)):
         x_dict[key] = val
     e_opt = mu/re - mu/(re + x_dict['h_nd'] * k_dict['h_scale']) + 0.5 * (x_dict['v_nd'] * k_dict['v_scale']) ** 2
+    u_opt = sp.interpolate.PchipInterpolator(sol.t, sol.u[0, :])
 
     t0 = sol.t[0]
     tf = sol.t[-1]
@@ -203,7 +215,7 @@ for idx, sol in enumerate(sols):
     t_span = np.array((t0, np.inf))
     x0 = sol.x[:, 0] * ndmult
 
-    ctrl_law = generate_ctrl_law()
+    ctrl_law = generate_ctrl_law(u_opt)
     limits_dict['e_min'] = np.min(e_opt)
     termination_events = generate_termination_events(ctrl_law, p_dict, k_dict, limits_dict)
 
@@ -211,7 +223,8 @@ for idx, sol in enumerate(sols):
         fun=lambda t, x: eom(t, x, ctrl_law(t, x, p_dict, k_dict), p_dict, k_dict),
         t_span=t_span,
         y0=x0,
-        events=termination_events
+        events=termination_events,
+        rtol=1e-6, atol=1e-8
     )
 
     ivp_sols_dict[idx] = {
@@ -265,7 +278,7 @@ for idx, lab in enumerate(ylabs):
 
     for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
         # ax.plot(sol.t, sol.x[idx, :] * ndmult[idx] * ymult[idx], 'k--')
-        ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(opt_arr[jdx]))
+        ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(min(1., opt_arr[jdx])))
 
 fig_states.suptitle(title_str)
 fig_states.tight_layout()
@@ -279,9 +292,9 @@ ax_hv.set_ylabel(ylabs[0])
 for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
     ax_hv.plot(sol.x[2, :] * ndmult[2] * ymult[2], sol.x[0, :] * ndmult[2] * ymult[0], 'k--')
     ax_hv.plot(ivp_sol_dict['x'][2, :] * ymult[2], ivp_sol_dict['x'][0, :] * ymult[0],
-               color=cols_gradient(opt_arr[jdx]))
+               color=cols_gradient(min(opt_arr[jdx], 1.)))
 
-# ax_hv.plot(glide_dict['v'], glide_dict['h'], 'k', label='Glide Slope', linewidth=2.)
+ax_hv.plot(glide_dict['v'], glide_dict['h'], 'k', label='Glide Slope', linewidth=2.)
 ax_hv.set_xlim(left=glide_dict['v'][0], right=glide_dict['v'][-1])
 
 fig_hv.tight_layout()

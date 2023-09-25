@@ -132,7 +132,7 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
     )
 
 if __name__ == '__main__':
-    mach_f = 2.5
+    mach_f = 1.5
     e_val_guess_range = np.array((5e6, 5.5e6, 6e6))
     for idx in range(1000):
         # Binary search
@@ -151,8 +151,11 @@ if __name__ == '__main__':
             break
 
     e_mach_f = e_val_guess_range[1]
+    glide_dict_e_mach_f = get_glide_slope(e_vals=np.array((e_mach_f,)))
 
-    e_vals = np.logspace(np.log10(e_mach_f), np.log10(3e8), 100)
+    e0_guess = mu/re - mu/(re + 250e3) + 0.5 * (mach_f * atm.speed_of_sound(glide_dict_e_mach_f['h']))**2
+
+    e_vals = np.logspace(np.log10(e_mach_f), np.log10(e0_guess), 100)
     glide_dict = get_glide_slope(e_vals=e_vals)
     h_guess = glide_dict['h'][-1]
     v_guess = glide_dict['v'][-1]
@@ -166,15 +169,17 @@ if __name__ == '__main__':
     # d(E)/dt = g d(h)/dt + V d(V)/dt
     # -> lam_v = V lam_E
     # -> lam_h = lam_h + g lam_E
-    lam_v_glide = glide_dict['lam_E'][1] * glide_dict['v'][1]
-    lam_h_glide = glide_dict['lam_h'][1] + glide_dict['g'][1] * glide_dict['lam_E'][1]
-    lam_gam_glide = glide_dict['lam_gam'][1]
+    lam_v_glide = glide_dict['lam_E'][-1] * glide_dict['v'][-1]
+    lam_h_glide = glide_dict['lam_h'][-1] + glide_dict['g'][-1] * glide_dict['lam_E'][-1]
+    lam_gam_glide = glide_dict['lam_gam'][-1]
     lam_tha_guess = -1.  # With terminal cost formulation, H = - d(tha)/dt + ... -> lam_tha = -1
 
     guess = giuseppe.guess_generation.auto_propagate_guess(
         adiff_dual, control=ctrl_law, t_span=np.linspace(0., 25., 5),
         initial_states=np.array((h_guess / h_scale_val, 0., v_guess / v_scale_val, gam_guess)), fit_states=False,
-        immutable_constants=('h_scale', 'v_scale')
+        immutable_constants=('h_scale', 'v_scale'),
+        initial_costates=np.array((lam_h_glide * h_scale_val, lam_tha_guess, lam_v_glide * v_scale_val, lam_gam_glide)),
+        fit_adjoints=False
     )
 
     with open('guess_range.data', 'wb') as file:
