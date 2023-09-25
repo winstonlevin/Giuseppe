@@ -18,9 +18,9 @@ temp_expr, pres_expr, dens_expr = atm.get_ca_atm_expr(h_sym)
 sped_expr = atm.get_ca_speed_of_sound_expr(h_sym)
 
 temp_fun = ca.Function('T', (h_sym,), (temp_expr,), ('h',), ('T',))
-pres_fun = ca.Function('P', (h_sym,), (temp_expr,), ('h',), ('P',))
-dens_fun = ca.Function('rho', (h_sym,), (temp_expr,), ('h',), ('rho',))
-sped_fun = ca.Function('a', (h_sym,), (temp_expr,), ('h',), ('a',))
+pres_fun = ca.Function('P', (h_sym,), (pres_expr,), ('h',), ('P',))
+dens_fun = ca.Function('rho', (h_sym,), (dens_expr,), ('h',), ('rho',))
+sped_fun = ca.Function('a', (h_sym,), (sped_expr,), ('h',), ('a',))
 
 # Aero parameters from Betts' "Practical Methods"
 s_ref = 2690.  # ft**2

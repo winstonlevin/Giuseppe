@@ -11,7 +11,7 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 PLOT_COSTATE = True
 PLOT_AUXILIARY = True
-DATA = 2
+DATA = 3
 
 if DATA == 0:
     with open('guess_range.data', 'rb') as f:
@@ -20,6 +20,10 @@ if DATA == 0:
 elif DATA == 1:
     with open('seed_sol_range.data', 'rb') as f:
         sol = pickle.load(f)
+elif DATA == 3:
+    with open('sol_set_range_sweep.data', 'rb') as f:
+        sols = pickle.load(f)
+        sol = sols[-1]
 else:
     with open('sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)
@@ -68,6 +72,7 @@ v_glide = glide_dict['v']
 gam_glide = glide_dict['gam']
 g_glide = glide_dict['g']
 u_glide = glide_dict['u']
+qdyn_glide = glide_dict['qdyn_s_ref'] / s_ref
 
 # Convert E, h, gam costates to V, h, gam costates
 # d(E)/dt = g d(h)/dt + V d(V)/dt
@@ -179,6 +184,9 @@ if PLOT_AUXILIARY:
             ax.legend()
     fig_aux.tight_layout()
 
+    h_qdyn = np.linspace(0., 250e3, 100)
+    v_qdyn = (2 * 300. / np.asarray(dens_fun(h_qdyn)))**0.5
+
     fig_hv = plt.figure()
     ax_hv = fig_hv.add_subplot(111)
     ax_hv.grid()
@@ -187,7 +195,15 @@ if PLOT_AUXILIARY:
                'k--', label='Glide Slope (Sph.)')
     ax_hv.plot(glide_dict_full_flat['v'] / 1e3, glide_dict_full_flat['h'] / 1e3,
                'k:', label='Glide Slope (Flat)')
+    ax_hv.plot(v_qdyn / 1e3, h_qdyn / 1e3, 'r-')
     ax_hv.set_xlabel(r'$V$ [1,000 ft/s]')
     ax_hv.set_ylabel(r'$h$ [1,000 ft]')
+
+    fig_qdyn = plt.figure()
+    ax_qdyn = fig_qdyn.add_subplot(111)
+    ax_qdyn.plot(sol.t, qdyn)
+    ax_qdyn.plot(sol.t, qdyn_glide)
+    ax_qdyn.set_xlabel(t_label)
+    ax_qdyn.set_ylabel(r'$Q_{\infty}$ [psf]')
 
 plt.show()

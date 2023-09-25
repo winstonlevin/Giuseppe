@@ -202,7 +202,7 @@ if __name__ == '__main__':
 
 
     def glide_slope_continuation_xf(previous_sol, frac_complete):
-        _ef = ef_0 + frac_complete * (ef_f - ef_0)
+        _ef = (ef_f/ef_0)**frac_complete * ef_0  # Log step
         _gamf = gam_interp(_ef)
         _hf = h_interp(_ef)
         _vf = v_interp(_ef)
@@ -234,82 +234,68 @@ if __name__ == '__main__':
     vf = sol_set.solutions[-1].x[2, -1] * v_scale_val
     ef = mu / re - mu / (re + hf) + 0.5 * vf ** 2
 
-    # Sweep Solution Space
+    # Sweep Solution Space (perturb initial h/v with gam0 = 0, e0 const.)
     if SWEEP_SOLUTION_SPACE:
-        # Cover:
-        # h in {25, 50, ..., 250} k ft
-        # V in {1, 2, ..., 20} k ft/s
-        h_vals = np.arange(25., 250. + 12.5, 12.5) * 1e3
-        v_vals = np.arange(1., 20. + 1., 1.) * 1e3
-        n_h_vals = len(h_vals)
+        qdyn_max = 300.
 
-        def trim_mesh(_sol0, _n_nodes_max):
-            _sol0 = deepcopy(_sol0)
-            _dt_min = np.sort(np.diff(_sol0.t))[len(_sol0.t) - _n_nodes_max]
 
-            # Cycle through indices, removing nodes when the step size is lower than _dt_min
-            _idx = 1
-            while _idx < len(_sol0.t) - 2:
-                if _sol0.t[_idx] - _sol0.t[_idx - 1] < _dt_min:
-                    # Step is too small: remove
-                    _sol0.t = np.delete(_sol0.t, _idx, 0)
-                    _sol0.h_u = np.delete(_sol0.h_u, _idx, 1)
-                    _sol0.eig_h_uu = np.delete(_sol0.eig_h_uu, _idx, 1)
-                    _sol0.lam = np.delete(_sol0.lam, _idx, 1)
-                    _sol0.u = np.delete(_sol0.u, _idx, 1)
-                    _sol0.x = np.delete(_sol0.x, _idx, 1)
+        def generate_energy_sweep_continuation(_h0_0, _h0_f):
+            def energy_sweep_continuation(previous_sol, frac_complete):
+                _constants = previous_sol.k.copy()
+
+                _h0 = previous_sol.k[idx_h0]
+                _v0 = previous_sol.k[idx_v0]
+                _e0 = mu/re - mu/(re + _h0) + 0.5 * _v0**2
+
+                _h0_next = _h0_0 + frac_complete * (_h0_f - _h0_0)
+                _v0_next = (2 * (_e0 - mu/re + mu/(re + _h0_next))) ** 0.5
+                _constants[idx_h0] = _h0_next
+                _constants[idx_v0] = _v0_next
+
+                return _constants
+            return energy_sweep_continuation
+
+        def find_h_qdyn(_e, _qdyn, _h_max=atm.h_layers[-1]):
+            _h_min = 0.
+            _h = 0.5 * (_h_min + _h_max)
+
+            for idx in range(1000):
+                _v = (2 * (_e - mu/re + mu/(re + _h))) ** 0.5
+                _qdyn_trial = 0.5 * atm.density(_h) * _v ** 2
+                if _qdyn_trial < _qdyn:
+                    # Altitude too high
+                    _h_max = _h
                 else:
-                    # Step is sufficiently large: keep, move to next idx.
-                    _idx += 1
+                    _h_min = _h
+                _h = 0.5 * (_h_min + _h_max)
+                if _h_max - _h < 1e-3:
+                    break
 
-            return _sol0
+            return _h
 
-        def sweep_altitudes(_sol0):
-            # Decrease altitude to h_min
-            _cont = giuseppe.continuation.ContinuationHandler(num_solver, _sol0)
-            _cont.add_linear_series(n_h_vals - 1, {'h_0': h_vals[0]}, keep_bisections=False)
-            _sol_set_sweep_h = _cont.run_continuation()
-            return _sol_set_sweep_h
-
-        # Get solution set for first v_val
         sol0 = sol_set.solutions[-1]
-        sol_set_sweep = sweep_altitudes(sol0)
+        h0_0 = sol0.k[idx_h0]
+        v0_0 = sol0.k[idx_v0]
+        vf = sol0.k[idx_vf]
+        e0 = mu/re - mu/(re + h0_0) + 0.5 * v0_0**2
+        v0_min = vf
+        h0_max = min(300e3, -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
+        h0_min = find_h_qdyn(e0, 1000., h0_0)
 
-        # Generate solution set for subsequent v_vals
-        for v_val in v_vals[1::]:
-            cont = giuseppe.continuation.ContinuationHandler(num_solver, sol0)
-            cont.add_linear_series(25, {'v_0': v_val})
-            sol0 = cont.run_continuation().solutions[-1]
-            _sol_set_v_val = sweep_altitudes(sol0)
-            sol_set_sweep.solutions.extend(_sol_set_v_val.solutions)
+        cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+        cont.add_custom_series(100, generate_energy_sweep_continuation(h0_0, h0_min), 'Const. energy')
+        sol_set_sweep1 = cont.run_continuation()
 
-        sol_set_sweep.save('sol_set_range_sweep_envelope.data')
+        cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+        cont.add_custom_series(100, generate_energy_sweep_continuation(h0_0, h0_max), 'Const. energy')
+        sol_set_sweep2 = cont.run_continuation()
 
-        # glide_dict_full = get_glide_slope()
-        # h_v_interp = sp.interpolate.PchipInterpolator(glide_dict_full['v'], glide_dict_full['h'])
-        # gam_v_interp = sp.interpolate.PchipInterpolator(glide_dict_full['v'], glide_dict_full['gam'])
-        #
-        # sol0 = sol_set.solutions[-1]
-        # v0_0 = v_scale_val * sol0.x[2, 0]
-        # v0_1 = v_vals[-1]
-        #
-        # idx_h0 = adiff_dual.annotations.constants.index('h_0')
-        # idx_v0 = adiff_dual.annotations.constants.index('v_0')
-        # idx_gam0 = adiff_dual.annotations.constants.index('gam_0')
-        #
-        # def glide_slope_continuation(previous_sol, frac_complete):
-        #     _v0 = v0_0 + frac_complete * (v0_1 - v0_0)
-        #     _h0 = h_v_interp(_v0)
-        #     _gam0 = gam_v_interp(_v0)
-        #     previous_sol.k[idx_h0] = _h0
-        #     previous_sol.k[idx_v0] = _v0
-        #     previous_sol.k[idx_gam0] = _gam0
-        #     return previous_sol.k
+        sol_set_sweep = deepcopy(sol_set_sweep2)
+        sol_set_sweep.solutions = deepcopy([
+            sol_set_sweep1.solutions[-1], sol_set_sweep1.solutions[0], sol_set_sweep2.solutions[-1]
+        ])
 
-        # cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
-        # cont.add_custom_series(200, get_next_constants=glide_slope_continuation, series_name='Glide Slope')
-        # cont.add_linear_series(25, {'h_0': h_vals[-1], 'gam_0': 0.})
-        # sol_set_glide_slope = cont.run_continuation()
+        sol_set_sweep.save('sol_set_range_sweep.data')
 
-        sol_set_sweep = giuseppe.SolutionSet([sol_set.solutions[-1]], annotations=adiff_dual.annotations)
+
 

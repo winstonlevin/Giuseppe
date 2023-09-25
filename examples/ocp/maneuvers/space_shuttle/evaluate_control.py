@@ -13,17 +13,17 @@ from glide_slope import get_glide_slope
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-COMPARE_SWEEP = False
-AOA_LAW = 'energy_climb'  # {weight, max_ld, energy_climb, 0}
+COMPARE_SWEEP = True
+AOA_LAW = 'max_ld'  # {weight, max_ld, energy_climb, 0}
 
-if COMPARE_SWEEP == 'max_range':
-    with open('sol_set_range_sweep_envelope.data', 'rb') as f:
+if COMPARE_SWEEP:
+    with open('sol_set_range_sweep.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[0]
 else:
     with open('sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)
-        sol = sols[0]
+        sol = sols[-1]
         sols = [sol]
 
 # Create Dicts
@@ -78,7 +78,7 @@ def generate_constant_ctrl(_const: float) -> Callable:
     return _const_control
 
 
-def alpha_max_ld(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+def alpha_max_ld_fun(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
     return alpha_max_ld
 
 
@@ -108,7 +108,7 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _g = mu/_r**2
 
     _load = _lift_glide / (g0 * mass) + _k_h * (_h_glide - _h) + _k_gam * (_gam_glide - _gam)
-    _load = saturate(_load, load_min, load_max)
+    # _load = saturate(_load, load_min, load_max)
     _lift = _load * g0 * mass
     _cl = _lift / _qdyn_s_ref
     _alpha = (_cl - CL0) / CLa
@@ -118,7 +118,7 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
 
 def generate_ctrl_law() -> Callable:
     if AOA_LAW == 'max_ld':
-        _aoa_ctrl = alpha_max_ld
+        _aoa_ctrl = alpha_max_ld_fun
     elif AOA_LAW == 'energy_climb':
         _aoa_ctrl = alpha_energy_climb
     else:
@@ -226,17 +226,23 @@ for idx, sol in enumerate(sols):
 
 # ---- PLOTTING --------------------------------------------------------------------------------------------------------
 gradient = mpl.colormaps['viridis'].colors
-
-n_cols = 100
-grad_idcs = np.int32(np.floor(np.linspace(0, 255, n_cols)))
 # if len(sols) == 1:
 #     grad_idcs = np.array((0,), dtype=np.int32)
 # else:
 #     grad_idcs = np.int32(np.floor(np.linspace(0, 255, len(sols))))
+gradient_arr = np.array(gradient).T
+idces = np.arange(0, gradient_arr.shape[1], 1)
+col0_interp = sp.interpolate.PchipInterpolator(idces, gradient_arr[0, :])
+col1_interp = sp.interpolate.PchipInterpolator(idces, gradient_arr[1, :])
+col2_interp = sp.interpolate.PchipInterpolator(idces, gradient_arr[2, :])
+val_max = 1.
 
 
 def cols_gradient(n):
-    return gradient[grad_idcs[int(n)]]
+    _col1 = float(col0_interp(n/val_max * idces[-1]))
+    _col2 = float(col1_interp(n/val_max * idces[-1]))
+    _col3 = float(col2_interp(n/val_max * idces[-1]))
+    return [_col1, _col2, _col3]
 
 
 t_label = r'$t$ [s]'
@@ -259,7 +265,7 @@ for idx, lab in enumerate(ylabs):
 
     for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
         # ax.plot(sol.t, sol.x[idx, :] * ndmult[idx] * ymult[idx], 'k--')
-        ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(100*opt_arr[jdx]))
+        ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(opt_arr[jdx]))
 
 fig_states.suptitle(title_str)
 fig_states.tight_layout()
@@ -273,9 +279,9 @@ ax_hv.set_ylabel(ylabs[0])
 for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
     ax_hv.plot(sol.x[2, :] * ndmult[2] * ymult[2], sol.x[0, :] * ndmult[2] * ymult[0], 'k--')
     ax_hv.plot(ivp_sol_dict['x'][2, :] * ymult[2], ivp_sol_dict['x'][0, :] * ymult[0],
-               color=cols_gradient(100*opt_arr[jdx]))
+               color=cols_gradient(opt_arr[jdx]))
 
-ax_hv.plot(glide_dict['v'], glide_dict['h'], 'k', label='Glide Slope', linewidth=2.)
+# ax_hv.plot(glide_dict['v'], glide_dict['h'], 'k', label='Glide Slope', linewidth=2.)
 ax_hv.set_xlim(left=glide_dict['v'][0], right=glide_dict['v'][-1])
 
 fig_hv.tight_layout()
