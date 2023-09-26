@@ -13,10 +13,10 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = False
-OPTIMIZATION = 'min_velocity'
+PLOT_SWEEP = True
+OPTIMIZATION = 'min_energy_loft'
 
-DATA = 1
+DATA = 2
 # SWEEP = 'gam'
 SWEEP = None
 
@@ -248,7 +248,7 @@ elif OPTIMIZATION == 'min_time':
     dcost_dt = 0*sol.t + 1.
     cost = sol.t[-1] - sol.t[0]
     cost_lab = r'$J(\Delta{t})$'
-elif OPTIMIZATION == 'min_energy':
+elif OPTIMIZATION == 'min_energy' or OPTIMIZATION == 'min_energy_loft':
     dh_dt = v * np.sin(gam)
     dg_dh = -2 * g / r
     dv_dt = -drag/mass - g * np.sin(gam)
