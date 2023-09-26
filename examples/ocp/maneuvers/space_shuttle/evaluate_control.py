@@ -130,19 +130,34 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
     _v = _x[2]
     _gam = _x[3]
     _r = _h + re
+    _g = mu/_r**2
     _e = mu/re - mu/_r + 0.5 * _v**2
+    _cgam = np.cos(_gam)
+    _tgam = np.tan(_gam)
+    _lift0 = mass * (_g - _v**2/_r) * _cgam
+    _qdyn_s_ref = 0.5 * atm.density(_h) * _v**2 * s_ref
 
     _h_glide = h_e_interp(_e)
-    _rg = re + _h_glide
+    _r_glide = re + _h_glide
+    _g_glide = mu/_r_glide
+    _v_glide = saturate(2 * (_e + mu / _r_glide - mu / re), 0., np.inf) ** 0.5
+    _qdyn_s_ref_glide = max(0.5 * atm.density(_h_glide) * _v_glide ** 2 * s_ref, 1.)
+    _lift_glide = mass * (_g_glide - _v_glide ** 2 / _r_glide)
+    _drag_glide = _qdyn_s_ref_glide * CD0 + CD1 * _lift_glide + CD2 / _qdyn_s_ref_glide * _lift_glide ** 2
 
-    CLg = CL_max_ld
-    CDg = CD_max_ld
-    _b = 2 * CL0/CLa + CD1*CL0/(CD2 * CLa) - 2 * CLg/CLa * np.cos(_gam)
-    _c = -CD0/CD2 + CD1/CD2 * CL0/CLa + (CDg/CD2 * _rg/_r - CD1/CD2 * CLg/CLa) * np.cos(_gam)
+    _beta = _lift0**2 + _qdyn_s_ref/CD2 * (-_r_glide/_r * _drag_glide * _cgam + CD1 * _lift0 + _qdyn_s_ref * CD0)
+    _lift = _lift0 + np.sign(_h_glide - _h) * max(0., _beta)**0.5
 
-    _alpha0 = -_b/2
-    _alpha = _alpha0 + np.sign(_h_glide - _h) * max(0., _alpha0**2 - _c)**0.5
+    # _beta = (_lift0 + 2 * _r_glide/_r * _drag_glide * _tgam)**2 \
+    #     + _qdyn_s_ref/CD2 * (-_r_glide/_r * _drag_glide * _cgam
+    #                          + CD1 * (_lift0 - 2 * _r_glide/_r * _drag_glide * _tgam)
+    #                          + _qdyn_s_ref * CD0)
+    # _lift = _lift0 + 2 * _r_glide/_r * _drag_glide * _tgam + np.sign(_h_glide - _h) * max(0., _beta)**0.5
+
+    _cl = _lift / _qdyn_s_ref
+    _alpha = (_cl - CL0) / CLa
     _alpha = saturate(_alpha, alpha_min, alpha_max)
+
     return _alpha
 
 
