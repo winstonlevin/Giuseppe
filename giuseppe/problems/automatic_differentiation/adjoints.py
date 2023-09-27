@@ -131,7 +131,7 @@ class ADiffAdjoints(VectorizedAdjoints):
                                        controls: np.ndarray, parameters: np.ndarray, constants: np.ndarray):
             _h_uu = np.asarray(self.ca_d2h_du2(independent, states, costates, controls, parameters, constants))
             if np.any(np.logical_or(np.isnan(_h_uu), np.isinf(_h_uu))):
-                return np.nan
+                return np.nan * np.empty((_h_uu.shape[0],))
             else:
                 return np.linalg.eigvals(_h_uu)
 
@@ -189,7 +189,7 @@ class ADiffAdjoints(VectorizedAdjoints):
         ) -> np.ndarray:
             # TODO vectorize eigenvalue calculation
             eig_h_uu = np.array([
-                np.asarray(self.ca_d2h_du2(ti, xi, lam_i, ui, p, k)) for ti, xi, lam_i, ui in zip(t, x.T, lam.T, u.T)
+                self.compute_control_convexity(ti, xi, lam_i, ui, p, k) for ti, xi, lam_i, ui in zip(t, x.T, lam.T, u.T)
             ]).T
             return eig_h_uu
 
