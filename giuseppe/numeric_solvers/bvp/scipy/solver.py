@@ -2,13 +2,14 @@ from typing import Union, Optional
 from warnings import warn
 
 import numpy as np
-from scipy.integrate import solve_bvp
+# from scipy.integrate import solve_bvp
 
 from giuseppe.data_classes import Solution
 from giuseppe.problems.protocols import BVP, Dual
 from giuseppe.problems.conversions import convert_dual_to_bvp, vectorize
 from .scipy_bvp_problem import SciPyBVP
 from .scipy_types import _scipy_bvp_sol
+from .modified_solve_bvp import solve_bvp
 
 
 class SciPySolver:
