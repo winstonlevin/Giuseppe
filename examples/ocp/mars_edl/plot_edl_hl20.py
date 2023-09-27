@@ -13,7 +13,7 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = True
+PLOT_SWEEP = False
 OPTIMIZATION = 'min_energy_loft'
 
 DATA = 2
@@ -575,7 +575,7 @@ if PLOT_AUXILIARY:
     ydata = ((dcost_dt,
              dcost_utm))
     ylabs = (cost_lab, lab_utm)
-    sup_title = f'J_UTM = {sol.cost}\nJ = {cost} [{abs(cost / sol.cost):.2%} of cost]'
+    sup_title = f'J_UTM = {sol.cost}\nJ = {cost} [DJ = {sol.cost - cost}]'
 
     fig_cost = plt.figure()
     axes_cost = []

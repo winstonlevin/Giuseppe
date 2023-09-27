@@ -29,7 +29,7 @@ hl20.add_state('gam_nd', '( lift / (mass * v) + (v/r - g/v) * cos(gam) ) / gam_s
 hl20.add_expression('dh_dt', 'v * sin(gam)')
 hl20.add_expression('dv_dt', '-drag/mass - g * sin(gam)')
 hl20.add_expression('dg_dh', '-2 * g / r')
-hl20.add_expression('de_dt', 'dh_dt * (dg_dh * h + g) + v * dv_dt')
+hl20.add_expression('de_dt', '- v * drag / mass')
 
 hl20.add_expression('h', 'h_nd * h_scale')
 hl20.add_expression('theta', 'theta_nd * theta_scale')
@@ -170,6 +170,7 @@ if OPTIMIZATION == 'max_range' or OPTIMIZATION == 'min_energy':
 
 # COST FUNCTIONAL
 hl20.add_constant('eps_cost_alpha', 1e-3)
+hl20.add_constant('offset_cost_alpha', 0.)
 hl20.add_constant('tf', 10.)
 
 if OPTIMIZATION == 'max_range':
@@ -190,7 +191,7 @@ if OPTIMIZATION == 'max_range':
 elif OPTIMIZATION == 'min_energy_loft':
     # For LOFT phase -- optimize h/V/gam to initial loft for given energy.
     # Minimum velocity (path cost = d(V)/dt -> min J = vf - v0)
-    hl20.set_cost('0', 'de_dt/energy_scale + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
+    hl20.set_cost('0', 'de_dt/energy_scale + eps_cost_alpha * ((alpha - offset_cost_alpha) / alpha_scale)**2', '0')
 
     # Initial States
     hl20.add_constraint('initial', 't')
@@ -208,7 +209,7 @@ elif OPTIMIZATION == 'min_time':
     # For DIVE phase -- optimize time taken to reach cruise condition.
     # Minimum time (path cost = 1 -> min J = tf - t0)
     # Since Huu = 0 when a discontinuity in control exists, add small control cost to smooth discontinuity.
-    hl20.set_cost('0', '1 + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
+    hl20.set_cost('0', '1 + eps_cost_alpha * ((alpha - offset_cost_alpha) / alpha_scale)**2', '0')
 
     # Initial States
     hl20.add_constraint('initial', 't')
@@ -225,7 +226,7 @@ elif OPTIMIZATION == 'min_time':
 elif OPTIMIZATION == 'min_energy':
     # Cost is change in energy min(Ef - E0) -> L = dE/dt
     # Since Huu = 0 when a discontinuity in control exists, add small control cost to smooth discontinuity.
-    hl20.set_cost('0', 'de_dt/energy_scale + eps_cost_alpha * (alpha / alpha_scale)**2', '0')
+    hl20.set_cost('0', 'de_dt/energy_scale + eps_cost_alpha * ((alpha - offset_cost_alpha) / alpha_scale)**2', '0')
 
     # Initial States
     hl20.add_constraint('initial', 't')
@@ -290,7 +291,8 @@ immutable_constants = (
     'mu', 'rm', 'h_ref', 'rho0',
     'CL0', 'CL1', 'CD0', 'CD1', 'CD2', 's_ref', 'mass',
     'h_scale', 'theta_scale', 'v_scale', 'gam_scale',
-    'n_max', 'n_min', 'eps_n'
+    'n_max', 'n_min', 'eps_n',
+    'eps_cost_alpha', 'offset_cost_alpha'
 )
 
 alphaf = 29.5 * d2r
@@ -382,6 +384,7 @@ min_eig_u_uu = 1e-3
 idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
 idx_tf = hl20_dual.annotations.constants.index('tf')
 idx_energy0 = hl20_dual.annotations.constants.index('energy0')
+idx_offset_cost_alpha = hl20_dual.annotations.constants.index('offset_cost_alpha')
 tf_0 = seed_sol.t[-1]
 tf_1 = 8. * 60.  # Final time [s]
 
@@ -400,20 +403,27 @@ def time_continuation(previous_sol, frac_complete):
     return _constants
 
 
-# def generate_energy_continuation(e0):
-#     def energy_continuation(previous_sol, frac_complete):
-#         _constants = previous_sol.k.copy()
-#
-#         # Increment initial energy
-#         _constants[idx_energy0] = tf_0 + frac_complete * (tf_1 - tf_0)
-#
-#         # Increment eps_cost_alpha is Huu near singular
-#         _min_eig_h_uu = np.min(previous_sol.eig_h_uu)
-#         if _min_eig_h_uu < min_eig_u_uu:
-#             _constants[idx_eps_cost_alpha] += min_eig_u_uu - _min_eig_h_uu
-#
-#         return _constants
-#     return energy_continuation
+def generate_energy_continuation(_e0_0, _e0_f, _min_eig_h_uu):
+    def energy_continuation(previous_sol, frac_complete):
+        _constants = previous_sol.k.copy()
+
+        # Increment initial energy
+        _constants[idx_energy0] = _e0_0 + frac_complete * (_e0_f - _e0_0)
+
+        # Change offset to mean value (i.e. punish deviation from mean)
+        # (weighted by time)
+        _dt = np.diff(previous_sol.t)
+        _alpha_mean = np.sum(previous_sol.u[0, :-1] * _dt) * alpha_scale / (previous_sol.t[-1] - previous_sol.t[0])
+        _constants[idx_offset_cost_alpha] = _alpha_mean
+
+        # Increment eps_cost_alpha to keep min Huu near specified minimum via positive control effort cost
+        __min_eig_h_uu = np.min(previous_sol.eig_h_uu)
+        _constants[idx_eps_cost_alpha] += _min_eig_h_uu - __min_eig_h_uu
+        if _constants[idx_eps_cost_alpha] < 0.:
+            _constants[idx_eps_cost_alpha] = 0.
+
+        return _constants
+    return energy_continuation
 
 
 # Use continuations to achieve desired terminal conditions
@@ -428,10 +438,14 @@ if OPTIMIZATION == 'max_range':
     # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_energy_loft':
+    e0_0 = 2.5e5
+    e0_f = 3e5
+    min_eig_h_uu = 0.
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
-    cont.add_logarithmic_series(100, {'energy0': 2.5e5})
+    cont.add_logarithmic_series(100, {'energy0': e0_0})
     cont.add_linear_series(10, {'gam0': 0.})
+    # cont.add_custom_series(100, generate_energy_continuation(e0_0, e0_f, min_eig_h_uu), 'E0')
     cont.add_linear_series_until_failure({'energy0': 1e3})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_time':
