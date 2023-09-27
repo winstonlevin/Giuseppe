@@ -24,11 +24,15 @@ if DATA == 0:
     with open('guess_hl20.data', 'rb') as f:
         sol = pickle.load(f)
         sol.cost = np.nan
-    sols = [sol]
+        sols = [sol]
 elif DATA == 1:
     with open('seed_sol_hl20.data', 'rb') as f:
         sol = pickle.load(f)
-    sols = [sol]
+        sols = [sol]
+elif DATA == 3:
+    with open('damned_sols_hl20.data', 'rb') as f:
+        sols = pickle.load(f)
+        sol = sols[-1]
 else:
     if SWEEP == 'gam':
         with open('sol_set_hl20_gam.data', 'rb') as f:
