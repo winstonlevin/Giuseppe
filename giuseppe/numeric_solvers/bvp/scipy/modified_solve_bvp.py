@@ -370,7 +370,7 @@ def prepare_sys(n, m, k, fun, bc, fun_jac, bc_jac, x, h):
     return col_fun, sys_jac
 
 
-def solve_newton(n, m, h, col_fun, bc, jac, y, p, B, bvp_tol, bc_tol):
+def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
     """Solve the nonlinear collocation system by a Newton method.
 
     This is a simple Newton method with a backtracking line search. As
@@ -403,6 +403,10 @@ def solve_newton(n, m, h, col_fun, bc, jac, y, p, B, bvp_tol, bc_tol):
         Function computing the Jacobian of the whole system (including
         collocation and boundary condition residuals). It is supposed to
         return csc_matrix.
+    feas : callable
+        Function determining if current step is feasible. Returns a boolean.
+    x : ndarray, shape (m,)
+        Mesh nodes.
     y : ndarray, shape (n, m)
         Initial guess for the function values at the mesh nodes.
     p : ndarray, shape (k,)
@@ -459,7 +463,7 @@ def solve_newton(n, m, h, col_fun, bc, jac, y, p, B, bvp_tol, bc_tol):
 
     # Maximum number of backtracking steps, the minimum step is then
     # tau ** n_trial.
-    n_trial = 4
+    n_trial = 7  # Changed from 4. Minimum step is 0.007 instead of 0.06
 
     col_res, y_middle, f, f_middle = col_fun(y, p)
     bc_res = bc(y[:, 0], y[:, -1], p)
@@ -497,7 +501,7 @@ def solve_newton(n, m, h, col_fun, bc, jac, y, p, B, bvp_tol, bc_tol):
 
             step_new = LU.solve(res)
             cost_new = np.dot(step_new, step_new)
-            if cost_new < (1 - 2 * alpha * sigma) * cost:
+            if cost_new < (1 - 2 * alpha * sigma) * cost and feas(x, y_new, p_new):
                 break
 
             if trial < n_trial:
@@ -660,7 +664,7 @@ def modify_mesh(x, insert_1, insert_2):
     )))
 
 
-def wrap_functions(fun, bc, fun_jac, bc_jac, k, a, S, D, dtype):
+def wrap_functions(fun, bc, fun_jac, bc_jac, fun_feas, k, a, S, D, dtype):
     """Wrap functions for unified usage in the solver."""
     if fun_jac is None:
         fun_jac_wrapped = None
@@ -684,6 +688,12 @@ def wrap_functions(fun, bc, fun_jac, bc_jac, k, a, S, D, dtype):
                 dbc_dya, dbc_dyb = bc_jac(ya, yb)
                 return (np.asarray(dbc_dya, dtype),
                         np.asarray(dbc_dyb, dtype), None)
+        if fun_feas is not None:
+            def fun_feas_wrapped(x, y, _):
+                return fun_feas(x, y)
+        else:
+            def fun_feas_wrapped(_, __, ___):
+                return True
     else:
         def fun_p(x, y, p):
             return np.asarray(fun(x, y, p), dtype)
@@ -701,6 +711,12 @@ def wrap_functions(fun, bc, fun_jac, bc_jac, k, a, S, D, dtype):
                 dbc_dya, dbc_dyb, dbc_dp = bc_jac(ya, yb, p)
                 return (np.asarray(dbc_dya, dtype), np.asarray(dbc_dyb, dtype),
                         np.asarray(dbc_dp, dtype))
+
+        if fun_feas is not None:
+            fun_feas_wrapped = fun_feas
+        else:
+            def fun_feas_wrapped(_, __, ___):
+                return True
 
     if S is None:
         fun_wrapped = fun_p
@@ -730,10 +746,10 @@ def wrap_functions(fun, bc, fun_jac, bc_jac, k, a, S, D, dtype):
 
                 return df_dy, df_dp
 
-    return fun_wrapped, bc_wrapped, fun_jac_wrapped, bc_jac_wrapped
+    return fun_wrapped, bc_wrapped, fun_jac_wrapped, bc_jac_wrapped, fun_feas_wrapped
 
 
-def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None,
+def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas=None,
               tol=1e-3, max_nodes=1000, verbose=0, bc_tol=None):
     """Solve a boundary value problem for a system of ODEs.
 
@@ -826,6 +842,9 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None,
 
         If `bc_jac` is None (default), the derivatives will be estimated by
         the forward finite differences.
+    fun_feas : callable or None, optional
+        Function returning boolean whether current guess is feasible. If the guess is infeasible, the step will be
+        rejected. The calling signature is ``fun_feas(x, y)``, or ``fun_feas(x, y, p)`` if parameters are present.
     tol : float, optional
         Desired tolerance of the solution. If we define ``r = y' - f(x, y)``,
         where y is the found solution, then the solver tries to achieve on each
@@ -1082,8 +1101,8 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None,
     # Maximum number of iterations
     max_iteration = 10
 
-    fun_wrapped, bc_wrapped, fun_jac_wrapped, bc_jac_wrapped = wrap_functions(
-        fun, bc, fun_jac, bc_jac, k, a, S, D, dtype)
+    fun_wrapped, bc_wrapped, fun_jac_wrapped, bc_jac_wrapped, fun_feas_wrapped = wrap_functions(
+        fun, bc, fun_jac, bc_jac, fun_feas, k, a, S, D, dtype)
 
     f = fun_wrapped(x, y, p)
     if f.shape != y.shape:
@@ -1105,8 +1124,8 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None,
 
         col_fun, jac_sys = prepare_sys(n, m, k, fun_wrapped, bc_wrapped,
                                        fun_jac_wrapped, bc_jac_wrapped, x, h)
-        y, p, singular = solve_newton(n, m, h, col_fun, bc_wrapped, jac_sys,
-                                      y, p, B, tol, bc_tol)
+        y, p, singular = solve_newton(n, m, h, col_fun, bc_wrapped, jac_sys, fun_feas_wrapped,
+                                      x, y, p, B, tol, bc_tol)
         iteration += 1
 
         col_res, y_middle, f, f_middle = collocation_fun(fun_wrapped, y,
