@@ -57,8 +57,7 @@ hl20.add_expression('alpha_max_drag', 'pi/2 - CD1 / (2 * CD2)')  # Maximum drag 
 
 # Energy
 hl20.add_expression('energy', 'mu/rm - mu/r + 0.5 * v**2')
-hl20.add_expression('g_scale', 'mu/(rm + h_scale)**2')
-hl20.add_expression('energy_scale', 'g_scale * h_scale + 0.5 * v_scale**2')
+hl20.add_expression('energy_scale', 'mu/rm - mu/(rm + h_scale) + 0.5 * v_scale**2')
 
 # Constants
 mu = 42828.371901e9
@@ -105,6 +104,7 @@ h_scale = 1e4
 theta_scale = d2r
 v_scale = 1e3
 gam_scale = 5 * d2r
+energy_scale = mu/rm - mu/(rm + h_scale) + 0.5 * v_scale**2
 
 if OPTIMIZATION == 'min_energy':
     alpha_scale = 90 * d2r
@@ -168,6 +168,21 @@ if OPTIMIZATION == 'max_range' or OPTIMIZATION == 'min_energy':
         )
     )
 
+# Angle of Attack Constraint
+alpha_min = -np.pi/2
+alpha_max = np.pi/2
+eps_alpha = 1e-3
+hl20.add_constant('alpha_min', alpha_min)
+hl20.add_constant('alpha_max', alpha_max)
+hl20.add_constant('eps_alpha', eps_alpha)
+if OPTIMIZATION == 'min_energy_loft':
+    hl20.add_inequality_constraint(
+        'path', 'alpha_nd', 'alpha_min / alpha_scale', 'alpha_max / alpha_scale',
+        regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
+            'eps_alpha', method='utm'
+        )
+    )
+
 # COST FUNCTIONAL
 hl20.add_constant('eps_cost_alpha', 1e-3)
 hl20.add_constant('offset_cost_alpha', 0.)
@@ -191,7 +206,8 @@ if OPTIMIZATION == 'max_range':
 elif OPTIMIZATION == 'min_energy_loft':
     # For LOFT phase -- optimize h/V/gam to initial loft for given energy.
     # Minimum velocity (path cost = d(V)/dt -> min J = vf - v0)
-    hl20.set_cost('0', 'de_dt/energy_scale + eps_cost_alpha * ((alpha - offset_cost_alpha) / alpha_scale)**2', '0')
+    hl20.set_cost('0', 'de_dt/energy_scale', '0')
+    # hl20.set_cost('0', 'dv_dt/v_scale + eps_cost_alpha * ((alpha - offset_cost_alpha) / alpha_scale)**2', '0')
 
     # Initial States
     hl20.add_constraint('initial', 't')
@@ -242,7 +258,7 @@ else:
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
-    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
+    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=False)
     num_solver = giuseppe.numeric_solvers.SciPySolver(
         hl20_dual, verbose=False, max_nodes=100, node_buffer=15, bc_tol=1e-8
     )
@@ -303,10 +319,12 @@ rhof = rho0 * np.exp(-hf/h_ref)
 CLf = CL0 + CL1 * alphaf
 vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 
-if OPTIMIZATION == 'min_energy_loft':
-    idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
-    hl20_dual.default_values[idx_eps_cost_alpha] = 1e-10
+idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
+idx_eps_alpha = hl20_dual.annotations.constants.index('eps_alpha')
+idx_alpha_min = hl20_dual.annotations.constants.index('alpha_min')
+idx_alpha_max = hl20_dual.annotations.constants.index('alpha_max')
 
+if OPTIMIZATION == 'min_energy_loft':
     k_max_d = 0.2
     alpha_guess = k_max_d * alpha_max_drag_positive + (1 - k_max_d) * alpha_max_lift
     h0_guess = 10e3
@@ -328,7 +346,6 @@ elif OPTIMIZATION == 'min_time':
         fit_states=False, reverse=True
     )
 elif OPTIMIZATION == 'min_energy':
-    idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
     hl20_dual.default_values[idx_eps_cost_alpha] = 1e-10
 
     # Guess Control
@@ -403,7 +420,7 @@ def time_continuation(previous_sol, frac_complete):
     return _constants
 
 
-def generate_energy_continuation(_e0_0, _e0_f, _min_eig_h_uu):
+def generate_energy_continuation(_e0_0, _e0_f, _frac_utm):
     def energy_continuation(previous_sol, frac_complete):
         _constants = previous_sol.k.copy()
 
@@ -416,11 +433,21 @@ def generate_energy_continuation(_e0_0, _e0_f, _min_eig_h_uu):
         _alpha_mean = np.sum(previous_sol.u[0, :-1] * _dt) * alpha_scale / (previous_sol.t[-1] - previous_sol.t[0])
         _constants[idx_offset_cost_alpha] = _alpha_mean
 
-        # Increment eps_cost_alpha to keep min Huu near specified minimum via positive control effort cost
-        __min_eig_h_uu = np.min(previous_sol.eig_h_uu)
-        _constants[idx_eps_cost_alpha] += _min_eig_h_uu - __min_eig_h_uu
-        if _constants[idx_eps_cost_alpha] < 0.:
-            _constants[idx_eps_cost_alpha] = 0.
+        # Modify eps_alpha to be _frac_utm of cost
+        _h0 = previous_sol.x[0, 0] * h_scale
+        _v0 = previous_sol.x[2, 0] * v_scale
+        _e0 = mu/rm - mu/(rm + _h0) - 0.5 * _v0**2
+
+        _hf = previous_sol.x[0, -1] * h_scale
+        _vf = previous_sol.x[2, -1] * v_scale
+        _ef = mu/rm - mu/(rm + _hf) - 0.5 * _vf**2
+
+        _cost_raw = (_ef - _e0) / energy_scale
+        _cost_total = previous_sol.cost
+        __frac_utm = abs(_cost_total - _cost_raw) / _cost_total
+        _eps_alpha = previous_sol.k[idx_eps_alpha]
+        _eps_alpha_new = max(_eps_alpha * _frac_utm / __frac_utm, 1e-10)
+        _constants[idx_eps_alpha] = _eps_alpha_new
 
         return _constants
     return energy_continuation
@@ -440,13 +467,14 @@ if OPTIMIZATION == 'max_range':
 elif OPTIMIZATION == 'min_energy_loft':
     e0_0 = 2.5e5
     e0_f = 3e5
-    min_eig_h_uu = 0.
+    frac_eps_alpha = 1e-3
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_logarithmic_series(100, {'energy0': e0_0})
     cont.add_linear_series(10, {'gam0': 0.})
-    # cont.add_custom_series(100, generate_energy_continuation(e0_0, e0_f, min_eig_h_uu), 'E0')
-    cont.add_linear_series_until_failure({'energy0': 1e3})
+    cont.add_linear_series(10, {'alpha_min': -1., 'alpha_max': 1.})
+    cont.add_custom_series(100, generate_energy_continuation(e0_0, e0_f, frac_eps_alpha), 'E0')
+    # cont.add_linear_series_until_failure({'energy0': 1e3})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_time':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)

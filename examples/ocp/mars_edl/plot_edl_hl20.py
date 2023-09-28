@@ -1,6 +1,6 @@
 from typing import List
 import pickle
-import matplotlib.pyplot  as plt
+import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib as mpl
 from scipy.interpolate import PchipInterpolator
@@ -13,7 +13,7 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = False
+PLOT_SWEEP = True
 OPTIMIZATION = 'min_energy_loft'
 
 DATA = 2
