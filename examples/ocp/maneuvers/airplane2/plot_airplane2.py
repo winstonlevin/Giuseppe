@@ -24,7 +24,7 @@ elif DATA == 1:
 elif DATA == 3:
     with open('sol_set_range_sweep.data', 'rb') as f:
         sols = pickle.load(f)
-        sol = sols[-1]
+        sol = sols[0]
 else:
     with open('sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)

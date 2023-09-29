@@ -6,8 +6,7 @@ import numpy as np
 import matplotlib as mpl
 import scipy as sp
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, CL0, CLa, alpha_max_ld,\
-    CL_max_ld, CD_max_ld, dens_fun, atm
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, CL0, CLa_fun, max_ld_fun, atm
 from glide_slope import get_glide_slope
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
@@ -15,7 +14,7 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-AOA_LAW = 'lam_h0'  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
+AOA_LAW = 'max_ld'  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
 
 if COMPARE_SWEEP:
     with open('sol_set_range_sweep.data', 'rb') as f:
@@ -57,15 +56,17 @@ thrust_frac_max = 1.
 # STATE LIMITS
 v_min = 10.
 h_min = 0.
-gam_max = 90 * np.pi / 180
+gam_max = np.inf * 90 * np.pi / 180
 gam_min = -gam_max
 
 limits_dict = {'h_min': h_min, 'v_min': v_min, 'gam_min': gam_min, 'gam_max': gam_max, 'e_min': 0.}
 
 h_e_interp = sp.interpolate.PchipInterpolator(glide_dict['E'], glide_dict['h'])
 dh_de_interp = h_e_interp.derivative()
-k_h_interp = sp.interpolate.PchipInterpolator(glide_dict['E'], glide_dict['k_h'])
-k_gam_interp = sp.interpolate.PchipInterpolator(glide_dict['E'], glide_dict['k_gam'])
+idx_valid_k_h = np.where(np.logical_not(np.isnan(glide_dict['k_h'])))
+k_h_interp = sp.interpolate.PchipInterpolator(glide_dict['E'][idx_valid_k_h], glide_dict['k_h'][idx_valid_k_h])
+idx_valid_k_gam = np.where(np.logical_not(np.isnan(glide_dict['k_gam'])))
+k_gam_interp = sp.interpolate.PchipInterpolator(glide_dict['E'][idx_valid_k_gam], glide_dict['k_gam'][idx_valid_k_gam])
 
 
 # ---- DYNAMICS & CONTROL LAWS -----------------------------------------------------------------------------------------
@@ -80,7 +81,13 @@ def generate_constant_ctrl(_const: float) -> Callable:
 
 
 def alpha_max_ld_fun(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
-    return alpha_max_ld
+    _h = _x[0]
+    _v = _x[2]
+    _mach = _v / atm.speed_of_sound(_h)
+    _alpha_max_ld = max_ld_fun(
+        _CLa=float(CLa_fun(_mach)), _CD0=float(CD0_fun(_mach)), _CD2=float(CD2_fun(_mach))
+    )['alpha']
+    return _alpha_max_ld
 
 
 def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
@@ -90,6 +97,7 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _gam = _x[3]
     _e = mu/re - mu/(re + _h) + 0.5 * _v**2
     _qdyn_s_ref = 0.5 * atm.density(_h) * _v**2 * s_ref
+    _mach = _v / atm.speed_of_sound(_h)
 
     # Conditions at glide slope
     _h_glide = h_e_interp(_e)
@@ -100,9 +108,13 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _r_glide = re + _h_glide
     _g_glide = mu / _r_glide ** 2
     _v_glide = saturate(2 * (_e + mu/_r_glide - mu/re), 0., np.inf)**0.5
+
     _qdyn_s_ref_glide = max(0.5 * atm.density(_h_glide) * _v_glide**2 * s_ref, 1.)
+    _mach_glide = _v_glide / atm.speed_of_sound(_h_glide)
     _lift_glide = mass * (_g_glide - _v_glide ** 2 / _r_glide)
-    _drag_glide = _qdyn_s_ref_glide * CD0 + CD1 * _lift_glide + CD2/_qdyn_s_ref_glide * _lift_glide**2
+    _CD0_glide = float(CD0_fun(_mach_glide))
+    _CD2_glide = float(CD2_fun(_mach_glide))
+    _drag_glide = _qdyn_s_ref_glide * _CD0_glide + CD1 * _lift_glide + _CD2_glide/_qdyn_s_ref_glide * _lift_glide**2
     _gam_glide = np.arcsin(saturate(-_drag_glide / mass * _dh_de_glide, -1., 1.))
 
     _r = re + _h
@@ -117,7 +129,8 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     # _load = saturate(_load, load_min, load_max)
     _lift = _load * g0 * mass
     _cl = _lift / _qdyn_s_ref
-    _alpha = (_cl - CL0) / CLa
+    _CLa = float(CLa_fun(_mach))
+    _alpha = (_cl - CL0) / _CLa
     _alpha = saturate(_alpha, alpha_min, alpha_max)
     return _alpha
 
@@ -129,6 +142,7 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
     _h = _x[0]
     _v = _x[2]
     _gam = _x[3]
+
     _r = _h + re
     _g = mu/_r**2
     _e = mu/re - mu/_r + 0.5 * _v**2
@@ -136,16 +150,27 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
     _tgam = np.tan(_gam)
     _lift0 = mass * (_g - _v**2/_r) * _cgam
     _qdyn_s_ref = 0.5 * atm.density(_h) * _v**2 * s_ref
+    _mach = _v / atm.speed_of_sound(_h)
 
     _h_glide = h_e_interp(_e)
-    _r_glide = re + _h_glide
-    _g_glide = mu/_r_glide
-    _v_glide = saturate(2 * (_e + mu / _r_glide - mu / re), 0., np.inf) ** 0.5
-    _qdyn_s_ref_glide = max(0.5 * atm.density(_h_glide) * _v_glide ** 2 * s_ref, 1.)
-    _lift_glide = mass * (_g_glide - _v_glide ** 2 / _r_glide)
-    _drag_glide = _qdyn_s_ref_glide * CD0 + CD1 * _lift_glide + CD2 / _qdyn_s_ref_glide * _lift_glide ** 2
+    _dh_de_glide = dh_de_interp(_e)
 
-    _beta = _lift0**2 + _qdyn_s_ref/CD2 * (-_r_glide/_r * _drag_glide * _cgam + CD1 * _lift0 + _qdyn_s_ref * CD0)
+    _r_glide = re + _h_glide
+    _g_glide = mu / _r_glide ** 2
+    _v_glide = saturate(2 * (_e + mu / _r_glide - mu / re), 0., np.inf) ** 0.5
+
+    _qdyn_s_ref_glide = max(0.5 * atm.density(_h_glide) * _v_glide ** 2 * s_ref, 1.)
+    _mach_glide = _v_glide / atm.speed_of_sound(_h_glide)
+    _lift_glide = mass * (_g_glide - _v_glide ** 2 / _r_glide)
+    _CD0_glide = float(CD0_fun(_mach_glide))
+    _CD2_glide = float(CD2_fun(_mach_glide))
+    _drag_glide = _qdyn_s_ref_glide * _CD0_glide + CD1 * _lift_glide + _CD2_glide / _qdyn_s_ref_glide * _lift_glide ** 2
+    _gam_glide = np.arcsin(saturate(-_drag_glide / mass * _dh_de_glide, -1., 1.))
+
+    _CLa = float(CLa_fun(_mach))
+    _CD0 = float(CD0_fun(_mach))
+    _CD2 = float(CD2_fun(_mach))
+    _beta = _lift0**2 + _qdyn_s_ref/_CD2 * (-_r_glide/_r * _drag_glide * _cgam + CD1 * _lift0 + _qdyn_s_ref * _CD0)
     _lift = _lift0 + np.sign(_h_glide - _h) * max(0., _beta)**0.5
 
     # _beta = (_lift0 + 2 * _r_glide/_r * _drag_glide * _tgam)**2 \
@@ -155,7 +180,7 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
     # _lift = _lift0 + 2 * _r_glide/_r * _drag_glide * _tgam + np.sign(_h_glide - _h) * max(0., _beta)**0.5
 
     _cl = _lift / _qdyn_s_ref
-    _alpha = (_cl - CL0) / CLa
+    _alpha = (_cl - CL0) / _CLa
     _alpha = saturate(_alpha, alpha_min, alpha_max)
 
     return _alpha
@@ -173,10 +198,11 @@ def generate_ctrl_law(_u_interp=None) -> Callable:
             _h = _x[0]
             _v = _x[2]
             _qdyn_s_ref = 0.5 * atm.density(_h) * _v ** 2 * s_ref
+            _mach = _v / atm.speed_of_sound(_h)
             _load = _u_interp(_t)
             _cl = _load * g0 * mass / _qdyn_s_ref
-            _alpha = (_cl - CL0) / CLa
-            _alpha = saturate(_alpha, alpha_min, alpha_max)
+            _alpha = (_cl - CL0) / float(CLa_fun(_mach))
+            # _alpha = saturate(_alpha, alpha_min, alpha_max)
             return _alpha
     else:
         _aoa_ctrl = generate_constant_ctrl(0.)
@@ -195,6 +221,11 @@ def eom(_t: float, _x: np.array, _u: np.array, _p_dict: dict, _k_dict: dict) -> 
     _gam = _x[3]
 
     _alpha = _u[0]
+
+    _mach = _v / atm.speed_of_sound(_h)
+    CLa = float(CLa_fun(_mach))
+    CD0 = float(CD0_fun(_mach))
+    CD2 = float(CD2_fun(_mach))
 
     _r = _h + re
     _g = mu / _r**2
@@ -270,13 +301,25 @@ for idx, sol in enumerate(sols):
         fun=lambda t, x: eom(t, x, ctrl_law(t, x, p_dict, k_dict), p_dict, k_dict),
         t_span=t_span,
         y0=x0,
-        events=termination_events
+        events=termination_events,
+        rtol=1e-6, atol=1e-10
     )
+
+    # Calculate Control
+    alpha_sol = np.empty(shape=(ivp_sol.t.shape[0],))
+    for jdx, (t, x) in enumerate(zip(ivp_sol.t, ivp_sol.y.T)):
+        alpha_sol[jdx] = ctrl_law(t, x, p_dict, k_dict)
+
+    # Wrap FPA
+    _fpa_unwrapped = ivp_sol.y[3, :]
+    _fpa = (_fpa_unwrapped + np.pi) % (2 * np.pi) - np.pi
+    ivp_sol.y[3, :] = _fpa
 
     ivp_sols_dict[idx] = {
         't': ivp_sol.t,
         'x': ivp_sol.y,
-        'optimality': ivp_sol.y[1, -1] / x_dict['tha'][-1]
+        'optimality': ivp_sol.y[1, -1] / x_dict['tha'][-1],
+        'alpha': alpha_sol
     }
 
     h0_arr[idx] = x_dict['h_nd'][0] * k_dict['h_scale']
@@ -330,6 +373,15 @@ for idx, lab in enumerate(ylabs):
 
 fig_states.suptitle(title_str)
 fig_states.tight_layout()
+
+fig_control = plt.figure()
+ax_control = fig_control.add_subplot(111)
+ax_control.grid()
+ax_control.set_xlabel(t_label)
+ax_control.set_ylabel(r'$\alpha$ [deg]')
+ax = ax_control
+for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
+    ax.plot(ivp_sol_dict['t'], ivp_sol_dict['alpha'] * r2d, color=cols_gradient(min(1., opt_arr[jdx])))
 
 fig_hv = plt.figure()
 ax_hv = fig_hv.add_subplot(111)

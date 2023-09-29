@@ -332,7 +332,7 @@ if __name__ == '__main__':
         # )
         # h0_max = min(atm.h_layers[-1], -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
         h0_max = 145e3
-        h0_min = 0.  # Compatible with e0 chosen from Mach max.
+        h0_min = 100.  # Compatible with e0 chosen from Mach max.
 
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
         cont.add_custom_series(
