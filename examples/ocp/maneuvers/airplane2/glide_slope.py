@@ -4,14 +4,15 @@ import casadi as ca
 import numpy as np
 import scipy as sp
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, dens_fun, sped_fun
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CLa_fun, CD0_fun, CD1, CD2_fun, max_ld_fun, \
+    atm, dens_fun, sped_fun
 
 _h_atm_max = atm.h_layers[-1]
 _f_zero_converged_flag = 1
 
 
 def get_glide_slope(e_vals: Optional[np.array] = None,
-                    h_min: float = 0., h_max: float = _h_atm_max,
+                    h_min: float = 0., h_max: float = 70e3,
                     mach_min: float = 0.3, mach_max: float = 3.5,
                     manual_derivation=False, energy_state=True, correct_gam=True, flat_earth=False,
                     nondimensionalize_control=True, remove_nan=True, derive_with_e=False) -> dict:

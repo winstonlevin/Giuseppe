@@ -6,27 +6,28 @@ import pickle
 
 import giuseppe
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, sped_fun
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, lut_data
 from glide_slope import get_glide_slope
 
 SWEEP_SOLUTION_SPACE = False
 
+
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb()
 
 # Independent Variables
-t = ca.SX.sym('t', 1)
+t = ca.MX.sym('t', 1)
 ocp.set_independent(t)
 
 # Constants
 weight0 = g0 * mass
 
 # State Variables
-h_nd = ca.SX.sym('h_nd', 1)
-h_scale = ca.SX.sym('h_scale', 1)
-tha = ca.SX.sym('tha', 1)
-v_nd = ca.SX.sym('v_nd', 1)
-v_scale = ca.SX.sym('v_scale', 1)
-gam = ca.SX.sym('gam', 1)
+h_nd = ca.MX.sym('h_nd', 1)
+h_scale = ca.MX.sym('h_scale', 1)
+tha = ca.MX.sym('tha', 1)
+v_nd = ca.MX.sym('v_nd', 1)
+v_scale = ca.MX.sym('v_scale', 1)
+gam = ca.MX.sym('gam', 1)
 
 h = h_nd * h_scale
 v = v_nd * v_scale
@@ -38,9 +39,11 @@ ocp.add_constant(v_scale, v_scale_val)
 
 # Atmosphere Func
 _, __, rho = atm.get_ca_atm_expr(h)
+sped = atm.get_ca_speed_of_sound_expr(h)
+mach = v / sped
 
 # Add Controls
-lift_nd = ca.SX.sym('lift_nd', 1)
+lift_nd = ca.MX.sym('lift_nd', 1)
 lift = lift_nd * weight0
 
 ocp.add_control(lift_nd)
@@ -49,6 +52,8 @@ ocp.add_control(lift_nd)
 r = re + h
 g = mu / r**2
 dyn_pres = 0.5 * rho * v ** 2
+CD0 = CD0_fun(mach)
+CD2 = CD2_fun(mach)
 drag = CD0 * s_ref * dyn_pres + CD1 * lift + CD2 / (s_ref * dyn_pres) * lift**2
 
 # Energy
@@ -66,11 +71,11 @@ ocp.add_state(gam, lift / (mass * v) + ca.cos(gam) * (v / r - g / v))
 ocp.set_cost(0, 0, -tha)
 
 # Boundary Values
-# e_0 = ca.SX.sym('e_0', 1)
-h_0 = ca.SX.sym('h_0', 1)
-tha_0 = ca.SX.sym('tha_0', 1)
-v_0 = ca.SX.sym('v_0', 1)
-gam_0 = ca.SX.sym('gam_0', 1)
+# e_0 = ca.MX.sym('e_0', 1)
+h_0 = ca.MX.sym('h_0', 1)
+tha_0 = ca.MX.sym('tha_0', 1)
+v_0 = ca.MX.sym('v_0', 1)
+gam_0 = ca.MX.sym('gam_0', 1)
 
 h_0_val = 260_000
 v_0_val = 25_600
@@ -83,12 +88,12 @@ ocp.add_constant(tha_0, 0.)
 ocp.add_constant(v_0, v_0_val)
 ocp.add_constant(gam_0, gam_0_val)
 
-e_f = ca.SX.sym('e_f', 1)
+e_f = ca.MX.sym('e_f', 1)
 e_f_val = mu/re - mu/(re + 80e3) + 0.5 * 2_500.**2
 ocp.add_constant(e_f, e_f_val)
-h_f = ca.SX.sym('h_f', 1)
-v_f = ca.SX.sym('v_f', 1)
-gam_f = ca.SX.sym('gam_f', 1)
+h_f = ca.MX.sym('h_f', 1)
+v_f = ca.MX.sym('v_f', 1)
+gam_f = ca.MX.sym('gam_f', 1)
 
 ocp.add_constant(h_f, 0.)
 ocp.add_constant(v_f, 10.)
@@ -111,9 +116,9 @@ ocp.add_constraint('terminal', gam - gam_f)
 # h_max_val = atm.h_layers[-1]
 # h_min_val = 0.
 #
-# h_max = ca.SX.sym('h_max')
-# h_min = ca.SX.sym('h_min')
-# eps_h = ca.SX.sym('eps_h')
+# h_max = ca.MX.sym('h_max')
+# h_min = ca.MX.sym('h_min')
+# eps_h = ca.MX.sym('eps_h')
 #
 # ocp.add_constant(h_max, h_max_val)
 # ocp.add_constant(h_min, h_min_val)
@@ -132,27 +137,68 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
     )
 
 if __name__ == '__main__':
-    h_f = 0.
-    e_val_guess_range = np.array((1., 3.5e6, 6e6))
-    for idx in range(1000):
-        # Binary search
-        e_val_guess_range[1] = 0.5 * (e_val_guess_range[0] + e_val_guess_range[2])
-        _h_f = get_glide_slope(e_vals=np.array((e_val_guess_range[1],)), h_min=-2e3)['h']
-        if _h_f < h_f:
-            # Too low energy, try higher.
-            e_val_guess_range[0] = e_val_guess_range[1]
+    def binary_search(_x_min, _x_max, _f, _f_val_target, max_iter: int = 1000, tol: float = 1e-3):
+        increasing = _f(_x_max) > _f(_x_min)
+        if increasing:
+            def _f_wrapped(_x):
+                return _f(_x)
         else:
-            # Too high energy, try lower.
-            e_val_guess_range[2] = e_val_guess_range[1]
+            _f_val_target = -_f_val_target
 
-        e_val_guess_range[1] = 0.5 * (e_val_guess_range[0] + e_val_guess_range[2])
-        if e_val_guess_range[2] - e_val_guess_range[1] < 1e-3:
-            break
+            def _f_wrapped(_x):
+                return -_f(_x)
 
-    e_h_f = e_val_guess_range[1]
-    glide_dict_e_mach_f = get_glide_slope(e_vals=np.array((e_h_f,)))
+        for _ in range(max_iter):
+            # Binary search
+            _x_guess = 0.5 * (_x_min + _x_max)
+            _f_val = _f_wrapped(_x_guess)
+            if _f_val < _f_val_target:
+                # x too low, try higher
+                _x_min = _x_guess
+            else:
+                # x too high, try lower
+                _x_max = _x_guess
+            if _x_max - _x_min < tol:
+                break
 
-    e_vals = np.logspace(np.log10(e_h_f), np.log10(1e8), 100)
+        _x_guess = 0.5 * (_x_min + _x_max)
+        return _x_guess
+
+    # Find energy where h = 0
+    h_f = 0.
+    e_h_f = binary_search(
+        _x_min=1., _x_max=6e6,
+        _f=lambda _e: get_glide_slope(e_vals=np.array((_e,)), h_min=-2e3)['h'],
+        _f_val_target=h_f
+    )
+
+    # Find energy where Mach = Mach max
+    mach_max = lut_data['M'][-1]
+    e_mach_max = binary_search(
+        _x_min=1., _x_max=7e6,
+        _f=lambda _e: get_glide_slope(e_vals=np.array((_e,)), h_min=-2e3)['M'],
+        _f_val_target=mach_max
+    )
+
+    # e_val_guess_range = np.array((1., 3.5e6, 6e6))
+    # for idx in range(1000):
+    #     # Binary search
+    #     e_val_guess_range[1] = 0.5 * (e_val_guess_range[0] + e_val_guess_range[2])
+    #     _h_f = get_glide_slope(e_vals=np.array((e_val_guess_range[1],)), h_min=-2e3)['h']
+    #     if _h_f < h_f:
+    #         # Too low energy, try higher.
+    #         e_val_guess_range[0] = e_val_guess_range[1]
+    #     else:
+    #         # Too high energy, try lower.
+    #         e_val_guess_range[2] = e_val_guess_range[1]
+    #
+    #     e_val_guess_range[1] = 0.5 * (e_val_guess_range[0] + e_val_guess_range[2])
+    #     if e_val_guess_range[2] - e_val_guess_range[1] < 1e-3:
+    #         break
+    #
+    # e_h_f = e_val_guess_range[1]
+
+    e_vals = np.logspace(np.log10(e_h_f), np.log10(e_mach_max), 100)
     glide_dict = get_glide_slope(e_vals=e_vals)
     h_guess = glide_dict['h'][-1]
     v_guess = glide_dict['v'][-1]
