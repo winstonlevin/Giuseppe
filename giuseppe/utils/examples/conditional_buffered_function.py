@@ -136,14 +136,16 @@ def create_buffered_conditional_function(expr_list: list[CA_SYM],
                 boundary_expr += coeff * x_normalized ** power
 
         # Add expression and boundary expression to conditional function
-        expr_out += ca.if_else(
-            ca.logic_and(independent_var >= switch0, independent_var <= switch1),
-            expr, ca_zero
-        )
-        expr_out += ca.if_else(
-            ca.logic_and(independent_var > switch1, independent_var < switch2),
-            boundary_expr, ca_zero
-        )
+        if switch1 >= switch0:
+            expr_out = ca.if_else(
+                ca.logic_and(independent_var >= switch0, independent_var <= switch1),
+                expr, expr_out
+            )
+        if switch2 > switch1:
+            expr_out = ca.if_else(
+                ca.logic_and(independent_var > switch1, independent_var < switch2),
+                boundary_expr, expr_out
+            )
 
     return expr_out
 
