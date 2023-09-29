@@ -12,7 +12,7 @@ _f_zero_converged_flag = 1
 
 
 def get_glide_slope(e_vals: Optional[np.array] = None,
-                    h_min: float = 0., h_max: float = 70e3,
+                    h_min: float = 0., h_max: float = _h_atm_max,
                     mach_min: float = 0.3, mach_max: float = 3.5,
                     manual_derivation=False, energy_state=True, correct_gam=True, flat_earth=False,
                     nondimensionalize_control=True, remove_nan=True, derive_with_e=False) -> dict:
@@ -120,13 +120,6 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     drag_sym = CD0_sym * qdyn_s_ref_sym + CD1 * lift_sym + CD2_sym / qdyn_s_ref_sym * lift_sym ** 2
     ddrag_dh_sym = ca.jacobian(drag_sym, h_sym)
     ddrag_dh_fun = ca.Function('Dh', (e_sym, h_sym, u_sym), (ddrag_dh_sym,), ('E', 'h', 'u'), ('Dh',))
-
-    # TODO -- remove vvvvv
-    drag_fun = ca.Function('D', (e_sym, h_sym, u_sym), (drag_sym,), ('E', 'h', 'u'), ('D',))
-    v_fun = ca.Function('V', (e_sym, h_sym), (v_sym,), ('E', 'h'), ('V',))
-    CD0_eh_fun = ca.Function('CD0', (e_sym, h_sym), (ca.jacobian(CD0_sym, h_sym),), ('E', 'h'), ('CD0',))
-    mach_fun = ca.Function('M', (e_sym, h_sym), (ca.jacobian(mach_sym, e_sym),), ('E', 'h'), ('M',))
-    # TODO -- remove ^^^^^
 
     # Jacobians (for use with neighboring feedback gains)
     lam_e = ca.MX.sym('lam_E')
@@ -399,7 +392,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             try:
                 p_noc = sp.linalg.solve_continuous_are(a=a_noc, b=b_noc, q=q_noc, s=n_noc, r=r_noc)
                 k_noc = np.linalg.solve(a=r_noc, b=(p_noc @ b_noc + n_noc).T)  # inv(R) * (PB + N)^T
-            except:
+            except np.linalg.LinAlgError:
                 k_noc = np.nan * np.zeros((1, 3))
             k_h_vals[idx] = k_noc[0, 0]
             k_gam_vals[idx] = k_noc[0, 1]

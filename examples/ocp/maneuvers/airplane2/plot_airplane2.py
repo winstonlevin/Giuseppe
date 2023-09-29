@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib as mpl
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, sped_fun, dens_fun
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CL0, CLa_fun, CD0_fun, CD1, CD2_fun, max_ld_fun,\
+    sped_fun, dens_fun
 from glide_slope import get_glide_slope
 
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -59,7 +60,13 @@ rho = np.asarray(dens_fun(x_dict['h'])).flatten()
 
 qdyn = 0.5 * rho * x_dict['v'] ** 2
 lift = u_dict['lift_nd'] * g0 * mass
+CD0 = np.asarray(CD0_fun(mach)).flatten()
+CD2 = np.asarray(CD2_fun(mach)).flatten()
 drag = qdyn * s_ref * CD0 + CD1 * lift + CD2 / (qdyn * s_ref) * lift**2
+CL = lift / (qdyn * s_ref)
+CLa = np.asarray(CLa_fun(mach)).flatten()
+alpha = (CL - CL0) / CLa
+alpha_max_ld = max_ld_fun(_CLa=CLa, _CD0=CD0, _CD2=CD2)['alpha']
 
 # Glide Slope
 ke = 0.5 * x_dict['v']**2
@@ -73,6 +80,7 @@ gam_glide = glide_dict['gam']
 g_glide = glide_dict['g']
 u_glide = glide_dict['u']
 qdyn_glide = glide_dict['qdyn_s_ref'] / s_ref
+mach_glide = glide_dict['M']
 
 # Convert E, h, gam costates to V, h, gam costates
 # d(E)/dt = g d(h)/dt + V d(V)/dt
@@ -110,15 +118,17 @@ axes_states[0].legend()
 
 fig_states.tight_layout()
 
-# PLOT U
-ylabs = (r'$L/W_0$ [g]',)
-ymult = np.array((1.,))
-yaux = (u_glide,)
+# PLOT CONTROL
+ylabs = (r'$L/W_0$ [g]', r'$\alpha$ [deg]')
+ymult = np.array((1., r2d))
+ydata = (sol.u[0, :], alpha)
+yaux = (u_glide, alpha_max_ld)
+n_y = len(ydata)
 fig_u = plt.figure()
 axes_u = []
 
-for idx, ctrl in enumerate(list(sol.u)):
-    axes_u.append(fig_u.add_subplot(1, 1, idx + 1))
+for idx, ctrl in enumerate(ydata):
+    axes_u.append(fig_u.add_subplot(n_y, 1, idx + 1))
     ax = axes_u[-1]
     ax.grid()
     ax.set_xlabel(t_label)
@@ -184,9 +194,6 @@ if PLOT_AUXILIARY:
             ax.legend()
     fig_aux.tight_layout()
 
-    h_qdyn = np.linspace(0., 250e3, 100)
-    v_qdyn = (2 * 300. / np.asarray(dens_fun(h_qdyn)))**0.5
-
     fig_hv = plt.figure()
     ax_hv = fig_hv.add_subplot(111)
     ax_hv.grid()
@@ -195,15 +202,28 @@ if PLOT_AUXILIARY:
                'k--', label='Glide Slope (Sph.)')
     ax_hv.plot(glide_dict_full_flat['v'] / 1e3, glide_dict_full_flat['h'] / 1e3,
                'k:', label='Glide Slope (Flat)')
-    ax_hv.plot(v_qdyn / 1e3, h_qdyn / 1e3, 'r-')
     ax_hv.set_xlabel(r'$V$ [1,000 ft/s]')
     ax_hv.set_ylabel(r'$h$ [1,000 ft]')
 
-    fig_qdyn = plt.figure()
-    ax_qdyn = fig_qdyn.add_subplot(111)
-    ax_qdyn.plot(sol.t, qdyn)
-    ax_qdyn.plot(sol.t, qdyn_glide)
-    ax_qdyn.set_xlabel(t_label)
-    ax_qdyn.set_ylabel(r'$Q_{\infty}$ [psf]')
+    fig_aero_aux = plt.figure()
+    ydata = (qdyn, mach)
+    yaux = (qdyn_glide, mach_glide)
+    ylabs = (r'$Q_{\infty}$ [psf]', r'Mach')
+    yauxlabs = ('Glide slope', None)
+
+    axes = []
+    for idx, y in enumerate(ydata):
+        axes_aux.append(fig_aero_aux.add_subplot(2, 1, idx + 1))
+        ax = axes_aux[-1]
+        ax.grid()
+        ax.set_xlabel(t_label)
+        ax.set_ylabel(ylabs[idx])
+        if y is not None:
+            ax.plot(sol.t, y)
+        if yaux[idx] is not None:
+            ax.plot(sol.t, yaux[idx], 'k--', label=yauxlabs[idx])
+        if yauxlabs[idx] is not None:
+            ax.legend()
+    fig_aero_aux.tight_layout()
 
 plt.show()

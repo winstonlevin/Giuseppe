@@ -6,13 +6,13 @@ import pickle
 
 import giuseppe
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, lut_data
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, lut_data, mach_boundary_thickness
 from glide_slope import get_glide_slope
 
 SWEEP_SOLUTION_SPACE = False
 
 
-ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb()
+ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.MX)
 
 # Independent Variables
 t = ca.MX.sym('t', 1)
@@ -133,7 +133,7 @@ ocp.add_constraint('terminal', gam - gam_f)
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
     num_solver = giuseppe.numeric_solvers.SciPySolver(
-        adiff_dual, verbose=2, max_nodes=100, node_buffer=10
+        adiff_dual, verbose=False, max_nodes=100, node_buffer=10
     )
 
 if __name__ == '__main__':
@@ -172,13 +172,14 @@ if __name__ == '__main__':
         _f_val_target=h_f
     )
 
-    # Find energy where Mach = Mach max
-    mach_max = lut_data['M'][-1]
-    e_mach_max = binary_search(
-        _x_min=1., _x_max=7e6,
-        _f=lambda _e: get_glide_slope(e_vals=np.array((_e,)), h_min=-2e3)['M'],
-        _f_val_target=mach_max
-    )
+    # Maximum energy is at maximum Mach (for minimum altitude)
+    mach_max = 3.0
+    e_max = 0.5 * (3.0 * atm.speed_of_sound(0.))**2
+    # e_mach_max = binary_search(
+    #     _x_min=1., _x_max=7e6,
+    #     _f=lambda _e: get_glide_slope(e_vals=np.array((_e,)), h_min=-2e3)['M'],
+    #     _f_val_target=mach_max
+    # )
 
     # e_val_guess_range = np.array((1., 3.5e6, 6e6))
     # for idx in range(1000):
@@ -198,7 +199,7 @@ if __name__ == '__main__':
     #
     # e_h_f = e_val_guess_range[1]
 
-    e_vals = np.logspace(np.log10(e_h_f), np.log10(e_mach_max), 100)
+    e_vals = np.logspace(np.log10(e_h_f), np.log10(e_max), 100)
     glide_dict = get_glide_slope(e_vals=e_vals)
     h_guess = glide_dict['h'][-1]
     v_guess = glide_dict['v'][-1]
@@ -281,10 +282,13 @@ if __name__ == '__main__':
     hf = sol_set.solutions[-1].x[0, -1] * h_scale_val
     vf = sol_set.solutions[-1].x[2, -1] * v_scale_val
     ef = mu / re - mu / (re + hf) + 0.5 * vf ** 2
+    h0 = sol_set.solutions[-1].x[0, 0] * h_scale_val
+    v0 = sol_set.solutions[-1].x[2, 0] * v_scale_val
+    e0 = mu / re - mu / (re + h0) + 0.5 * v0 ** 2
 
     # Sweep Solution Space (perturb initial h/v with gam0 = 0, e0 const.)
     if SWEEP_SOLUTION_SPACE:
-        qdyn_max = 500.
+        # qdyn_max = 500.
 
 
         def generate_energy_sweep_continuation(_h0_0, _h0_f):
@@ -303,39 +307,43 @@ if __name__ == '__main__':
                 return _constants
             return energy_sweep_continuation
 
-        def find_h_qdyn(_e, _qdyn, _h_max=atm.h_layers[-1]):
-            _h_min = 0.
-            _h = 0.5 * (_h_min + _h_max)
+        # def find_h_qdyn(_e, _qdyn, _h_max=atm.h_layers[-1]):
+        #     _h_min = 0.
+        #     _h = 0.5 * (_h_min + _h_max)
+        #
+        #     for idx in range(1000):
+        #         _v = (2 * (_e - mu/re + mu/(re + _h))) ** 0.5
+        #         _qdyn_trial = 0.5 * atm.density(_h) * _v ** 2
+        #         if _qdyn_trial < _qdyn:
+        #             # Altitude too high
+        #             _h_max = _h
+        #         else:
+        #             _h_min = _h
+        #         _h = 0.5 * (_h_min + _h_max)
+        #         if _h_max - _h < 1e-3:
+        #             break
+        #
+        #     return _h
 
-            for idx in range(1000):
-                _v = (2 * (_e - mu/re + mu/(re + _h))) ** 0.5
-                _qdyn_trial = 0.5 * atm.density(_h) * _v ** 2
-                if _qdyn_trial < _qdyn:
-                    # Altitude too high
-                    _h_max = _h
-                else:
-                    _h_min = _h
-                _h = 0.5 * (_h_min + _h_max)
-                if _h_max - _h < 1e-3:
-                    break
-
-            return _h
-
-        sol0 = sol_set.solutions[-1]
-        h0_0 = sol0.k[idx_h0]
-        v0_0 = sol0.k[idx_v0]
-        vf = sol0.k[idx_vf]
-        e0 = mu/re - mu/(re + h0_0) + 0.5 * v0_0**2
-        v0_min = vf
-        h0_max = min(atm.h_layers[-1], -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
-        h0_min = find_h_qdyn(e0, 1000., h0_0)
+        # v0_min = binary_search(
+        #     _x_min=10., _x_max=v0,
+        #     _f=lambda _v: _v / atm.speed_of_sound(-re - mu/(e0 - mu/re - 0.5 * _v**2)),
+        #     _f_val_target=0.5
+        # )
+        # h0_max = min(atm.h_layers[-1], -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
+        h0_max = 145e3
+        h0_min = 0.  # Compatible with e0 chosen from Mach max.
 
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-        cont.add_custom_series(100, generate_energy_sweep_continuation(h0_0, h0_min), 'Const. energy')
+        cont.add_custom_series(
+            100, generate_energy_sweep_continuation(h0, h0_min), 'Const. energy', keep_bisections=False
+        )
         sol_set_sweep1 = cont.run_continuation()
 
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-        cont.add_custom_series(100, generate_energy_sweep_continuation(h0_0, h0_max), 'Const. energy')
+        cont.add_custom_series(
+            100, generate_energy_sweep_continuation(h0, h0_max), 'Const. energy', keep_bisections=False
+        )
         sol_set_sweep2 = cont.run_continuation()
 
         sol_set_sweep = deepcopy(sol_set_sweep2)
@@ -344,6 +352,3 @@ if __name__ == '__main__':
         ])
 
         sol_set_sweep.save('sol_set_range_sweep.data')
-
-
-
