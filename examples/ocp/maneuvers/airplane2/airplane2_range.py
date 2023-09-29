@@ -6,7 +6,7 @@ import pickle
 
 import giuseppe
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, atm, sped_fun
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, sped_fun
 from glide_slope import get_glide_slope
 
 SWEEP_SOLUTION_SPACE = False

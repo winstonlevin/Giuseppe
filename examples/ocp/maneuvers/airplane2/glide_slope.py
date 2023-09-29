@@ -4,7 +4,7 @@ import casadi as ca
 import numpy as np
 import scipy as sp
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0, CD1, CD2, atm
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, dens_fun, sped_fun
 
 _h_atm_max = atm.h_layers[-1]
 _f_zero_converged_flag = 1
@@ -12,8 +12,8 @@ _f_zero_converged_flag = 1
 
 def get_glide_slope(e_vals: Optional[np.array] = None,
                     h_min: float = 0., h_max: float = _h_atm_max,
-                    mach_min: float = 0.3, mach_max: float = 30.,
-                    manual_derivation=False, energy_state=False, correct_gam=True, flat_earth=False,
+                    mach_min: float = 0.3, mach_max: float = 3.5,
+                    manual_derivation=False, energy_state=True, correct_gam=True, flat_earth=False,
                     nondimensionalize_control=True, remove_nan=True, derive_with_e=False) -> dict:
     """
 
@@ -100,26 +100,37 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     h_vals = np.empty(e_vals.shape)
 
     # Derive: d(hamiltonian)/dh = 0
-    e_sym = ca.SX.sym('e')
-    h_sym = ca.SX.sym('h')
-    gam_sym = ca.SX.sym('gam')
-    u_sym = ca.SX.sym('u')
+    e_sym = ca.MX.sym('e')
+    h_sym = ca.MX.sym('h')
+    gam_sym = ca.MX.sym('gam')
+    u_sym = ca.MX.sym('u')
     lift_sym = u_to_lift(u_sym)
 
     r_sym = re + h_sym
     g_sym = h_to_g(h_sym)
     v_sym = eh_to_v2(e_sym, h_sym) ** 0.5
     _, __, rho_sym = atm.get_ca_atm_expr(h_sym)
+    sped_sym = atm.get_ca_speed_of_sound_expr(h_sym)
+    mach_sym = v_sym / sped_sym
+    CD0_sym = CD0_fun(mach_sym)
+    CD2_sym = CD2_fun(mach_sym)
+
     qdyn_s_ref_sym = 0.5 * rho_sym * v_sym**2 * s_ref
-    drag_sym = CD0 * qdyn_s_ref_sym + CD1 * lift_sym + CD2 / qdyn_s_ref_sym * lift_sym ** 2
+    drag_sym = CD0_sym * qdyn_s_ref_sym + CD1 * lift_sym + CD2_sym / qdyn_s_ref_sym * lift_sym ** 2
     ddrag_dh_sym = ca.jacobian(drag_sym, h_sym)
     ddrag_dh_fun = ca.Function('Dh', (e_sym, h_sym, u_sym), (ddrag_dh_sym,), ('E', 'h', 'u'), ('Dh',))
-    dens_fun = ca.Function('rho', (h_sym,), (rho_sym,), ('h',), ('rho',))
+
+    # TODO -- remove vvvvv
+    drag_fun = ca.Function('D', (e_sym, h_sym, u_sym), (drag_sym,), ('E', 'h', 'u'), ('D',))
+    v_fun = ca.Function('V', (e_sym, h_sym), (v_sym,), ('E', 'h'), ('V',))
+    CD0_eh_fun = ca.Function('CD0', (e_sym, h_sym), (ca.jacobian(CD0_sym, h_sym),), ('E', 'h'), ('CD0',))
+    mach_fun = ca.Function('M', (e_sym, h_sym), (ca.jacobian(mach_sym, e_sym),), ('E', 'h'), ('M',))
+    # TODO -- remove ^^^^^
 
     # Jacobians (for use with neighboring feedback gains)
-    lam_e = ca.SX.sym('lam_E')
-    lam_h = ca.SX.sym('lam_h')
-    lam_gam = ca.SX.sym('lam_gam')
+    lam_e = ca.MX.sym('lam_E')
+    lam_h = ca.MX.sym('lam_h')
+    lam_gam = ca.MX.sym('lam_gam')
 
     if flat_earth:
         de_dt = -v_sym * drag_sym / mass
@@ -175,16 +186,34 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         _dict['r'] = re + _h
         _dict['g'] = h_to_g(_h)
         _dict['v'] = np.maximum(1., 2. * (_e + mu / _dict['r'] - mu / re)) ** 0.5
+
         _dens_arr = np.asarray(dens_fun(_h)).flatten()
         if len(_dens_arr) > 1:
             _dict['rho'] = _dens_arr
         else:
             _dict['rho'] = _dens_arr[0]
+
+        _sped_arr = np.asarray(sped_fun(_h)).flatten()
+        _mach_arr = _dict['v'] / _sped_arr
+        _CD0_arr = np.asarray(CD0_fun(_mach_arr)).flatten()
+        _CD2_arr = np.asarray(CD2_fun(_mach_arr)).flatten()
+        if len(_mach_arr) > 1:
+            _dict['a'] = _sped_arr
+            _dict['M'] = _mach_arr
+            _dict['CD0'] = _CD0_arr
+            _dict['CD2'] = _CD2_arr
+        else:
+            _dict['a'] = _sped_arr[0]
+            _dict['M'] = _mach_arr[0]
+            _dict['CD0'] = _CD0_arr[0]
+            _dict['CD2'] = _CD2_arr[0]
+
         _dict['qdyn_s_ref'] = 0.5 * _dict['rho'] * _dict['v'] ** 2 * s_ref
         _dict['lift'] = lift_gam0(_h, _dict['v'], _gam)
         _dict['u'] = lift_to_u(_dict['lift'])
-        _dict['drag'] = CD0 * _dict['qdyn_s_ref'] + CD1 * _dict['lift'] + CD2 / _dict['qdyn_s_ref'] * _dict['lift'] ** 2
-        _dict['ddrag_dlift'] = CD1 + 2 * CD2 / _dict['qdyn_s_ref'] * _dict['lift']
+        _dict['drag'] = _dict['CD0'] * _dict['qdyn_s_ref'] + CD1 * _dict['lift'] \
+            + _dict['CD2'] / _dict['qdyn_s_ref'] * _dict['lift'] ** 2
+        _dict['ddrag_dlift'] = CD1 + 2 * _dict['CD2'] / _dict['qdyn_s_ref'] * _dict['lift']
 
         _dict['lam_E'] = -mass * np.cos(_gam) / (_dict['drag'] * _dict['r'])
         _dict['lam_gam'] = _dict['lam_E'] * _dict['v']**2 * _dict['ddrag_dlift']
@@ -213,7 +242,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             def dham_dh(_e, _h):
                 _dict = calc_zo_dict(_e, _h)
                 _ddrag_dh = float(ddrag_dh_fun(_e, _h, _dict['u']))
-                _ddrag_dl = CD1 + 2 * CD2/_dict['qdyn_s_ref'] * _dict['lift']
+                _ddrag_dl = _dict['ddrag_dlift']
                 _dham_dh = _dict['v']/(_dict['drag']*_dict['r']**2) * (
                         _dict['drag'] + _dict['r'] * _ddrag_dh + mass * _dict['v']**2/_dict['r'] * _ddrag_dl)
                 return _dham_dh
@@ -390,15 +419,15 @@ if __name__ == '__main__':
     r2d = 180/np.pi
 
     h_max_plot = 275e3
-    mach_max_plot = 40.
-    glide_dict = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
-    glide_dict_e = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot, derive_with_e=True)
+    mach_max_plot = 3.5
+    glide_dict = get_glide_slope(correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
+    # glide_dict_e = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot, derive_with_e=True)
     # glide_dict_es = get_glide_slope(energy_state=True, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
     # glide_dict_gam0 = get_glide_slope(energy_state=False, correct_gam=False, h_max=h_max_plot, mach_max=mach_max_plot)
-    glide_dict_flat = get_glide_slope(energy_state=False, correct_gam=True, flat_earth=True,
+    glide_dict_flat = get_glide_slope(correct_gam=True, flat_earth=True,
                                       h_max=h_max_plot, mach_max=mach_max_plot)
-    glide_dict_flat_gam0 = get_glide_slope(energy_state=False, correct_gam=False, flat_earth=True,
-                                      h_max=h_max_plot, mach_max=mach_max_plot)
+    glide_dict_flat_gam0 = get_glide_slope(correct_gam=False, flat_earth=True,
+                                           h_max=h_max_plot, mach_max=mach_max_plot)
 
     e_vals = glide_dict['E']
     h_vals = glide_dict['h']
@@ -460,18 +489,16 @@ if __name__ == '__main__':
 
     ax_k_h = fig_gains.add_subplot(211)
     ax_k_h.plot(e_vals, k_h_vals, label='Spherical')
-    ax_k_h.plot(glide_dict_e['E'], glide_dict_e['k_h'], label='E')
-    # ax_k_h.plot(e_vals_flat, k_h_vals_flat, '--', label='Flat')
-    # ax_k_h.plot(e_vals_flat_gam0, k_h_vals_flat_gam0, ':', label='Flat, gam = 0')
+    ax_k_h.plot(e_vals_flat, k_h_vals_flat, '--', label='Flat')
+    ax_k_h.plot(e_vals_flat_gam0, k_h_vals_flat_gam0, ':', label='Flat, gam = 0')
     ax_k_h.set_xlabel(e_lab)
     ax_k_h.set_ylabel(r'$K_h$')
     ax_k_h.legend()
 
     ax_k_gam = fig_gains.add_subplot(212)
     ax_k_gam.plot(e_vals, k_gam_vals, label='Spherical')
-    ax_k_gam.plot(glide_dict_e['E'], glide_dict_e['k_gam'], label='E')
-    # ax_k_gam.plot(e_vals_flat, k_gam_vals_flat, '--', label='Flat')
-    # ax_k_gam.plot(e_vals_flat_gam0, k_gam_vals_flat_gam0, '--', label='Flat, gam = 0')
+    ax_k_gam.plot(e_vals_flat, k_gam_vals_flat, '--', label='Flat')
+    ax_k_gam.plot(e_vals_flat_gam0, k_gam_vals_flat_gam0, '--', label='Flat, gam = 0')
     ax_k_gam.set_xlabel(e_lab)
     ax_k_gam.set_ylabel(r'$K_\gamma$')
 

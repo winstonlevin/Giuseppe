@@ -48,9 +48,11 @@ lut_data = {
     ))
 }
 eta = 1.
+CD1 = 0.
+CL0 = 0.
 
 # Convert to:
-# CD = CD0 + CD2 * CL**2
+# CD = CD0 + CD1 + CD2 * CL**2
 # NOTE:
 # CD2 * CL**2 = (CD2 CLa**2) alpha**2 = eta CLa alpha**2
 # So:
@@ -93,11 +95,9 @@ CD2_fun = ca.Function('CD2', (mach_sym,), (CD2_expr,), ('M',), ('CD2',))
 
 
 def max_ld_fun(_CLa, _CD0, _CD2):
-    _CD1 = 0.
-    _CL0 = 0.
     _CL_max_ld = (_CD0 / _CD2) ** 0.5
-    _CD_max_ld = _CD0 + _CD1 * _CL_max_ld + _CD2 * _CL_max_ld ** 2
-    _alpha_max_ld = (_CL_max_ld - _CL0) / _CLa
+    _CD_max_ld = _CD0 + CD1 * _CL_max_ld + _CD2 * _CL_max_ld ** 2
+    _alpha_max_ld = (_CL_max_ld - CL0) / _CLa
     _dict = {'alpha': _alpha_max_ld, 'CL': _CL_max_ld, 'CD': _CD_max_ld, 'LD': _CL_max_ld / _CD_max_ld}
     return _dict
 
