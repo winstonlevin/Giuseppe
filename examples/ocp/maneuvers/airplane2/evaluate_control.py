@@ -6,7 +6,8 @@ import numpy as np
 import matplotlib as mpl
 import scipy as sp
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, CL0, CLa_fun, max_ld_fun, atm
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, CL0, CLa_fun, max_ld_fun, atm,\
+    dens_fun, sped_fun
 from glide_slope import get_glide_slope
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
@@ -14,7 +15,8 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-AOA_LAW = 'max_ld'  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
+AOA_LAWS = ('energy_climb', 'max_ld')  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
+PLOT_PAPER = True
 
 if COMPARE_SWEEP:
     with open('sol_set_range_sweep.data', 'rb') as f:
@@ -42,7 +44,8 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
     u_dict[key] = val
 
 
-glide_dict = get_glide_slope()
+e_opt = mu/re - mu/(re + x_dict['h_nd'] * k_dict['h_scale']) + 0.5 * (x_dict['v_nd'] * k_dict['v_scale']) ** 2
+glide_dict = get_glide_slope(e_vals=np.flip(e_opt))
 
 # CONTROL LIMITS
 alpha_max = 35 * np.pi / 180
@@ -186,14 +189,14 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
     return _alpha
 
 
-def generate_ctrl_law(_u_interp=None) -> Callable:
-    if AOA_LAW == 'max_ld':
+def generate_ctrl_law(_aoa_law, _u_interp=None) -> Callable:
+    if _aoa_law == 'max_ld':
         _aoa_ctrl = alpha_max_ld_fun
-    elif AOA_LAW == 'energy_climb':
+    elif _aoa_law == 'energy_climb':
         _aoa_ctrl = alpha_energy_climb
-    elif AOA_LAW == 'lam_h0':
+    elif _aoa_law == 'lam_h0':
         _aoa_ctrl = alpha_lam_h0
-    elif AOA_LAW == 'interp':
+    elif _aoa_law == 'interp':
         def _aoa_ctrl(_t, _x, _p_dict, _k_dict):
             _h = _x[0]
             _v = _x[2]
@@ -277,7 +280,7 @@ n_sols = len(sols)
 ivp_sols_dict = [{}] * n_sols
 h0_arr = np.empty((n_sols,))
 v0_arr = np.empty((n_sols,))
-opt_arr = np.empty((n_sols,))
+opt_arr = [{}] * n_sols
 ndmult = np.array((k_dict['h_scale'], 1., k_dict['v_scale'], 1.))
 
 print('____ Evaluation ____')
@@ -285,50 +288,104 @@ for idx, sol in enumerate(sols):
     for key, val in zip(sol.annotations.states, list(sol.x)):
         x_dict[key] = val
     e_opt = mu/re - mu/(re + x_dict['h_nd'] * k_dict['h_scale']) + 0.5 * (x_dict['v_nd'] * k_dict['v_scale']) ** 2
-    u_opt = sp.interpolate.PchipInterpolator(sol.t, sol.u[0, :])
+    lift_nd_opt = sol.u[0, :]
+    u_opt = sp.interpolate.PchipInterpolator(sol.t, lift_nd_opt)
 
     t0 = sol.t[0]
     tf = sol.t[-1]
 
     t_span = np.array((t0, np.inf))
     x0 = sol.x[:, 0] * ndmult
-
-    ctrl_law = generate_ctrl_law(u_opt)
     limits_dict['e_min'] = np.min(e_opt)
-    termination_events = generate_termination_events(ctrl_law, p_dict, k_dict, limits_dict)
 
-    ivp_sol = sp.integrate.solve_ivp(
-        fun=lambda t, x: eom(t, x, ctrl_law(t, x, p_dict, k_dict), p_dict, k_dict),
-        t_span=t_span,
-        y0=x0,
-        events=termination_events,
-        rtol=1e-6, atol=1e-10
-    )
+    # States
+    h_opt = sol.x[0, :] * k_dict['h_scale']
+    gam_opt = sol.x[3, :]
+    v_opt = sol.x[2, :] * k_dict['v_scale']
+    g_opt = mu / (re + h_opt)**2
 
-    # Calculate Control
-    alpha_sol = np.empty(shape=(ivp_sol.t.shape[0],))
-    for jdx, (t, x) in enumerate(zip(ivp_sol.t, ivp_sol.y.T)):
-        alpha_sol[jdx] = ctrl_law(t, x, p_dict, k_dict)
+    x_opt = np.vstack((e_opt, h_opt, gam_opt))
 
-    # Wrap FPA
-    _fpa_unwrapped = ivp_sol.y[3, :]
-    _fpa = (_fpa_unwrapped + np.pi) % (2 * np.pi) - np.pi
-    ivp_sol.y[3, :] = _fpa
+    # Convert Costates to E-h-gam
+    # H = lam_h d(h)/dt + lam_V d(V)/dt + lam_gam d(gam)/dt
+    # d(E)/dt = g d(h)/dt + V d(V)/dt
+    # ->
+    # lam_E    = lam_V / V
+    # lam_h'   = lam_h - (g/V) lam_V
+    # lam_gam' = lam_gam
+    lam_E_opt = (sol.lam[2, :] / k_dict['v_scale']) / v_opt
+    lam_h_opt = (sol.lam[0, :] / k_dict['h_scale']) - g_opt * lam_E_opt
+    lam_gam_opt = sol.lam[3, :]
+    lam_opt = np.vstack((lam_E_opt, lam_h_opt, lam_gam_opt))
 
-    ivp_sols_dict[idx] = {
-        't': ivp_sol.t,
-        'x': ivp_sol.y,
-        'optimality': ivp_sol.y[1, -1] / x_dict['tha'][-1],
-        'alpha': alpha_sol
-    }
+    # Glide slope values
+    x_glide = np.vstack((glide_dict['E'], glide_dict['h'], glide_dict['gam']))
+    lam_glide = np.vstack((glide_dict['lam_E'], glide_dict['lam_h'], glide_dict['lam_gam']))
+    lift_nd_glide = glide_dict['u']
 
     h0_arr[idx] = x_dict['h_nd'][0] * k_dict['h_scale']
     v0_arr[idx] = x_dict['v_nd'][0] * k_dict['v_scale']
-    opt_arr[idx] = ivp_sols_dict[idx]['optimality']
 
-    print(f'{opt_arr[idx]:.2%} Optimal at h0 = {h0_arr[idx] / 1e3:.4} kft')
+    ivp_sols_dict[idx] = {}
+    for ctrl_law_type in AOA_LAWS:
+        ctrl_law = generate_ctrl_law(ctrl_law_type, u_opt)
+        termination_events = generate_termination_events(ctrl_law, p_dict, k_dict, limits_dict)
+
+        ivp_sol = sp.integrate.solve_ivp(
+            fun=lambda t, x: eom(t, x, ctrl_law(t, x, p_dict, k_dict), p_dict, k_dict),
+            t_span=t_span,
+            y0=x0,
+            events=termination_events,
+            rtol=1e-6, atol=1e-10
+        )
+
+        # Calculate Control
+        alpha_sol = np.empty(shape=(ivp_sol.t.shape[0],))
+        for jdx, (t, x) in enumerate(zip(ivp_sol.t, ivp_sol.y.T)):
+            alpha_sol[jdx] = ctrl_law(t, x, p_dict, k_dict)
+
+        # Wrap FPA
+        _fpa_unwrapped = ivp_sol.y[3, :]
+        _fpa = (_fpa_unwrapped + np.pi) % (2 * np.pi) - np.pi
+        ivp_sol.y[3, :] = _fpa
+
+        # Calculate State
+        h = ivp_sol.y[0, :]
+        v = ivp_sol.y[2, :]
+        gam = ivp_sol.y[3, :]
+        r = re + h
+        g = mu / r ** 2
+        e = mu / re - mu / r + 0.5 * v**2
+        x = np.vstack((e, h, gam))
+
+        # Calculate Alternate Control
+        qdyn_s_ref = 0.5 * np.asarray(dens_fun(h)).flatten() * v**2 * s_ref
+        mach = v / np.asarray(sped_fun(h)).flatten()
+
+        CL = CL0 + np.asarray(CLa_fun(mach)).flatten() * alpha_sol
+        lift = qdyn_s_ref * CL
+        lift_nd = lift / (g0 * mass)
+
+        ivp_sols_dict[idx][ctrl_law_type] = {
+            't': ivp_sol.t,
+            'x': x,
+            'optimality': ivp_sol.y[1, -1] / x_dict['tha'][-1],
+            'lift_nd': lift_nd,
+            'alpha': alpha_sol,
+            'lam_opt': lam_opt,
+            'x_opt': x_opt,
+            'lift_nd_opt': lift_nd_opt,
+            'x_glide': x_glide,
+            'lam_glide': lam_glide,
+            'lift_nd_glide': lift_nd_glide,
+            'thaf_opt': x_dict['tha'][-1],
+            'thaf': ivp_sol.y[1, -1]
+        }
+        opt_arr[idx][ctrl_law_type] = ivp_sols_dict[idx][ctrl_law_type]['optimality']
+        print(ctrl_law_type + f' is {opt_arr[idx][ctrl_law_type]:.2%} Optimal at h0 = {h0_arr[idx] / 1e3:.4} kft')
 
 # ---- PLOTTING --------------------------------------------------------------------------------------------------------
+col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 gradient = mpl.colormaps['viridis'].colors
 # if len(sols) == 1:
 #     grad_idcs = np.array((0,), dtype=np.int32)
@@ -349,73 +406,82 @@ def cols_gradient(n):
     return [_col1, _col2, _col3]
 
 
-t_label = r'$t$ [s]'
-title_str = f'Maximum Range Comparison'
-
 r2d = 180 / np.pi
 
 # PLOT STATES
-ylabs = (r'$h$ [ft]', r'$\theta$ [deg]', r'$V$ [ft/s]', r'$\gamma$ [deg]')
-ymult = np.array((1., r2d, 1., r2d))
-fig_states = plt.figure()
-axes_states = []
+ylabs = (r'$h$ [kft]', r'$\gamma$ [deg]',
+         r'$\lambda_E$ [s$^2$/kft$^2$]', r'$\lambda_h$ [1/kft]', r'$\lambda_\gamma$ [-]',
+         r'$n$ [g]')
+ymult = np.array((1e-3, r2d, 1e6, 1e3, 1., 1.))
+xlab = r'$E$ [kft$^2$/m$^2$]'
+xmult = 1e-6
 
-for idx, lab in enumerate(ylabs):
-    axes_states.append(fig_states.add_subplot(2, 2, idx + 1))
-    ax = axes_states[-1]
-    ax.grid()
-    ax.set_xlabel(t_label)
-    ax.set_ylabel(ylabs[idx])
+plt_order = (5, 2, 0, 3, 1, 4)
 
-    for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
-        # ax.plot(sol.t, sol.x[idx, :] * ndmult[idx] * ymult[idx], 'k--')
-        ax.plot(ivp_sol_dict['t'], ivp_sol_dict['x'][idx, :] * ymult[idx], color=cols_gradient(min(1., opt_arr[jdx])))
+figs = []
+axes_list = []
+for idx, ivp_sol_dict in enumerate(ivp_sols_dict):
+    figs.append(plt.figure())
+    fig = figs[-1]
 
-fig_states.suptitle(title_str)
-fig_states.tight_layout()
+    fig_name = 'fig_' + str(idx + 1)
 
-fig_control = plt.figure()
-ax_control = fig_control.add_subplot(111)
-ax_control.grid()
-ax_control.set_xlabel(t_label)
-ax_control.set_ylabel(r'$\alpha$ [deg]')
-ax = ax_control
-for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
-    ax.plot(ivp_sol_dict['t'], ivp_sol_dict['alpha'] * r2d, color=cols_gradient(min(1., opt_arr[jdx])))
+    y_arr_opt = np.vstack((
+        ivp_sols_dict[idx][AOA_LAWS[0]]['x_opt'][1:, :],
+        ivp_sols_dict[idx][AOA_LAWS[0]]['lam_opt'],
+        ivp_sols_dict[idx][AOA_LAWS[0]]['lift_nd_opt'],
+    ))
+    ydata_opt = list(y_arr_opt)
+    xdata_opt = ivp_sols_dict[idx][AOA_LAWS[0]]['x_opt'][0, :]
 
-fig_hv = plt.figure()
-ax_hv = fig_hv.add_subplot(111)
-ax_hv.grid()
-ax_hv.set_xlabel(ylabs[2])
-ax_hv.set_ylabel(ylabs[0])
+    y_arr_glide = np.vstack((
+        ivp_sols_dict[idx][AOA_LAWS[0]]['x_glide'][1:, :],
+        ivp_sols_dict[idx][AOA_LAWS[0]]['lam_glide'],
+        ivp_sols_dict[idx][AOA_LAWS[0]]['lift_nd_glide'],
+    ))
+    ydata_glide = list(y_arr_glide)
+    xdata_glide = ivp_sols_dict[idx][AOA_LAWS[0]]['x_glide'][0, :]
 
-for jdx, (ivp_sol_dict, sol) in enumerate(zip(ivp_sols_dict, sols)):
-    ax_hv.plot(sol.x[2, :] * ndmult[2] * ymult[2], sol.x[0, :] * ndmult[2] * ymult[0], 'k--')
-    ax_hv.plot(ivp_sol_dict['x'][2, :] * ymult[2], ivp_sol_dict['x'][0, :] * ymult[0],
-               color=cols_gradient(min(opt_arr[jdx], 1.)))
+    ydata_eval_list = []
+    xdata_eval_list = []
 
-ax_hv.plot(glide_dict['v'], glide_dict['h'], 'k', label='Glide Slope', linewidth=2.)
-ax_hv.set_xlim(left=glide_dict['v'][0], right=glide_dict['v'][-1])
+    for ctrl_law_type in AOA_LAWS:
+        y_arr = np.vstack((
+            ivp_sols_dict[idx][ctrl_law_type]['x'][1:, :],
+            ivp_sols_dict[idx][ctrl_law_type]['lift_nd'],
+        ))
+        ydata_eval = list(y_arr)
+        for jdx in (2, 3, 4):
+            ydata_eval.insert(jdx, None)
 
-fig_hv.tight_layout()
+        xdata_eval = ivp_sols_dict[idx][ctrl_law_type]['x'][0, :]
 
-# PLOT OPTIMALITY ALONG h-V
-if n_sols >= 3:
-    fig_optimality = plt.figure()
-    ax_optimality = fig_optimality.add_subplot(111)
-    ax_optimality.grid()
-    ax_optimality.set_xlabel(ylabs[2])
-    ax_optimality.set_ylabel(ylabs[0])
-    mappable = ax_optimality.tricontourf(v0_arr, h0_arr, 100*opt_arr,
-                                         vmin=0., vmax=100., levels=np.arange(0., 101., 1.))
-    ax_optimality.plot(glide_dict['v'], glide_dict['h'], 'k', label='Glide Slope', linewidth=2.)
-    ax_optimality.legend()
-    ax_optimality.set_title(f'Min. Optimality = {np.min(opt_arr):.2%}')
+        ydata_eval_list.append(ydata_eval)
+        xdata_eval_list.append(xdata_eval)
 
-    ax_optimality.set_xlim(left=np.min(v0_arr), right=np.max(v0_arr))
-    ax_optimality.set_ylim(bottom=np.min(h0_arr), top=np.max(h0_arr))
+    axes_list.append([])
+    for jdx, lab in enumerate(ylabs):
+        axes_list[idx].append(fig.add_subplot(3, 2, jdx + 1))
+        plt_idx = plt_order[jdx]
+        ax = axes_list[idx][-1]
+        ax.grid()
+        ax.set_xlabel(xlab)
+        ax.set_ylabel(ylabs[plt_idx])
+        ax.invert_xaxis()
 
-    fig_optimality.colorbar(mappable, label='% Optimal')
-    fig_optimality.tight_layout()
+        ax.plot(xdata_glide * xmult, ydata_glide[plt_idx] * ymult[plt_idx], 'k-', label='Glide Slope')
+        ax.plot(xdata_opt * xmult, ydata_opt[plt_idx] * ymult[plt_idx], color=col[0], label=f'Optimal')
+
+        for eval_idx, x in enumerate(xdata_eval_list):
+            if ydata_eval_list[eval_idx][plt_idx] is not None:
+                ax.plot(
+                    x * xmult, ydata_eval_list[eval_idx][plt_idx] * ymult[plt_idx],
+                    color=col[1+eval_idx], label=AOA_LAWS[eval_idx]
+                )
+
+        if jdx == 0:
+            ax.legend()
+
+    fig.tight_layout()
 
 plt.show()

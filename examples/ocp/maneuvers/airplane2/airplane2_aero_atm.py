@@ -93,6 +93,10 @@ CLa_fun = ca.Function('CLa', (mach_sym,), (CLa_expr,), ('M',), ('CLa',))
 CD0_fun = ca.Function('CD0', (mach_sym,), (CD0_expr,), ('M',), ('CD0',))
 CD2_fun = ca.Function('CD2', (mach_sym,), (CD2_expr,), ('M',), ('CD2',))
 
+# Aerodynamic limits
+load_max = 9.
+alpha_max = 15. * d2r
+
 
 def max_ld_fun(_CLa, _CD0, _CD2):
     _CL_max_ld = (_CD0 / _CD2) ** 0.5

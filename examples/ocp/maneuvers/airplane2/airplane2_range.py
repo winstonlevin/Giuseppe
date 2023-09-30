@@ -6,10 +6,11 @@ import pickle
 
 import giuseppe
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, lut_data, mach_boundary_thickness
+from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, lut_data, mach_boundary_thickness,\
+    load_max, alpha_max, CL0, CLa_fun, dens_fun, sped_fun
 from glide_slope import get_glide_slope
 
-SWEEP_SOLUTION_SPACE = False
+SWEEP_SOLUTION_SPACE = True
 
 
 ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.MX)
@@ -175,29 +176,6 @@ if __name__ == '__main__':
     # Maximum energy is at maximum Mach (for minimum altitude)
     mach_max = 3.0
     e_max = 0.5 * (3.0 * atm.speed_of_sound(0.))**2
-    # e_mach_max = binary_search(
-    #     _x_min=1., _x_max=7e6,
-    #     _f=lambda _e: get_glide_slope(e_vals=np.array((_e,)), h_min=-2e3)['M'],
-    #     _f_val_target=mach_max
-    # )
-
-    # e_val_guess_range = np.array((1., 3.5e6, 6e6))
-    # for idx in range(1000):
-    #     # Binary search
-    #     e_val_guess_range[1] = 0.5 * (e_val_guess_range[0] + e_val_guess_range[2])
-    #     _h_f = get_glide_slope(e_vals=np.array((e_val_guess_range[1],)), h_min=-2e3)['h']
-    #     if _h_f < h_f:
-    #         # Too low energy, try higher.
-    #         e_val_guess_range[0] = e_val_guess_range[1]
-    #     else:
-    #         # Too high energy, try lower.
-    #         e_val_guess_range[2] = e_val_guess_range[1]
-    #
-    #     e_val_guess_range[1] = 0.5 * (e_val_guess_range[0] + e_val_guess_range[2])
-    #     if e_val_guess_range[2] - e_val_guess_range[1] < 1e-3:
-    #         break
-    #
-    # e_h_f = e_val_guess_range[1]
 
     e_vals = np.logspace(np.log10(e_h_f), np.log10(e_max), 100)
     glide_dict = get_glide_slope(e_vals=e_vals)
@@ -334,11 +312,21 @@ if __name__ == '__main__':
         h0_max = 145e3
         h0_min = 100.  # Compatible with e0 chosen from Mach max.
 
+        # Get Low altitude solution
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
         cont.add_custom_series(
             100, generate_energy_sweep_continuation(h0, h0_min), 'Const. energy', keep_bisections=False
         )
         sol_set_sweep1 = cont.run_continuation()
+
+        # Choose solution that does not violate g-load bound.
+        idx_sweep1 = 0
+        for idx, sol in enumerate(sol_set_sweep1.solutions):
+            _load = sol.u[0, :]
+            _load_max = np.max(abs(_load))
+            if _load_max > load_max:
+                idx_sweep1 = idx - 1
+                break
 
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
         cont.add_custom_series(
@@ -348,7 +336,7 @@ if __name__ == '__main__':
 
         sol_set_sweep = deepcopy(sol_set_sweep2)
         sol_set_sweep.solutions = deepcopy([
-            sol_set_sweep1.solutions[-1], sol_set_sweep1.solutions[0], sol_set_sweep2.solutions[-1]
+            sol_set_sweep1.solutions[idx_sweep1], sol_set_sweep1.solutions[0], sol_set_sweep2.solutions[-1]
         ])
 
         sol_set_sweep.save('sol_set_range_sweep.data')

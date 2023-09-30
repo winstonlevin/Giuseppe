@@ -209,10 +209,14 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             + _dict['CD2'] / _dict['qdyn_s_ref'] * _dict['lift'] ** 2
         _dict['ddrag_dlift'] = CD1 + 2 * _dict['CD2'] / _dict['qdyn_s_ref'] * _dict['lift']
 
-        _dict['lam_E'] = -mass * np.cos(_gam) / (_dict['drag'] * _dict['r'])
+        _dict['lam_E'] = -mass / (_dict['drag'] * _dict['r'])
         _dict['lam_gam'] = _dict['lam_E'] * _dict['v']**2 * _dict['ddrag_dlift']
         _dict['lam_h'] = ((_dict['lam_gam'] - 1) / _dict['r']
-                          - _dict['lam_gam'] * _dict['g'] / _dict['v']**2) * np.tan(_gam)
+                          - _dict['lam_gam'] * _dict['g'] / _dict['v']**2) * 0.
+        # _dict['lam_E'] = -mass * np.cos(_gam) / (_dict['drag'] * _dict['r'])
+        # _dict['lam_gam'] = _dict['lam_E'] * _dict['v']**2 * _dict['ddrag_dlift']
+        # _dict['lam_h'] = ((_dict['lam_gam'] - 1) / _dict['r']
+        #                   - _dict['lam_gam'] * _dict['g'] / _dict['v']**2) * np.tan(_gam)
         return _dict
 
     if flat_earth:
