@@ -1,6 +1,7 @@
 import numpy as np
 import scipy as sp
 from matplotlib import pyplot as plt
+import matplotlib as mpl
 import pickle
 
 DATA = 2
@@ -93,51 +94,120 @@ def generate_termination_event(dt_min):
 
 
 # Specify Constraints
-hf = 10e3
 gamf = 0.
 gam0 = 0.
-pef = mu/rm - mu/(rm + hf)
 
-# Specify range of trial velocities
-vf_vals = np.linspace(0.1, 0.5, 10) * 1e3
+# Specify range of trial velocities and altitudes
+vf_vals = np.linspace(0.5, 0.1, 100) * 1e3
+hf_vals = np.linspace(5., 15., 11) * 1e3
 dt_min = 1e-2
 
 # Propagate solutions
-h0_vals = np.empty(vf_vals.shape)
-v0_vals = np.empty(vf_vals.shape)
-gam0_vals = np.empty(vf_vals.shape)
-event_vals = np.empty(vf_vals.shape, dtype=bool)
+h0_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
+v0_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
+gam0_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
+event_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
+ef_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
+for hf_idx, hf_val in enumerate(hf_vals):
+    h0_vals = np.empty(vf_vals.shape)
+    v0_vals = np.empty(vf_vals.shape)
+    gam0_vals = np.empty(vf_vals.shape)
+    ef_vals = np.empty(vf_vals.shape)
+    event_vals = np.empty(vf_vals.shape, dtype=bool)
 
-for idx, vf in enumerate(vf_vals):
-    xf = np.array((hf, vf, gamf))
-    ef = pef + 0.5 * vf**2
-    ivp_sol = sp.integrate.solve_ivp(
-        fun=lambda t, x: eom(t, x, reverse=True), t_span=np.array((0., 1e3)), y0=xf,
-        events=generate_termination_event(dt_min)
-    )
+    rf = hf_val + rm
+    gf = mu/rf**2
 
-    h0_vals[idx] = ivp_sol.y[idx_h, -1]
-    v0_vals[idx] = ivp_sol.y[idx_v, -1]
-    gam0_vals[idx] = ivp_sol.y[idx_gam, -1]
-    event_vals[idx] = ivp_sol.status == 1
+    h0_above_zero = True
+    for idx, vf in enumerate(vf_vals):
+        qdynf = 0.5 * rho0 * np.exp(-hf_val/h_ref) * vf**2
+        lift_max = qdynf * s_ref * CL1 * 0.5
+        lift_gam0 = mass * (gf - vf**2/rf)
+
+        if h0_above_zero and lift_max < lift_gam0:
+            xf = np.array((hf_val, vf, gamf))
+            ef = mu/rm - mu/(rm+hf_val) + 0.5 * vf**2
+            ivp_sol = sp.integrate.solve_ivp(
+                fun=lambda t, x: eom(t, x, reverse=True), t_span=np.array((0., 1e3)), y0=xf,
+                events=generate_termination_event(dt_min)
+            )
+
+            h0_vals[idx] = ivp_sol.y[idx_h, -1]
+            v0_vals[idx] = ivp_sol.y[idx_v, -1]
+            gam0_vals[idx] = ivp_sol.y[idx_gam, -1]
+            ef_vals[idx] = ef
+            event_vals[idx] = ivp_sol.status == 1
+
+            # Since vf is in descending order, once h0 < 0, we can break.
+            h0_above_zero = h0_vals[idx] > 0
+
+            if not event_vals[idx]:
+                print('Uh oh!')
+
+        else:
+            h0_vals[idx] = np.nan
+            v0_vals[idx] = np.nan
+            gam0_vals[idx] = np.nan
+            ef_vals[idx] = np.nan
+            event_vals[idx] = np.nan
+
+    h0_list[hf_idx] = h0_vals
+    v0_list[hf_idx] = v0_vals
+    gam0_list[hf_idx] = gam0_vals
+    ef_list[hf_idx] = ef_vals
+    event_list[hf_idx] = event_vals
+
+# Search for approximately optimal solution
 
 
 # PLOT
-ydata = (h0_vals, v0_vals, gam0_vals)
+gradient = mpl.colormaps['viridis'].colors
+
+# Generate color gradient
+if len(h0_list) == 1:
+    grad_idcs = np.array((0,), dtype=np.int32)
+else:
+    grad_idcs = np.int32(np.floor(np.linspace(0, 255, len(h0_list))))
+
+
+def cols_gradient(n):
+    return gradient[grad_idcs[n]]
+
+
 ylabels = (r'$h_0$', r'$V_0$', r'$\gamma_0$')
+ndata = len(ylabels)
 xdata = vf_vals
 xlabel = (r'$V_f$')
 axes = []
-ndata = len(ydata)
+
 
 fig = plt.figure()
-for idx, y in enumerate(ydata):
-    axes.append(fig.add_subplot(ndata, 1, idx + 1))
-    ax = axes[-1]
+for h_idx, hf_val in enumerate(hf_vals):
+    ydata = (h0_list[h_idx], v0_list[h_idx], gam0_list[h_idx])
 
-    ax.plot(xdata, y)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabels[idx])
-    ax.grid()
+    for idx, y in enumerate(ydata):
+        if h_idx == 0:
+            axes.append(fig.add_subplot(ndata, 1, idx + 1))
+            ax = axes[idx]
+            ax.set_ylabel(ylabels[idx])
+            ax.set_xlabel(xlabel)
+            ax.grid()
+
+        ax = axes[idx]
+        ax.plot(xdata, y)
 
 fig.tight_layout()
+
+fig_paper = plt.figure()
+ax_paper = fig_paper.add_subplot(111)
+ax_paper.set_ylabel(r'$E_f$ [1,000 m$^2$/s$^2$]')
+ax_paper.set_xlabel(r'$h_0$ [km]')
+ax_paper.grid()
+for h_idx, hf_val in enumerate(hf_vals):
+    ax_paper.plot(h0_list[h_idx] / 1e3, ef_list[h_idx] / 1e3, color=cols_gradient(h_idx), label=str(hf_val))
+
+fig_paper.tight_layout()
+
+fig_paper.savefig('hl20_approximate_optimization_sweep.eps', format='eps', bbox_inches='tight')
+
+plt.show()

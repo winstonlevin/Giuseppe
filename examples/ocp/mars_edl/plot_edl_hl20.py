@@ -485,7 +485,6 @@ if PLOT_AUXILIARY:
     fig_hv = plt.figure()
     ax_hv = fig_hv.add_subplot(111)
 
-    # TODO - remove
     ax_hv.set_xlabel('Velocity [km/s]')
     ax_hv.set_ylabel('Altitude [km]')
 
