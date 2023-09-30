@@ -424,7 +424,7 @@ for idx, ivp_sol_dict in enumerate(ivp_sols_dict):
     figs.append(plt.figure())
     fig = figs[-1]
 
-    fig_name = 'fig_' + str(idx + 1)
+    fig_name = 'airplane2_case' + str(idx + 1)
 
     y_arr_opt = np.vstack((
         ivp_sols_dict[idx][AOA_LAWS[0]]['x_opt'][1:, :],
@@ -479,9 +479,14 @@ for idx, ivp_sol_dict in enumerate(ivp_sols_dict):
                     color=col[1+eval_idx], label=AOA_LAWS[eval_idx]
                 )
 
-        if jdx == 0:
-            ax.legend()
+        # if jdx == 0:
+        #     ax.legend()
 
     fig.tight_layout()
+    fig.savefig(
+        fig_name + '.eps',
+        format='eps',
+        bbox_inches='tight'
+    )
 
 plt.show()
