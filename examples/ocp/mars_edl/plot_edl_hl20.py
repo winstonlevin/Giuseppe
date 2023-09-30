@@ -444,7 +444,7 @@ if PLOT_AUXILIARY:
     # PLOT AERODYNAMICS
     if PLOT_SWEEP:
         ydata = (lift_sweep_frac, drag_sweep_frac, ld_sweep)
-        ylabs = (r'%$L$ [g]', r'%$D$ [g]', r'L/D')
+        ylabs = (r'%$L$', r'%$D$', r'L/D')
         ymult = (100., 100., 1.)
         ymax = (1., 1., ld_max)
         ymin = (-1., -1., ld_min)
@@ -590,5 +590,45 @@ if PLOT_AUXILIARY:
 
     fig_cost.suptitle(sup_title)
     fig_cost.tight_layout()
+
+n_sols = len(sols)
+e0_arr = np.empty(shape=(n_sols,))
+ef_arr = np.empty(shape=(n_sols,))
+cl_sweep_list = [np.empty((0,))] * n_sols
+CL_max = 0.5 * CL1
+
+for idx, sol in enumerate(sols):
+    h_sweep = sol.x[0, :] * k_dict['h_scale']
+    v_sweep = sol.x[2, :] * k_dict['v_scale']
+    e_sweep = mu/rm - mu/(rm+h_sweep) + 0.5 * v_sweep**2
+
+    alpha_sweep = sol.u[0, :] * k_dict['alpha_scale']
+    cl_sweep = CL1 * 0.5 * np.sin(2 * (alpha_sweep + CL0/CL1))
+
+    e0_arr[idx] = e_sweep[0]
+    ef_arr[idx] = e_sweep[-1]
+    cl_sweep_list[idx] = cl_sweep
+
+fig_paper = plt.figure()
+
+ax_lift = fig_paper.add_subplot(211)
+for idx, sol in enumerate(sols):
+    ax_lift.plot(sol.t, cl_sweep_list[idx], color=cols_gradient(idx))
+ax_lift.plot(t_sweep_span, (CL_max, CL_max), 'k--', label=r'$C_{L,\text{max}}$')
+ax_lift.set_xlabel(t_label)
+ax_lift.set_ylabel(r'$C_L$')
+ax_lift.set_xlim(t_sweep_span)
+ax_lift.set_ylim((0., 1.1*CL_max))
+ax_lift.grid()
+
+ax_ef = fig_paper.add_subplot(212)
+ax_ef.plot(e0_arr / 1e3, ef_arr / 1e3)
+ax_ef.set_xlabel(r'$E_0$ [1,000 m$^2$/s$^2$]')
+ax_ef.set_ylabel(r'$E_f$ [1,000 m$^2$/s$^2$]')
+ax_ef.grid()
+
+fig_paper.tight_layout()
+
+fig_paper.savefig('hl20_indirect_optimization.eps', format='eps', bbox_inches='tight')
 
 plt.show()

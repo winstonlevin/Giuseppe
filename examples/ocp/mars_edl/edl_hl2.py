@@ -168,21 +168,6 @@ if OPTIMIZATION == 'max_range' or OPTIMIZATION == 'min_energy':
         )
     )
 
-# Angle of Attack Constraint
-alpha_min = -np.pi/2
-alpha_max = np.pi/2
-eps_alpha = 1e-3
-hl20.add_constant('alpha_min', alpha_min)
-hl20.add_constant('alpha_max', alpha_max)
-hl20.add_constant('eps_alpha', eps_alpha)
-if OPTIMIZATION == 'min_energy_loft':
-    hl20.add_inequality_constraint(
-        'path', 'alpha_nd', 'alpha_min / alpha_scale', 'alpha_max / alpha_scale',
-        regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler(
-            'eps_alpha', method='utm'
-        )
-    )
-
 # COST FUNCTIONAL
 hl20.add_constant('eps_cost_alpha', 1e-3)
 hl20.add_constant('offset_cost_alpha', 0.)
@@ -320,9 +305,6 @@ CLf = CL0 + CL1 * alphaf
 vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
 
 idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
-idx_eps_alpha = hl20_dual.annotations.constants.index('eps_alpha')
-idx_alpha_min = hl20_dual.annotations.constants.index('alpha_min')
-idx_alpha_max = hl20_dual.annotations.constants.index('alpha_max')
 
 if OPTIMIZATION == 'min_energy_loft':
     k_max_d = 0.2
@@ -420,34 +402,12 @@ def time_continuation(previous_sol, frac_complete):
     return _constants
 
 
-def generate_energy_continuation(_e0_0, _e0_f, _frac_utm):
+def generate_energy_continuation(_e0_0, _e0_f):
     def energy_continuation(previous_sol, frac_complete):
         _constants = previous_sol.k.copy()
 
         # Increment initial energy
         _constants[idx_energy0] = _e0_0 + frac_complete * (_e0_f - _e0_0)
-
-        # Change offset to mean value (i.e. punish deviation from mean)
-        # (weighted by time)
-        _dt = np.diff(previous_sol.t)
-        _alpha_mean = np.sum(previous_sol.u[0, :-1] * _dt) * alpha_scale / (previous_sol.t[-1] - previous_sol.t[0])
-        _constants[idx_offset_cost_alpha] = _alpha_mean
-
-        # Modify eps_alpha to be _frac_utm of cost
-        _h0 = previous_sol.x[0, 0] * h_scale
-        _v0 = previous_sol.x[2, 0] * v_scale
-        _e0 = mu/rm - mu/(rm + _h0) - 0.5 * _v0**2
-
-        _hf = previous_sol.x[0, -1] * h_scale
-        _vf = previous_sol.x[2, -1] * v_scale
-        _ef = mu/rm - mu/(rm + _hf) - 0.5 * _vf**2
-
-        _cost_raw = (_ef - _e0) / energy_scale
-        _cost_total = previous_sol.cost
-        __frac_utm = abs(_cost_total - _cost_raw) / _cost_total
-        _eps_alpha = previous_sol.k[idx_eps_alpha]
-        _eps_alpha_new = max(_eps_alpha * _frac_utm / __frac_utm, 1e-10)
-        _constants[idx_eps_alpha] = _eps_alpha_new
 
         return _constants
     return energy_continuation
@@ -462,20 +422,20 @@ if OPTIMIZATION == 'max_range':
     cont.add_linear_series_until_failure({'vf': -10})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_h': 1e-10})
-    # cont.add_logarithmic_series(100, {'eps_alpha': 1e-10, 'eps_h': 1e-10})
     sol_set = cont.run_continuation()
 elif OPTIMIZATION == 'min_energy_loft':
     e0_0 = 2.5e5
     e0_f = 3e5
-    frac_eps_alpha = 1e-3
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_logarithmic_series(100, {'energy0': e0_0})
     cont.add_linear_series(10, {'gam0': 0.})
-    cont.add_linear_series(10, {'alpha_min': -1., 'alpha_max': 1.})
-    cont.add_custom_series(100, generate_energy_continuation(e0_0, e0_f, frac_eps_alpha), 'E0')
-    # cont.add_linear_series_until_failure({'energy0': 1e3})
     sol_set = cont.run_continuation()
+
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
+    cont.add_custom_series(100, generate_energy_continuation(e0_0, e0_f), 'E0', keep_bisections=False)
+    sol_set = cont.run_continuation()
+
 elif OPTIMIZATION == 'min_time':
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     cont.add_linear_series(1, {'theta0': 0.})
