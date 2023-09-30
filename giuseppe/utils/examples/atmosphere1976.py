@@ -237,7 +237,7 @@ class Atmosphere1976:
             altitude_geopotential = self.geometric2geopotential(altitude)
         else:
             altitude_geopotential = altitude
-        layer_idx = ca.fmax(ca.sum1(altitude_geopotential >= self.h_layers) - 1, 1)
+        layer_idx = ca.fmax(ca.sum1(altitude_geopotential >= self.h_layers) - 1, 0)
 
         temperature = type_h(0)
         pressure = type_h(0)
@@ -361,7 +361,8 @@ if __name__ == "__main__":
         if len(layer_idcs[0]) > 0:
             ax11.plot(density_1976[layer_idcs] * 100_000, altitudes[layer_idcs] / 10_000, label=layer + ' 1976')
     xlim11 = ax11.get_xlim()
-    ax11.plot(xlim11, np.array((1, 1)) * 80_000 / 10_000, 'k--', zorder=0)
+    # ax11.plot(xlim11, np.array((1, 1)) * 80_000 / 10_000, 'k--', zorder=0)
+    # ax11.plot(density_1976_ca * 100_000, altitudes / 10_000, label='CasADi')
     ax11.set_xlim(xlim11)
     ax11.grid()
     ax11.set_xlabel('Density [slug / 100,000 ft^3]')
@@ -375,6 +376,7 @@ if __name__ == "__main__":
     ax22 = fig2.add_subplot(122)
 
     ax21.plot(density_exponential, altitudes / 10_000, label='Exponential Atm.')
+    # ax21.plot(density_1976, altitudes / 10_000, label='Not CasADi')
     ax22.plot(-density_deriv_exponential, altitudes / 10_000, label='Exponential Atm.')
     for layer in atm.layer_names:
         layer_idcs = np.where(layer_1976 == layer)
