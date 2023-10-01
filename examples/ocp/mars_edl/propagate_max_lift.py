@@ -98,9 +98,18 @@ gamf = 0.
 gam0 = 0.
 
 # Specify range of trial velocities and altitudes
-vf_vals = np.linspace(0.5, 0.1, 100) * 1e3
 hf_vals = np.linspace(5., 15., 11) * 1e3
+rf_vals = rm + hf_vals
+gf_vals = mu / rf_vals**2
+rhof_vals = rho0 * np.exp(-hf_vals / h_ref)
+CL_max = 0.5 * CL1
+vstallf_vals = (mass * gf_vals / (0.5 * rhof_vals * s_ref * CL_max + mass/rf_vals)) ** 0.5
+vf_vals = np.linspace(np.max(vstallf_vals), 100, 100)
 dt_min = 1e-2
+
+# Parameters for propellant
+g0 = 9.80665
+Isp = 350.
 
 # Propagate solutions
 h0_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
@@ -108,6 +117,7 @@ v0_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
 gam0_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
 event_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
 ef_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
+mass_fracf_list = [np.empty(vf_vals.shape)] * hf_vals.shape[0]
 for hf_idx, hf_val in enumerate(hf_vals):
     h0_vals = np.empty(vf_vals.shape)
     v0_vals = np.empty(vf_vals.shape)
@@ -151,11 +161,14 @@ for hf_idx, hf_val in enumerate(hf_vals):
             ef_vals[idx] = np.nan
             event_vals[idx] = np.nan
 
+    mass_frac_vals = 1. - np.exp(-(2. * ef_vals)**0.5 / (g0 * Isp))
+
     h0_list[hf_idx] = h0_vals
     v0_list[hf_idx] = v0_vals
     gam0_list[hf_idx] = gam0_vals
     ef_list[hf_idx] = ef_vals
     event_list[hf_idx] = event_vals
+    mass_fracf_list[hf_idx] = mass_frac_vals
 
 # Search for approximately optimal solution
 
@@ -200,14 +213,16 @@ fig.tight_layout()
 
 fig_paper = plt.figure()
 ax_paper = fig_paper.add_subplot(111)
-ax_paper.set_ylabel(r'$E_f$ [1,000 m$^2$/s$^2$]')
+# ax_paper.set_ylabel(r'$E_f$ [1,000 m$^2$/s$^2$]')
+ax_paper.set_ylabel('Propellant Mass Fraction')
 ax_paper.set_xlabel(r'$h_0$ [km]')
 ax_paper.grid()
 for h_idx, hf_val in enumerate(hf_vals):
-    ax_paper.plot(h0_list[h_idx] / 1e3, ef_list[h_idx] / 1e3, color=cols_gradient(h_idx), label=str(hf_val))
+    # ax_paper.plot(h0_list[h_idx] / 1e3, ef_list[h_idx] / 1e3, color=cols_gradient(h_idx), label=str(hf_val))
+    ax_paper.plot(h0_list[h_idx] / 1e3, mass_fracf_list[h_idx] / 1e3, color=cols_gradient(h_idx), label=str(hf_val))
 
 fig_paper.tight_layout()
 
-fig_paper.savefig('hl20_approximate_optimization_sweep.eps', format='eps', bbox_inches='tight')
+fig_paper.savefig('hl20_approximate_optimization_sweep.svg', format='svg', bbox_inches='tight')
 
 plt.show()

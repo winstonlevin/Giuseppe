@@ -294,6 +294,7 @@ r_glide = rm + h_glide
 g_glide = mu / r_glide**2
 rho_glide = rho0 * np.exp(-h_glide/h_ref)
 v_glide = _v = ((mass * g_glide) / (0.5 * rho_glide * s_ref * CL_max_ld + mass / r_glide)) ** 0.5
+e_glide = mu/rm - mu/r_glide + 0.5 * v_glide**2
 qdyn_glide = mass * (g_glide - v_glide**2 / r_glide) / (s_ref * CL_max_ld)
 qdyn_glide_interp = PchipInterpolator(x=h_glide, y=qdyn_glide)
 
@@ -491,20 +492,46 @@ if PLOT_AUXILIARY:
     ax_hv.grid()
     ax_hv.set_xlabel(xlabs[2])
     ax_hv.set_ylabel(xlabs[0])
-    ax_hv.set_xlim(np.array((0., v_max * 1.05)) / k_dict['v_scale'] * xmult[2])
 
-    if PLOT_SWEEP:
-        for sol_idx, sol_sweep in enumerate(sols):
-            ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0], color=cols_gradient(sol_idx))
-    else:
-        ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[0])
+    # TODO remove vvvvv
+    CL_max = 0.5 * CL1
+    v_stall = (mass * g_glide / (0.5 * rho_glide * s_ref * CL_max + mass/r_glide)) ** 0.5
+    # from scipy import optimize
+    # CL_max = 0.5 * CL1
+    # def fzero(_e, _h):
+    #     _r = rm + _h
+    #     _g = mu/_r**2
+    #     _pe = mu/rm - mu/_r
+    #     _v = max(0, 2*(_e - _pe))**0.5
+    #     _qdyn = 0.5 * rho0 * np.exp(-_h/h_ref) * _v**2
+    #     _zero = _qdyn * s_ref * CL_max - mass * (_g - _v**2/_r)
+    #     return _zero
+    # h_stall = np.empty(e_glide.shape)
+    # h_guess = h[0]
+    # for idx, e_val in enumerate(e_glide):
+    #     h_stall[idx] = optimize.fsolve(lambda x: fzero(e_val, x[0]), np.array((h_guess,)))[0]
+    #     h_guess = h_stall[idx]
+    ax_hv.plot(v_stall / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
+               'k', label='Stall')
+    # ax_hv.set_ylim(np.array((0., 1.1 * sol.x[0, -1] * xmult[0])))
+    # TODO remove ^^^^^
 
-    ax_hv.plot((g_glide * (rm + h_glide))**0.5 / 1e3, h_glide / k_dict['h_scale'] * xmult[0],
-               'k', label='Circular Orbital Velocity')
+    # TODO uncomment vvvvv
+    # ax_hv.set_xlim(np.array((0., v_max * 1.05)) / k_dict['v_scale'] * xmult[2])
+
+    # if PLOT_SWEEP:
+    #     for sol_idx, sol_sweep in enumerate(sols):
+    #         ax_hv.plot(sol_sweep.x[2, :] * xmult[2], sol_sweep.x[0, :] * xmult[0], color=cols_gradient(sol_idx))
+    # else:
+    #     ax_hv.plot(sol.x[2, :] * xmult[2], sol.x[0, :] * xmult[0])
+
+    # ax_hv.plot((g_glide * (rm + h_glide))**0.5 / 1e3, h_glide / k_dict['h_scale'] * xmult[0],
+    #            'k', label='Circular Orbital Velocity')
     ax_hv.plot(v_glide / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
                'k--', label='Glide Slope')
     ax_hv.plot(v_max_heat / k_dict['v_scale'] * xmult[2], h_glide / k_dict['h_scale'] * xmult[0],
                'k:', label='Max Heat Rate')
+
     ax_hv.legend()
 
     # PLOT DERIVATIVES
@@ -629,5 +656,7 @@ ax_ef.grid()
 fig_paper.tight_layout()
 
 fig_paper.savefig('hl20_indirect_optimization.eps', format='eps', bbox_inches='tight')
+
+fig_hv.savefig('hl20_hv_plot.eps', format='eps', bbox_inches='tight')
 
 plt.show()
