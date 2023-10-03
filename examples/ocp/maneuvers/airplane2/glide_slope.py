@@ -57,6 +57,9 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
 
         def lift_gam0(_h, _v, _gam):
             return mass * g0 * np.cos(_gam)
+
+        def lam_e_zo(_drag, _r):
+            return -mass/_drag
     else:
         def hv_to_e(_h, _v):
             # E = mu/re - mu/r + 0.5 V**2
@@ -77,6 +80,9 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             _g = h_to_g(_h)
             _r = re + _h
             return mass * (_g - _v ** 2 / _r) * np.cos(_gam)
+
+        def lam_e_zo(_drag, _r):
+            return -mass/(_drag * _r)
 
     if nondimensionalize_control:
         def u_to_lift(_u):
@@ -179,7 +185,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
 
         _dict['r'] = re + _h
         _dict['g'] = h_to_g(_h)
-        _dict['v'] = np.maximum(1., 2. * (_e + mu / _dict['r'] - mu / re)) ** 0.5
+        _dict['v'] = np.maximum(1., eh_to_v2(_e, _h)) ** 0.5
 
         _dens_arr = np.asarray(dens_fun(_h)).flatten()
         if len(_dens_arr) > 1:
@@ -209,10 +215,9 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             + _dict['CD2'] / _dict['qdyn_s_ref'] * _dict['lift'] ** 2
         _dict['ddrag_dlift'] = CD1 + 2 * _dict['CD2'] / _dict['qdyn_s_ref'] * _dict['lift']
 
-        _dict['lam_E'] = -mass / (_dict['drag'] * _dict['r'])
+        _dict['lam_E'] = lam_e_zo(_dict['drag'], _dict['r'])
         _dict['lam_gam'] = _dict['lam_E'] * _dict['v']**2 * _dict['ddrag_dlift']
-        _dict['lam_h'] = ((_dict['lam_gam'] - 1) / _dict['r']
-                          - _dict['lam_gam'] * _dict['g'] / _dict['v']**2) * 0.
+        _dict['lam_h'] = 0. * _h
         # _dict['lam_E'] = -mass * np.cos(_gam) / (_dict['drag'] * _dict['r'])
         # _dict['lam_gam'] = _dict['lam_E'] * _dict['v']**2 * _dict['ddrag_dlift']
         # _dict['lam_h'] = ((_dict['lam_gam'] - 1) / _dict['r']

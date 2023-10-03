@@ -327,11 +327,11 @@ def get_glide_slope_neighboring_feedback(_mu, _Re, _m, _s_ref, _eta, _h_interp):
     return _k_h_interp, _k_gam_interp
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     from matplotlib import pyplot as plt
     import pickle
 
-    with open('../sol_set_range.data', 'rb') as f:
+    with open('sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[-1]
 
@@ -358,6 +358,10 @@ if __name__=='__main__':
     h_interp, v_interp, gam_interp, drag_interp = get_glide_slope(
         k_dict['mu'], k_dict['Re'], x_dict['m'][0], k_dict['s_ref'], k_dict['eta'],
         _h_min=h_min, _h_max=h_max, _mach_min=mach_min, _mach_max=mach_max)
+
+    k_h_interp, k_gam_interp = get_glide_slope_neighboring_feedback(
+        k_dict['mu'], k_dict['Re'], x_dict['m'][0], k_dict['s_ref'], k_dict['eta'], h_interp
+    )
 
     e_vals = h_interp.x
     h_vals = h_interp(e_vals)
@@ -410,5 +414,19 @@ if __name__=='__main__':
     ax_drag.plot(mach_vals, drag_vals / weight_vals)
 
     fig.tight_layout()
+
+    fig_gains = plt.figure()
+    xdata = e_vals
+    ydata = (k_h_interp(e_vals), k_gam_interp(e_vals))
+    ylabs = (r'$K_h$', r'$K_\gamma$')
+    axes = []
+
+    for idx, y in enumerate(ydata):
+        axes.append(fig_gains.add_subplot(2, 1, idx + 1))
+        ax = axes[-1]
+        ax.plot(xdata, y)
+        ax.set_xlabel(e_lab)
+        ax.set_ylabel(ylabs[idx])
+        ax.grid()
 
     plt.show()
