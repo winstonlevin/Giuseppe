@@ -151,7 +151,7 @@ def create_buffered_conditional_function(expr_list: list[CA_SYM],
 
 
 def create_buffered_linear_interpolator(x: np.array, y: Union[list[CA_SYM], np.array],
-                                        independent_var: CA_SYM, boundary_thickness: float,
+                                        independent_var: CA_SYM, boundary_thickness: Optional[float] = None,
                                         free_variables: Optional[Tuple[Union[ca.SX, ca.MX]]] = None,
                                         extrapolate: bool = True):
     expr_type = type(independent_var)
@@ -168,9 +168,14 @@ def create_buffered_linear_interpolator(x: np.array, y: Union[list[CA_SYM], np.a
         for idx, (x1, x2, y1, y2) in enumerate(zip(x[:-1], x[1:], y[:-1], y[1:])):
             expr_list[idx+1] = y1 + (y2 - y1) / (x2 - x1) * (independent_var - x1)
 
-    expr_out = create_buffered_conditional_function(
-        expr_list, break_points, independent_var, boundary_thickness, free_variables
-    )
+    if boundary_thickness is not None:
+        expr_out = create_buffered_conditional_function(
+            expr_list, break_points, independent_var, boundary_thickness, free_variables
+        )
+    else:
+        expr_out = create_conditional_function(
+            expr_list, break_points, independent_var
+        )
     return expr_out
 #
 #

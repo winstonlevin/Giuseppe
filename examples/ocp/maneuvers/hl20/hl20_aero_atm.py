@@ -257,6 +257,15 @@ CD0_fun = ca.Function('CD0', (mach_sym,), (CD0_expr,), ('M',), ('CD0',))
 CD1_fun = ca.Function('CD1', (mach_sym,), (CD1_expr,), ('M',), ('CD1',))
 CD2_fun = ca.Function('CD2', (mach_sym,), (CD2_expr,), ('M',), ('CD2',))
 
+
+def max_ld_fun(_CL0, _CLa, _CD0, _CD1, _CD2):
+    _CL_max_ld = (_CD0 / _CD2) ** 0.5
+    _CD_max_ld = _CD0 + _CD1 * _CL_max_ld + _CD2 * _CL_max_ld ** 2
+    _alpha_max_ld = (_CL_max_ld - _CL0) / _CLa
+    _dict = {'alpha': _alpha_max_ld, 'CL': _CL_max_ld, 'CD': _CD_max_ld, 'LD': _CL_max_ld / _CD_max_ld}
+    return _dict
+
+
 if __name__ == '__main__':
     from matplotlib import pyplot as plt
     import matplotlib as mpl
