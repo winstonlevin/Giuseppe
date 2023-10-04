@@ -25,8 +25,8 @@ sped_fun = ca.Function('a', (h_sym,), (sped_expr,), ('h',), ('a',))
 
 # Aero parameters from Betts' "Practical Methods"
 s_ref = 500.  # ft**2
-weight = 34_200.  # lbm
-mass = weight / g0  # slug
+weight0 = 34_200.  # lbm
+mass = weight0 / g0  # slug
 
 # CL = CLa alpha
 # CD = CD0 + eta CLa alpha**2

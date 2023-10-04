@@ -3,6 +3,27 @@ import casadi as ca
 
 from giuseppe.utils.examples import Atmosphere1976, create_buffered_linear_interpolator
 
+# Atmosphere parameters
+mu = 0.14076539e17
+re = 20_902_900.  # ft
+g0 = mu / re ** 2
+atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0, boundary_thickness=1000.)
+
+h_sym = ca.SX.sym('h')
+temp_expr, pres_expr, dens_expr = atm.get_ca_atm_expr(h_sym)
+sped_expr = atm.get_ca_speed_of_sound_expr(h_sym)
+
+temp_fun = ca.Function('T', (h_sym,), (temp_expr,), ('h',), ('T',))
+pres_fun = ca.Function('P', (h_sym,), (pres_expr,), ('h',), ('P',))
+dens_fun = ca.Function('rho', (h_sym,), (dens_expr,), ('h',), ('rho',))
+sped_fun = ca.Function('a', (h_sym,), (sped_expr,), ('h',), ('a',))
+
+# Vehicle properties (https://doi.org/10.2514/6.2001-2887)
+weight0 = 24479.  # lbm
+s_ref = 286.45  # ft**2
+mass = weight0 / g0  # slug
+
+# From HL-20 Data (https://doi.org/10.2514/6.1991-3215)
 raw_aero_data = [
     {  # Mach 10
         'M': 10.,
