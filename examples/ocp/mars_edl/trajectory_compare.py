@@ -143,13 +143,13 @@ t_min_time = np.append(sol_min_time.t, ivp_sol.t)
 x_min_time = np.hstack(((sol_min_time.x.T * x_mult).T, ivp_sol.y))
 alpha_min_time = np.append(sol_min_time.u[0, :] * u_mult, alpha_ivp)
 
-e_max_range = mu/rm - mu/(rm + x_max_range[idx_h]) + 0.5 * x_max_range[idx_v, :]
-qdyn_max_range = 0.5 * rho0 * np.exp(-x_max_range[idx_h]/h_ref) * x_max_range[idx_v, :]**2
+e_max_range = mu/rm - mu/(rm + x_max_range[idx_h, :]) + 0.5 * x_max_range[idx_v, :]**2
+qdyn_max_range = 0.5 * rho0 * np.exp(-x_max_range[idx_h, :]/h_ref) * x_max_range[idx_v, :]**2
 CL_max_range = CL1 * 0.5 * np.sin(2 * (alpha_max_range + CL0/CL1))
 n_max_range = qdyn_max_range * s_ref * CL_max_range / weight0
 
-e_min_time = mu/rm - mu/(rm + x_min_time[idx_h]) + 0.5 * x_min_time[idx_v, :]
-qdyn_min_time = 0.5 * rho0 * np.exp(-x_min_time[idx_h]/h_ref) * x_min_time[idx_v, :]**2
+e_min_time = mu/rm - mu/(rm + x_min_time[idx_h, :]) + 0.5 * x_min_time[idx_v, :]**2
+qdyn_min_time = 0.5 * rho0 * np.exp(-x_min_time[idx_h, :]/h_ref) * x_min_time[idx_v, :]**2
 CL_min_time = CL1 * 0.5 * np.sin(2 * (alpha_min_time + CL0/CL1))
 n_min_time = qdyn_min_time * s_ref * CL_min_time / weight0
 
@@ -161,10 +161,10 @@ ydata_list_max_range = list(ydata_arr_max_range)
 ydata_arr_min_time = np.vstack((x_min_time, t_min_time, n_min_time))
 ydata_list_min_time = list(ydata_arr_min_time)
 
-e_label = r'$E$ [m$^2$/s$^2$]'
-e_mult = 1.
-y_labels = (r'$h$ [m]', r'$\theta$ [deg]', r'$V$ [m/s]', r'$\gamma$ [deg]', r'$t$ [min]', r'$n$ [g]')
-y_mult = (1., r2d, 1., r2d, s2min, 1/weight0)
+e_label = r'$E$ [km$^2$/s$^2$]'
+e_mult = 1e-6
+y_labels = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]', r'$t$ [min]', r'$n$ [g]')
+y_mult = (1e-3, r2d, 1e-3, r2d, s2min, 1.)
 
 fig = plt.figure()
 axes = []
@@ -175,6 +175,16 @@ for idx, (y_max_range, y_min_time) in enumerate(zip(ydata_list_max_range, ydata_
     ax.grid()
     ax.set_xlabel(e_label)
     ax.set_ylabel(y_labels[idx])
+    ax.invert_xaxis()
 
     ax.plot(e_max_range * e_mult, y_max_range * y_mult[idx], label='Max Range')
     ax.plot(e_min_time * e_mult, y_min_time * y_mult[idx], label='Min Time Dive')
+
+    # if idx == 0:
+    #     ax.legend()
+
+fig.tight_layout()
+
+fig.savefig('hl20_dive_cruise_compare.eps', format='eps', bbox_inches='tight')
+
+plt.show()
