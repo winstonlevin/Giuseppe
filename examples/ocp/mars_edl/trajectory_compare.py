@@ -163,7 +163,7 @@ ydata_list_min_time = list(ydata_arr_min_time)
 
 e_label = r'$E$ [km$^2$/s$^2$]'
 e_mult = 1e-6
-y_labels = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]', r'$t$ [min]', r'$n$ [g]')
+y_labels = (r'$h$ [km]', r'$\theta$ [deg]', r'$V$ [km/s]', r'$\gamma$ [deg]', r'$t$ [min]', r'$n_{v}$ [g]')
 y_mult = (1e-3, r2d, 1e-3, r2d, s2min, 1.)
 
 fig = plt.figure()
