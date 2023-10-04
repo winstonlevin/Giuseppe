@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'min_energy_loft'  # {'max_range', 'min_time', 'min_energy', 'min_energy_loft'}
+OPTIMIZATION = 'max_range'  # {'max_range', 'min_time', 'min_energy', 'min_energy_loft'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180
@@ -39,7 +39,6 @@ hl20.add_expression('gam', 'gam_nd * gam_scale')
 # Expressions
 hl20.add_expression('g', 'mu/r**2')  # Gravitational acceleration [m/s**2]
 hl20.add_expression('g0', 'mu/rm**2')  # Gravitational acceleration [m/s**2]
-hl20.add_expression('weight0', 'mass * g0')  # Gravitational acceleration [m/s**2]
 hl20.add_expression('drag', 'qdyn * s_ref * CD')  # Drag [N]
 hl20.add_expression('lift', 'qdyn * s_ref * CL')  # Lift [N]
 hl20.add_expression('rho', 'rho0 * exp(-h / h_ref)')  # Density [kg/m**3]
@@ -77,6 +76,7 @@ CD1 = -0.0029 / d2r
 CD2 = 5.5556e-4 / d2r**2
 s_ref = 26.6
 mass = 11e3
+g0_earth = 9.80665
 
 hl20.add_constant('CL0', CL0)
 hl20.add_constant('CL1', CL1)
@@ -85,6 +85,7 @@ hl20.add_constant('CD1', CD1)
 hl20.add_constant('CD2', CD2)
 hl20.add_constant('s_ref', s_ref)  # Reference area [m**2]
 hl20.add_constant('mass', mass)  # Mass [kg]
+hl20.add_constant('weight0', mass * g0_earth)  # Gravitational acceleration [m/s**2]
 
 # BOUNDARY CONDITIONS
 # Scaling Factors
@@ -138,13 +139,18 @@ hl20.add_constant('n_min', -n_max)
 hl20.add_constant('eps_n', 1e-3)
 hl20.add_expression('g_load_normal', 'lift / weight0')  # sea-level g's of acceleration [-]
 hl20.add_expression('g_load_axial', 'drag / weight0')  # sea-level g's of acceleration [-]
+hl20.add_expression('g_load', '(lift**2 + drag**2)**0.5 / weight0')
 if OPTIMIZATION == 'min_time' or OPTIMIZATION == 'min_energy':
+    # hl20.add_inequality_constraint(
+    #     'path', 'g_load_normal', 'n_min', 'n_max',
+    #     regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
+    # )
+    # hl20.add_inequality_constraint(
+    #     'path', 'g_load_axial', 'n_min', 'n_max',
+    #     regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
+    # )
     hl20.add_inequality_constraint(
-        'path', 'g_load_normal', 'n_min', 'n_max',
-        regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
-    )
-    hl20.add_inequality_constraint(
-        'path', 'g_load_axial', 'n_min', 'n_max',
+        'path', 'g_load', 'n_min', 'n_max',
         regularizer=giuseppe.problems.symbolic.regularization.PenaltyConstraintHandler('eps_n', method='utm')
     )
 
@@ -220,8 +226,6 @@ elif OPTIMIZATION == 'min_time':
     hl20.add_constraint('initial', 'gam - gam0')
 
     # Terminal States
-    hl20.add_constraint('initial', 't')
-    hl20.add_constraint('initial', 'theta - theta0')
     hl20.add_constraint('terminal', 'h - hf')
     hl20.add_constraint('terminal', 'gam - gamf')
 elif OPTIMIZATION == 'min_energy':
@@ -243,7 +247,7 @@ else:
 
 # COMPILATION ----------------------------------------------------------------------------------------------------------
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
-    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=False)
+    hl20_dual = giuseppe.problems.symbolic.SymDual(hl20, control_method='differential').compile(use_jit_compile=True)
     num_solver = giuseppe.numeric_solvers.SciPySolver(
         hl20_dual, verbose=False, max_nodes=100, node_buffer=15, bc_tol=1e-8
     )
@@ -298,11 +302,14 @@ immutable_constants = (
 
 alphaf = 29.5 * d2r
 hf = 10e3
-gf = mu / (rm + hf) ** 2
+rf = rm + hf
+gf = mu / rf ** 2
 weightf = gf * mass
 rhof = rho0 * np.exp(-hf/h_ref)
 CLf = CL0 + CL1 * alphaf
 vf = (2 * mass * gf / (rhof * s_ref * CLf)) ** 0.5
+CL_max = 0.5 * CL1
+vf_stallf = (mass * gf / (0.5 * rhof * s_ref * CL_max + mass/rf)) ** 0.5
 
 idx_eps_cost_alpha = hl20_dual.annotations.constants.index('eps_cost_alpha')
 
@@ -419,7 +426,8 @@ if OPTIMIZATION == 'max_range':
     cont.add_linear_series(1, {'theta0': 0.})
     cont.add_logarithmic_series(100, {'eps_h': 1e-5})
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
-    cont.add_linear_series_until_failure({'vf': -10})
+    cont.add_linear_series(10, {'vf': vf_stallf})
+    # cont.add_linear_series_until_failure({'vf': -10})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
     cont.add_logarithmic_series(100, {'eps_h': 1e-10})
     sol_set = cont.run_continuation()
@@ -442,20 +450,21 @@ elif OPTIMIZATION == 'min_time':
     cont.add_linear_series(10, {'v0': v0_glide_seed, 'gam0': gam0_glide_seed})
     cont.add_logarithmic_series(10, {'eps_cost_alpha': 1e-1})
     cont.add_custom_series(100, glide_slope_continuation, series_name='GlideSlope')
+    cont.add_linear_series(10, {'hf': 10e3})
     cont.add_logarithmic_series(100, {'eps_cost_alpha': 1e-3})
     sol_set = cont.run_continuation()
 
-    # Sweep Gam (with smoothing factor)
-    cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
-    cont.add_linear_series_until_failure({'gam0': -0.1 * d2r}, keep_bisections=False)
-    sol_set_gam = cont.run_continuation()
-    sol_set_gam.solutions.reverse()
-    cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set_gam)
-    cont.add_linear_series_until_failure({'gam0': 0.1 * d2r}, keep_bisections=False)
-    sol_set_gam = cont.run_continuation()
-
-    # Save Solution
-    sol_set_gam.save('sol_set_hl20_gam.data')
+    # # Sweep Gam (with smoothing factor)
+    # cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
+    # cont.add_linear_series_until_failure({'gam0': -0.1 * d2r}, keep_bisections=False)
+    # sol_set_gam = cont.run_continuation()
+    # sol_set_gam.solutions.reverse()
+    # cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set_gam)
+    # cont.add_linear_series_until_failure({'gam0': 0.1 * d2r}, keep_bisections=False)
+    # sol_set_gam = cont.run_continuation()
+    #
+    # # Save Solution
+    # sol_set_gam.save('sol_set_hl20_gam.data')
 
     # Solve for finer trajectory at nominal (gam0 = 0)
     cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set)
@@ -478,6 +487,7 @@ else:
 
 # Save Solution
 sol_set.save('sol_set_hl20.data')
+sol_set.save('sol_set_hl20_' + OPTIMIZATION + '.data')
 
 with open('damned_sols_hl20.data', 'wb') as file:
     pickle.dump(sol_set.damned_sols, file)

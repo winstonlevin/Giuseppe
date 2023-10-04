@@ -13,7 +13,7 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = True
+PLOT_SWEEP = False
 OPTIMIZATION = 'min_energy_loft'
 
 DATA = 2
@@ -86,7 +86,7 @@ r = rm + h
 g = mu / r ** 2
 g0 = mu / rm ** 2
 weight = mass * g
-weight0 = mass * g0
+weight0 = k_dict['weight0']
 energy = g * h + 0.5 * v ** 2
 
 gas_constant_mars = 8.31446261815324 / 43.34  # Universal gas constant R / mean molecular weight M [J/kg-K]
@@ -155,8 +155,8 @@ alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) **
 ld_max = (CL0 + CL1 * alpha_max_ld) / (CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2)
 ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_min_ld ** 2)
 
-n_max_g = k_dict['n_max'] * g0 / g
-n_min_g = k_dict['n_min'] * g0 / g
+n_max_g = k_dict['n_max'] * k_dict['weight0'] / weight
+n_min_g = k_dict['n_min'] * k_dict['weight0'] / weight
 
 lift_max_con_g = np.minimum(lift_max_g, n_max_g)
 lift_min_con_g = np.maximum(lift_min_g, n_min_g)
@@ -655,8 +655,26 @@ ax_ef.grid()
 
 fig_paper.tight_layout()
 
-fig_paper.savefig('hl20_indirect_optimization.eps', format='eps', bbox_inches='tight')
+fig_paper_ham = plt.figure()
 
+ax_hu = fig_paper_ham.add_subplot(211)
+ax_hu.set_xlabel(t_label)
+ax_hu.set_ylabel(r'$10^7 \times \partial{H}/\partial{\alpha}$')
+ax_hu.grid()
+for sol_idx, sol_sweep in enumerate(sols):
+    ax_hu.plot(sol_sweep.t * t_mult, sol_sweep.h_u[0, :] * 1e7, color=cols_gradient(sol_idx))
+
+ax_huu = fig_paper_ham.add_subplot(212)
+ax_huu.set_xlabel(t_label)
+ax_huu.set_ylabel(r'$\partial^2{H}/\partial{\alpha}^2$')
+ax_huu.grid()
+for sol_idx, sol_sweep in enumerate(sols):
+    ax_huu.plot(sol_sweep.t * t_mult, sol_sweep.eig_h_uu[0, :], color=cols_gradient(sol_idx))
+
+fig_paper_ham.tight_layout()
+
+fig_paper.savefig('hl20_indirect_optimization.eps', format='eps', bbox_inches='tight')
 fig_hv.savefig('hl20_hv_plot.eps', format='eps', bbox_inches='tight')
+fig_paper_ham.savefig('hl20_hamiltonian_plot.eps', format='eps', bbox_inches='tight')
 
 plt.show()
