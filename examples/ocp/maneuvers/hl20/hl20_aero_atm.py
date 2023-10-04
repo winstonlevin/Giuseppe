@@ -1,7 +1,7 @@
 import numpy as np
 import casadi as ca
 
-from giuseppe.utils.examples import Atmosphere1976, create_buffered_conditional_function
+from giuseppe.utils.examples import Atmosphere1976, create_buffered_linear_interpolator
 
 raw_aero_data = [
     {  # Mach 10
@@ -207,49 +207,28 @@ else:
 
 # Build aero look-up tables
 mach_sym = ca.MX.sym('M')
-interpolant_CL0 = ca.interpolant('CL0', 'bspline', (lut_data['M'],), lut_data['CL0'])
-interpolant_CLa = ca.interpolant('CLa', 'bspline', (lut_data['M'],), lut_data['CLa'])
-interpolant_CD0 = ca.interpolant('CD0', 'bspline', (lut_data['M'],), lut_data['CD0'])
-interpolant_CD1 = ca.interpolant('CD1', 'bspline', (lut_data['M'],), lut_data['CD1'])
-interpolant_CD2 = ca.interpolant('CD2', 'bspline', (lut_data['M'],), lut_data['CD2'])
-interp_fun_CL0 = ca.Function('CL0', (mach_sym,), (interpolant_CL0(mach_sym),), ('M',), ('CL0',))
-interp_fun_CLa = ca.Function('CLa', (mach_sym,), (interpolant_CLa(mach_sym),), ('M',), ('CLa',))
-interp_fun_CD0 = ca.Function('CD0', (mach_sym,), (interpolant_CD0(mach_sym),), ('M',), ('CD0',))
-interp_fun_CD1 = ca.Function('CD1', (mach_sym,), (interpolant_CD1(mach_sym),), ('M',), ('CD1',))
-interp_fun_CD2 = ca.Function('CD2', (mach_sym,), (interpolant_CD2(mach_sym),), ('M',), ('CD2',))
 
-# Since tables have a discontinuity at the endpoints of Mach number, create buffered conditional function with constant
-# extrapolation.
 mach_boundary_thickness = 0.05
-CL0_expr = create_buffered_conditional_function(
-    expr_list=[lut_data['CL0'][0], interp_fun_CL0(mach_sym), lut_data['CL0'][-1]],
-    break_points=[-np.inf, lut_data['M'][0] + mach_boundary_thickness, lut_data['M'][-1] - mach_boundary_thickness],
-    independent_var=mach_sym,
-    boundary_thickness=0.1  # 0.1 Mach boundary thickness
+extrapolate = False
+CL0_expr = create_buffered_linear_interpolator(
+    x=lut_data['M'], y=lut_data['CL0'], independent_var=mach_sym,
+    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
 )
-CLa_expr = create_buffered_conditional_function(
-    expr_list=[lut_data['CLa'][0], interp_fun_CLa(mach_sym), lut_data['CLa'][-1]],
-    break_points=[-np.inf, lut_data['M'][0] + mach_boundary_thickness, lut_data['M'][-1] - mach_boundary_thickness],
-    independent_var=mach_sym,
-    boundary_thickness=0.1  # 0.1 Mach boundary thickness
+CLa_expr = create_buffered_linear_interpolator(
+    x=lut_data['M'], y=lut_data['CLa'], independent_var=mach_sym,
+    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
 )
-CD0_expr = create_buffered_conditional_function(
-    expr_list=[lut_data['CD0'][0], interp_fun_CD0(mach_sym), lut_data['CD0'][-1]],
-    break_points=[-np.inf, lut_data['M'][0] + mach_boundary_thickness, lut_data['M'][-1] - mach_boundary_thickness],
-    independent_var=mach_sym,
-    boundary_thickness=0.1  # 0.1 Mach boundary thickness
+CD0_expr = create_buffered_linear_interpolator(
+    x=lut_data['M'], y=lut_data['CD0'], independent_var=mach_sym,
+    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
 )
-CD1_expr = create_buffered_conditional_function(
-    expr_list=[lut_data['CD1'][0], interp_fun_CD1(mach_sym), lut_data['CD1'][-1]],
-    break_points=[-np.inf, lut_data['M'][0] + mach_boundary_thickness, lut_data['M'][-1] - mach_boundary_thickness],
-    independent_var=mach_sym,
-    boundary_thickness=0.1  # 0.1 Mach boundary thickness
+CD1_expr = create_buffered_linear_interpolator(
+    x=lut_data['M'], y=lut_data['CD1'], independent_var=mach_sym,
+    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
 )
-CD2_expr = create_buffered_conditional_function(
-    expr_list=[lut_data['CD2'][0], interp_fun_CD2(mach_sym), lut_data['CD2'][-1]],
-    break_points=[-np.inf, lut_data['M'][0] + mach_boundary_thickness, lut_data['M'][-1] - mach_boundary_thickness],
-    independent_var=mach_sym,
-    boundary_thickness=0.1  # 0.1 Mach boundary thickness
+CD2_expr = create_buffered_linear_interpolator(
+    x=lut_data['M'], y=lut_data['CD2'], independent_var=mach_sym,
+    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
 )
 CL0_fun = ca.Function('CL0', (mach_sym,), (CL0_expr,), ('M',), ('CL0',))
 CLa_fun = ca.Function('CLa', (mach_sym,), (CLa_expr,), ('M',), ('CLa',))
