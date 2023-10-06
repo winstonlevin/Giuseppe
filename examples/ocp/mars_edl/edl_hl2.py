@@ -4,7 +4,7 @@ import pickle
 
 import giuseppe
 
-OPTIMIZATION = 'max_range'  # {'max_range', 'min_time', 'min_energy', 'min_energy_loft'}
+OPTIMIZATION = 'min_energy_loft'  # {'max_range', 'min_time', 'min_energy', 'min_energy_loft'}
 OPT_ERROR_MSG = 'Invalid Optimization Option!'
 
 d2r = np.pi / 180

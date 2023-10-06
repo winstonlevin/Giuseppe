@@ -13,7 +13,7 @@ PLOT_COSTATE = True
 RESCALE_COSTATES = True
 
 PLOT_AUXILIARY = True
-PLOT_SWEEP = False
+PLOT_SWEEP = True
 OPTIMIZATION = 'min_energy_loft'
 
 DATA = 2
@@ -151,6 +151,7 @@ drag_max_g = drag_max / weight
 
 alpha_max_ld = - CL0/CL1 + ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
 alpha_min_ld = - CL0/CL1 - ((CL0**2 + CD0*CL1**2 - CD1*CL0*CL1)/(CD2*CL1**2)) ** 0.5
+alpha_max_lift = np.pi/4 - CL0/CL1
 
 ld_max = (CL0 + CL1 * alpha_max_ld) / (CD0 + CD1 * alpha_max_ld + CD2 * alpha_max_ld ** 2)
 ld_min = (CL0 + CL1 * alpha_min_ld) / (CD0 + CD1 * alpha_min_ld + CD2 * alpha_min_ld ** 2)
@@ -417,6 +418,8 @@ for idx, ctrl in enumerate(list(sol.u)):
     else:
         ax.plot(sol.t * t_mult, ctrl * ymult[idx])
 
+ax.plot(t_sweep_span, r2d * np.array((alpha_max_lift, alpha_max_lift)), 'k--')
+
 fig_controls.tight_layout()
 
 if PLOT_COSTATE:
@@ -620,6 +623,11 @@ if PLOT_AUXILIARY:
 n_sols = len(sols)
 e0_arr = np.empty(shape=(n_sols,))
 ef_arr = np.empty(shape=(n_sols,))
+h0_arr = np.empty(shape=(n_sols,))
+h_sweep_list = [np.empty((0,))] * n_sols
+v_sweep_list = [np.empty((0,))] * n_sols
+gam_sweep_list = [np.empty((0,))] * n_sols
+alpha_sweep_list = [np.empty((0,))] * n_sols
 cl_sweep_list = [np.empty((0,))] * n_sols
 CL_max = 0.5 * CL1
 
@@ -633,11 +641,26 @@ for idx, sol in enumerate(sols):
 
     e0_arr[idx] = e_sweep[0]
     ef_arr[idx] = e_sweep[-1]
+    h0_arr[idx] = h_sweep[0]
+    h_sweep_list[idx] = h_sweep
+    v_sweep_list = v_sweep
+    gam_sweep_list = e_sweep
+    alpha_sweep_list[idx] = alpha_sweep
     cl_sweep_list[idx] = cl_sweep
 
 fig_paper = plt.figure()
 
-ax_lift = fig_paper.add_subplot(211)
+ax_lift = fig_paper.add_subplot(311)
+for idx, sol in enumerate(sols):
+    ax_lift.plot(sol.t, alpha_sweep_list[idx] * r2d, color=cols_gradient(idx))
+# ax_lift.plot(t_sweep_span, (CL_max, CL_max), 'k--', label=r'$C_{L,\text{max}}$')
+ax_lift.set_xlabel(t_label)
+ax_lift.set_ylabel(r'$\alpha$ [deg]')
+ax_lift.set_xlim(t_sweep_span)
+# ax_lift.set_ylim((0., 1.1*CL_max))
+ax_lift.grid()
+
+ax_lift = fig_paper.add_subplot(312)
 for idx, sol in enumerate(sols):
     ax_lift.plot(sol.t, cl_sweep_list[idx], color=cols_gradient(idx))
 ax_lift.plot(t_sweep_span, (CL_max, CL_max), 'k--', label=r'$C_{L,\text{max}}$')
@@ -647,7 +670,7 @@ ax_lift.set_xlim(t_sweep_span)
 ax_lift.set_ylim((0., 1.1*CL_max))
 ax_lift.grid()
 
-ax_ef = fig_paper.add_subplot(212)
+ax_ef = fig_paper.add_subplot(313)
 ax_ef.plot(e0_arr / 1e3, ef_arr / 1e3)
 ax_ef.set_xlabel(r'$E_0$ [1,000 m$^2$/s$^2$]')
 ax_ef.set_ylabel(r'$E_f$ [1,000 m$^2$/s$^2$]')
@@ -676,5 +699,9 @@ fig_paper_ham.tight_layout()
 fig_paper.savefig('hl20_indirect_optimization.eps', format='eps', bbox_inches='tight')
 fig_hv.savefig('hl20_hv_plot.eps', format='eps', bbox_inches='tight')
 fig_paper_ham.savefig('hl20_hamiltonian_plot.eps', format='eps', bbox_inches='tight')
+
+np.savetxt('Ef_E0_h0.csv', np.vstack((
+    ef_arr.reshape((1, -1)), e0_arr.reshape((1, -1)), h0_arr.reshape((1, -1)),
+)), delimiter=',')
 
 plt.show()
