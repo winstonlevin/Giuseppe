@@ -1,3 +1,3 @@
 from .atmosphere1976 import Atmosphere1976
 from .conditional_buffered_function import create_buffered_conditional_function, create_buffered_linear_interpolator, \
-    create_buffered_2d_linear_interpolator
+    create_buffered_2d_linear_interpolator, create_bezier_spline

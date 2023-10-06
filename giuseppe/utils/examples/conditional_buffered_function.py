@@ -97,8 +97,14 @@ def create_conditional_function(expr_list: list[CA_SYM],
 def create_buffered_conditional_function(expr_list: list[CA_SYM],
                                          break_points: np.array,
                                          independent_var: CA_SYM,
-                                         boundary_thickness: float,
+                                         boundary_thickness: Optional[float],
                                          free_variables: Optional[Tuple[Union[ca.SX, ca.MX]]] = None):
+
+    if boundary_thickness is None:
+        return create_conditional_function(
+            expr_list, break_points, independent_var
+        )
+
     expr_type = type(independent_var)
     ca_zero = expr_type(0.)
     expr_out = ca_zero
@@ -221,3 +227,65 @@ def create_buffered_2d_linear_interpolator(x: np.array, y: np.array, z: np.array
     )
 
     return expr_out
+
+
+def create_bezier_spline(
+        t: np.array, c: np.array, k: int,
+        independent_var: CA_SYM, boundary_thickness: Optional[float] = None, extrapolate: bool = True
+):
+    """
+
+    Parameters
+    ----------
+    t : knots
+    c : coefficients
+    k : order [3 = cubic]
+    independent_var : symbolic input variable
+    boundary_thickness : if not extrapolate, beginning and ending BC thickness for C2 transition to constant value
+    extrapolate : True -> return spline calculation. False -> wrap to constant function
+
+    Returns
+    -------
+    expr_out : CA_SYM
+
+    """
+    expr_type = type(independent_var)
+    ca_zero = expr_type(0.)
+    expr_out = ca_zero
+
+    # Beginning and ending of t array are padded with k values, do not evaluate at end of interval.
+    n_intervals = len(t) - 2*k - 1
+
+    for idx in range(n_intervals):
+        p = idx + k
+
+        # Evaluate in interval x in [tp, tp+1)
+        if idx == 0:
+            condition = independent_var < t[p + 1]
+        elif idx == n_intervals-1:
+            condition = t[p] <= independent_var
+        else:
+            condition = ca.logic_and(t[p] <= independent_var, independent_var < t[p + 1])
+
+        # Calculate expression according to optimized de Boor's Algorithm
+        # (https://en.wikipedia.org/wiki/De_Boor%27s_algorithm)
+        d = [c[j + p - k] for j in range(0, k + 1)]
+        for r in range(1, k + 1):
+            for j in range(k, r - 1, -1):
+                alpha = (independent_var - t[j + p - k]) / (t[j + 1 + p - r] - t[j + p - k])
+                d[j] = (1.0 - alpha) * d[j - 1] + alpha * d[j]
+        expression = d[k]
+        expr_out = ca.if_else(condition, expression, expr_out)
+
+    if not extrapolate:
+        # Buffer with constant values on either end.
+        expr_0 = ca.substitute(expr_out, independent_var, t[0])
+        expr_f = ca.substitute(expr_out, independent_var, t[-1])
+        expr_list = [expr_0, expr_out, expr_f]
+        break_points = [-np.inf, t[0], t[-1]]
+        expr_out = create_buffered_conditional_function(
+            expr_list=expr_list, break_points=break_points,
+            boundary_thickness=boundary_thickness, independent_var=independent_var
+        )
+
+        return expr_out
