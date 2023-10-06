@@ -5,7 +5,7 @@ import numpy as np
 import scipy as sp
 
 from hl20_aero_atm import mu, re, g0, mass, s_ref, CLa_fun, CD0_fun, CD1_fun, CD2_fun, max_ld_fun,\
-    lut_data, mach_boundary_thickness, atm, dens_fun, sped_fun
+    atm, dens_fun, sped_fun
 
 _h_atm_max = atm.h_layers[-1]
 _f_zero_converged_flag = 1
@@ -344,20 +344,11 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         # Ensure Mach not on linear buffer (weird stuff happens there)
         v_sol = eh_to_v2(e_val, h_sol)**0.5
         mach_sol = v_sol / atm.speed_of_sound(h_sol)
-        invalid_mach = False
-        for mach_idx in range(len(lut_data['M'])):
-            if lut_data['M'][mach_idx] - 0.5 * mach_boundary_thickness < mach_sol < \
-                    lut_data['M'][mach_idx] + 0.5 * mach_boundary_thickness:
-                invalid_mach = True
-                break
 
         if flag == _f_zero_converged_flag and h_sol < h_max:
             h_guess = h_sol
             h_sol = min(max(h_sol, h_min), h_max_i)
-            if invalid_mach:
-                h_vals[idx] = np.nan
-            else:
-                h_vals[idx] = h_sol
+            h_vals[idx] = h_sol
         else:
             h_guess = h_guess0
             h_vals[idx] = np.nan

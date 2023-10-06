@@ -228,7 +228,7 @@ else:
     }
 
 # Extrapolate Machs
-mach_subsonic = (0., 0.4,)
+mach_subsonic = (-0.4, 0., 0.6)
 n_mach_subsonic = len(mach_subsonic)
 mach_hypersonic = (20., 30.,)
 n_mach_hypersonic = len(mach_hypersonic)
@@ -246,77 +246,29 @@ lut_data['CD2'] = np.repeat(lut_data['CD2'], repeats)
 mach_sym = ca.MX.sym('M')
 
 mach_boundary_thickness = 0.05
-extrapolate = False
-CL0_expr = create_buffered_linear_interpolator(
-    x=lut_data['M'], y=lut_data['CL0'], independent_var=mach_sym,
-    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
-)
-CLa_expr = create_buffered_linear_interpolator(
-    x=lut_data['M'], y=lut_data['CLa'], independent_var=mach_sym,
-    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
-)
-CD0_expr = create_buffered_linear_interpolator(
-    x=lut_data['M'], y=lut_data['CD0'], independent_var=mach_sym,
-    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
-)
-CD1_expr = create_buffered_linear_interpolator(
-    x=lut_data['M'], y=lut_data['CD1'], independent_var=mach_sym,
-    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
-)
-CD2_expr = create_buffered_linear_interpolator(
-    x=lut_data['M'], y=lut_data['CD2'], independent_var=mach_sym,
-    boundary_thickness=mach_boundary_thickness, extrapolate=extrapolate
-)
-CL0_fun = ca.Function('CL0', (mach_sym,), (CL0_expr,), ('M',), ('CL0',))
-CLa_fun = ca.Function('CLa', (mach_sym,), (CLa_expr,), ('M',), ('CLa',))
-CD0_fun = ca.Function('CD0', (mach_sym,), (CD0_expr,), ('M',), ('CD0',))
-CD1_fun = ca.Function('CD1', (mach_sym,), (CD1_expr,), ('M',), ('CD1',))
-CD2_fun = ca.Function('CD2', (mach_sym,), (CD2_expr,), ('M',), ('CD2',))
-
-smoothness = 0.05
-intermediate_weights = (0.75,)*5
-weights = np.array((1., 1., *intermediate_weights, 1.))
-# CL0_sp_fun = sp.interpolate.BSpline(
-#     *sp.interpolate.splrep(lut_data['M'], lut_data['CL0'], s=smoothness, w=weights), extrapolate=False
-# )
-# CLa_sp_fun = sp.interpolate.BSpline(
-#     *sp.interpolate.splrep(lut_data['M'], lut_data['CLa'], s=smoothness, w=weights), extrapolate=False
-# )
-# CD0_sp_fun = sp.interpolate.BSpline(
-#     *sp.interpolate.splrep(lut_data['M'], lut_data['CD0'], s=smoothness, w=weights), extrapolate=False
-# )
-# CD1_sp_fun = sp.interpolate.BSpline(
-#     *sp.interpolate.splrep(lut_data['M'], lut_data['CD1'], s=smoothness, w=weights), extrapolate=False
-# )
-# CD2_sp_fun = sp.interpolate.BSpline(
-#     *sp.interpolate.splrep(lut_data['M'], lut_data['CD2'], s=smoothness, w=weights), extrapolate=False
-# )
 bc_type = "clamped"
+extrapolate = False
 CL0_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CL0'], bc_type=bc_type)
 CLa_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CLa'], bc_type=bc_type)
 CD0_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CD0'], bc_type=bc_type)
 CD1_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CD1'], bc_type=bc_type)
 CD2_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CD2'], bc_type=bc_type)
 
-
-def manual_calc_bezier(x, t, c, p=3):
-    # Polynomial degree p -> p + 1 coeffs
-    # Knots t0, ..., tm
-    # Index n = p + 1
-    # Basis B(i,p) = 1 if ti <= x < ti+1, 0 otherwise
-    k = min(max(p, np.sum(x >= t) - 1), len(t) - p - 2)
-    d = [c[j + k - p] for j in range(0, p + 1)]
-    for r in range(1, p + 1):
-        for j in range(p, r - 1, -1):
-            alpha = (x - t[j + k - p]) / (t[j + 1 + k - r] - t[j + k - p])
-            d[j] = (1.0 - alpha) * d[j - 1] + alpha * d[j]
-    return d[p]
-
-
-CLa_ca_manual_bezier_expr = create_bezier_spline(
-    CLa_sp_fun.t, CLa_sp_fun.c, CLa_sp_fun.k, mach_sym, extrapolate=False
-)
-CLa_ca_manual_bezier_fun = ca.Function('CLa', (mach_sym,), (CLa_ca_manual_bezier_expr,), ('M',), ('CLa',))
+CL0_expr = create_bezier_spline(CL0_sp_fun.t, CL0_sp_fun.c, CL0_sp_fun.k, mach_sym,
+                                extrapolate=extrapolate, boundary_thickness=mach_boundary_thickness)
+CL0_fun = ca.Function('CL0', (mach_sym,), (CL0_expr,), ('M',), ('CL0',))
+CLa_expr = create_bezier_spline(CLa_sp_fun.t, CLa_sp_fun.c, CLa_sp_fun.k, mach_sym,
+                                extrapolate=extrapolate, boundary_thickness=mach_boundary_thickness)
+CLa_fun = ca.Function('CLa', (mach_sym,), (CLa_expr,), ('M',), ('CLa',))
+CD0_expr = create_bezier_spline(CD0_sp_fun.t, CD0_sp_fun.c, CD0_sp_fun.k, mach_sym,
+                                extrapolate=extrapolate, boundary_thickness=mach_boundary_thickness)
+CD0_fun = ca.Function('CD0', (mach_sym,), (CD0_expr,), ('M',), ('CD0',))
+CD1_expr = create_bezier_spline(CD1_sp_fun.t, CD1_sp_fun.c, CD1_sp_fun.k, mach_sym,
+                                extrapolate=extrapolate, boundary_thickness=mach_boundary_thickness)
+CD1_fun = ca.Function('CD1', (mach_sym,), (CD1_expr,), ('M',), ('CD1',))
+CD2_expr = create_bezier_spline(CD2_sp_fun.t, CD2_sp_fun.c, CD2_sp_fun.k, mach_sym,
+                                extrapolate=extrapolate, boundary_thickness=mach_boundary_thickness)
+CD2_fun = ca.Function('CD2', (mach_sym,), (CD2_expr,), ('M',), ('CD2',))
 
 
 def max_ld_fun(_CL0, _CLa, _CD0, _CD1, _CD2):
@@ -365,11 +317,6 @@ if __name__ == '__main__':
 
     for idx in range(n_mach):
         lab = f'Mach {machs[idx]}'
-        # if idx == 0 or idx == n_mach-1:
-        #     lab = f'Mach {machs[idx]}'
-        # else:
-        #     lab = None
-
         CL_vals = CL0_arr[idx] + CLa_arr[idx] * alpha_vals
         CD_vals = CD0_arr[idx] + CD1_arr[idx] * CL_vals + CD2_arr[idx] * CL_vals**2
         ax_cl.plot(alpha_vals * r2d, CL_vals, color=cols_gradient(idx), label=lab)
@@ -384,32 +331,16 @@ if __name__ == '__main__':
     fig_curves.tight_layout()
 
     # Verify aero function fit
-    mach_vals = np.linspace(lut_data['M'][0], lut_data['M'][-1], 500)
-    # mach_vals = np.linspace(0., 20., 100)
+    # mach_vals = np.linspace(lut_data['M'][0], lut_data['M'][-1], 500)
+    mach_vals = np.linspace(-1., 15., 500)
     CL0_vals = np.asarray(CL0_fun(mach_vals)).flatten()
     CLa_vals = np.asarray(CLa_fun(mach_vals)).flatten()
     CD0_vals = np.asarray(CD0_fun(mach_vals)).flatten()
     CD1_vals = np.asarray(CD1_fun(mach_vals)).flatten()
     CD2_vals = np.asarray(CD2_fun(mach_vals)).flatten()
 
-    CL0_sp_vals = CL0_sp_fun(mach_vals)
-    CLa_sp_vals = CLa_sp_fun(mach_vals)
-    CD0_sp_vals = CD0_sp_fun(mach_vals)
-    CD1_sp_vals = CD1_sp_fun(mach_vals)
-    CD2_sp_vals = CD2_sp_fun(mach_vals)
-
-    CL0_sp_derivs = CL0_sp_fun(mach_vals, nu=2)
-    CLa_sp_derivs = CLa_sp_fun(mach_vals, nu=2)
-    CD0_sp_derivs = CD0_sp_fun(mach_vals, nu=2)
-    CD1_sp_derivs = CD1_sp_fun(mach_vals, nu=2)
-    CD2_sp_derivs = CD2_sp_fun(mach_vals, nu=2)
-
-    CLa_ca_vals = np.asarray(CLa_ca_manual_bezier_fun(mach_vals)).flatten()
-
     coeff_data = (CL0_arr, CLa_arr, CD0_arr, CD1_arr, CD2_arr)
     y_data = (CL0_vals, CLa_vals, CD0_vals, CD1_vals, CD2_vals)
-    y_sp_data = (CL0_sp_vals, CLa_sp_vals, CD0_sp_vals, CD1_sp_vals, CD2_sp_vals)
-    y_ca_data = (None, CLa_ca_vals, None, None, None)
     y_labels = (r'$C_{L,0}$ [-]', r'$C_{L,\alpha}$ [-]', r'$C_{D,0}$ [-]', r'$C_{D,1}$ [-]', r'$C_{D,2}$ [-]')
 
     fig_coeffs = plt.figure()
@@ -418,28 +349,10 @@ if __name__ == '__main__':
         axes.append(fig_coeffs.add_subplot(5, 1, idx+1))
         ax = axes[idx]
         ax.plot(mach_vals, y_data[idx], label='CasADi')
-        if y_sp_data[idx] is not None:
-            ax.plot(mach_vals, y_sp_data[idx], label='SciPy')
-        if y_ca_data[idx] is not None:
-            ax.plot(mach_vals, y_ca_data[idx], label='Ca Bez')
         ax.plot(machs, coeff, 'x', label='Data')
         ax.grid()
         ax.set_xlabel('Mach')
         ax.set_ylabel(y_labels[idx])
     fig_coeffs.tight_layout()
-
-    y_sp_data = (CL0_sp_derivs, CLa_sp_derivs, CD0_sp_derivs, CD1_sp_derivs, CD2_sp_derivs)
-
-    fig_derivs = plt.figure()
-    axes = []
-    for idx, y_sp in enumerate(y_sp_data):
-        axes.append(fig_derivs.add_subplot(5, 1, idx+1))
-        ax = axes[idx]
-        if y_sp is not None:
-            ax.plot(mach_vals, y_sp, label='SciPy')
-        ax.grid()
-        ax.set_xlabel('Mach')
-        ax.set_ylabel(y_labels[idx])
-    fig_derivs.tight_layout()
 
     plt.show()
