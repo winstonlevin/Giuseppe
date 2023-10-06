@@ -107,15 +107,16 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     h_vals = np.empty(e_vals.shape)
 
     # Derive: d(hamiltonian)/dh = 0
-    e_sym = ca.MX.sym('e')
-    h_sym = ca.MX.sym('h')
-    gam_sym = ca.MX.sym('gam')
-    u_sym = ca.MX.sym('u')
+    e_sym = ca.SX.sym('e')
+    h_sym = ca.SX.sym('h')
+    gam_sym = ca.SX.sym('gam')
+    u_sym = ca.SX.sym('u')
     lift_sym = u_to_lift(u_sym)
 
     r_sym = re + h_sym
     g_sym = h_to_g(h_sym)
-    v_sym = eh_to_v2(e_sym, h_sym) ** 0.5
+    v_sym2 = eh_to_v2(e_sym, h_sym)
+    v_sym = v_sym2 ** 0.5
     _, __, rho_sym = atm.get_ca_atm_expr(h_sym)
     sped_sym = atm.get_ca_speed_of_sound_expr(h_sym)
     mach_sym = v_sym / sped_sym
@@ -123,15 +124,15 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     CD1_sym = CD1_fun(mach_sym)
     CD2_sym = CD2_fun(mach_sym)
 
-    qdyn_s_ref_sym = 0.5 * rho_sym * v_sym**2 * s_ref
+    qdyn_s_ref_sym = 0.5 * rho_sym * v_sym2 * s_ref
     drag_sym = CD0_sym * qdyn_s_ref_sym + CD1_sym * lift_sym + CD2_sym / qdyn_s_ref_sym * lift_sym ** 2
     ddrag_dh_sym = ca.jacobian(drag_sym, h_sym)
     ddrag_dh_fun = ca.Function('Dh', (e_sym, h_sym, u_sym), (ddrag_dh_sym,), ('E', 'h', 'u'), ('Dh',))
 
     # Jacobians (for use with neighboring feedback gains)
-    lam_e = ca.MX.sym('lam_E')
-    lam_h = ca.MX.sym('lam_h')
-    lam_gam = ca.MX.sym('lam_gam')
+    lam_e = ca.SX.sym('lam_E')
+    lam_h = ca.SX.sym('lam_h')
+    lam_gam = ca.SX.sym('lam_gam')
 
     if flat_earth:
         de_dt = -v_sym * drag_sym / mass
@@ -386,6 +387,22 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             k_h_vals[idx] = np.nan
             k_gam_vals[idx] = np.nan
         else:
+            # zo_dict = calc_zo_dict(e_vals[idx - 1], h_vals[idx - 1], gam_vals[idx - 1])
+            # a_noc = np.asarray(a_noc_fun(
+            #     e_vals[idx - 1], h_vals[idx - 1], gam_vals[idx - 1], zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            # ))
+            # b_noc = np.asarray(b_noc_fun(
+            #     e_vals[idx - 1], h_vals[idx - 1], gam_vals[idx - 1], zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            # ))
+            # q_noc = np.asarray(q_noc_fun(
+            #     e_vals[idx - 1], h_vals[idx - 1], gam_vals[idx - 1], zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            # ))
+            # n_noc = np.asarray(n_noc_fun(
+            #     e_vals[idx - 1], h_vals[idx - 1], gam_vals[idx - 1], zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            # ))
+            # r_noc = np.asarray(r_noc_fun(
+            #     e_vals[idx - 1], h_vals[idx - 1], gam_vals[idx - 1], zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
+            # ))
             zo_dict = calc_zo_dict(e_val, h_val, gam_val)
             a_noc = np.asarray(a_noc_fun(
                 e_val, h_val, gam_val, zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
@@ -402,6 +419,14 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
             r_noc = np.asarray(r_noc_fun(
                 e_val, h_val, gam_val, zo_dict['lam_E'], zo_dict['lam_h'], zo_dict['lam_gam'], zo_dict['u']
             ))
+
+            # # Bias to ensure values do not cross zero
+            # _composite = np.vstack((np.hstack((q_noc, n_noc)), np.hstack((n_noc.T, r_noc))))
+            # _min_eig = np.min(np.linalg.eigvals(_composite))
+            # if _min_eig < 0:
+            #     q_noc = q_noc - _min_eig * np.eye(q_noc.shape[0])
+            #     # r_noc = r_noc - _min_eig * np.eye(r_noc.shape[0])
+
             try:
                 p_noc = sp.linalg.solve_continuous_are(a=a_noc, b=b_noc, q=q_noc, s=n_noc, r=r_noc)
                 k_noc = np.linalg.solve(a=r_noc, b=(p_noc @ b_noc + n_noc).T)  # inv(R) * (PB + N)^T
