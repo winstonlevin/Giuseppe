@@ -1,5 +1,6 @@
 import numpy as np
 import casadi as ca
+import scipy as sp
 
 from giuseppe.utils.examples import Atmosphere1976, create_buffered_linear_interpolator
 
@@ -226,6 +227,21 @@ else:
         'CD2': np.flip(CD2_arr)
     }
 
+# Extrapolate Machs
+mach_subsonic = (0., 0.4)
+n_mach_subsonic = len(mach_subsonic)
+mach_hypersonic = (30.,)
+n_mach_hypersonic = len(mach_subsonic)
+repeats = np.ones(shape=(n_mach,), dtype=int)
+repeats[0] = 1 + n_mach_subsonic
+repeats[-1] = 1 + n_mach_hypersonic
+lut_data['M'] = np.array((*mach_subsonic, *lut_data['M'], *mach_hypersonic))
+lut_data['CL0'] = np.repeat(lut_data['CL0'], repeats)
+lut_data['CLa'] = np.repeat(lut_data['CLa'], repeats)
+lut_data['CD0'] = np.repeat(lut_data['CD0'], repeats)
+lut_data['CD1'] = np.repeat(lut_data['CD1'], repeats)
+lut_data['CD2'] = np.repeat(lut_data['CD2'], repeats)
+
 # Build aero look-up tables
 mach_sym = ca.MX.sym('M')
 
@@ -256,6 +272,31 @@ CLa_fun = ca.Function('CLa', (mach_sym,), (CLa_expr,), ('M',), ('CLa',))
 CD0_fun = ca.Function('CD0', (mach_sym,), (CD0_expr,), ('M',), ('CD0',))
 CD1_fun = ca.Function('CD1', (mach_sym,), (CD1_expr,), ('M',), ('CD1',))
 CD2_fun = ca.Function('CD2', (mach_sym,), (CD2_expr,), ('M',), ('CD2',))
+
+smoothness = 0.05
+intermediate_weights = (0.75,)*5
+weights = np.array((1., 1., *intermediate_weights, 1.))
+# CL0_sp_fun = sp.interpolate.BSpline(
+#     *sp.interpolate.splrep(lut_data['M'], lut_data['CL0'], s=smoothness, w=weights), extrapolate=False
+# )
+# CLa_sp_fun = sp.interpolate.BSpline(
+#     *sp.interpolate.splrep(lut_data['M'], lut_data['CLa'], s=smoothness, w=weights), extrapolate=False
+# )
+# CD0_sp_fun = sp.interpolate.BSpline(
+#     *sp.interpolate.splrep(lut_data['M'], lut_data['CD0'], s=smoothness, w=weights), extrapolate=False
+# )
+# CD1_sp_fun = sp.interpolate.BSpline(
+#     *sp.interpolate.splrep(lut_data['M'], lut_data['CD1'], s=smoothness, w=weights), extrapolate=False
+# )
+# CD2_sp_fun = sp.interpolate.BSpline(
+#     *sp.interpolate.splrep(lut_data['M'], lut_data['CD2'], s=smoothness, w=weights), extrapolate=False
+# )
+bc_type = "clamped"
+CL0_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CL0'], bc_type=bc_type)
+CLa_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CLa'], bc_type=bc_type)
+CD0_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CD0'], bc_type=bc_type)
+CD1_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CD1'], bc_type=bc_type)
+CD2_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CD2'], bc_type=bc_type)
 
 
 def max_ld_fun(_CL0, _CLa, _CD0, _CD1, _CD2):
@@ -323,15 +364,29 @@ if __name__ == '__main__':
     fig_curves.tight_layout()
 
     # Verify aero function fit
-    mach_vals = np.linspace(0., 20., 100)
+    mach_vals = np.linspace(lut_data['M'][0], lut_data['M'][-1], 100)
+    # mach_vals = np.linspace(0., 20., 100)
     CL0_vals = np.asarray(CL0_fun(mach_vals)).flatten()
     CLa_vals = np.asarray(CLa_fun(mach_vals)).flatten()
     CD0_vals = np.asarray(CD0_fun(mach_vals)).flatten()
     CD1_vals = np.asarray(CD1_fun(mach_vals)).flatten()
     CD2_vals = np.asarray(CD2_fun(mach_vals)).flatten()
 
+    CL0_sp_vals = CL0_sp_fun(mach_vals)
+    CLa_sp_vals = CLa_sp_fun(mach_vals)
+    CD0_sp_vals = CD0_sp_fun(mach_vals)
+    CD1_sp_vals = CD1_sp_fun(mach_vals)
+    CD2_sp_vals = CD2_sp_fun(mach_vals)
+
+    CL0_sp_derivs = CL0_sp_fun(mach_vals, nu=2)
+    CLa_sp_derivs = CLa_sp_fun(mach_vals, nu=2)
+    CD0_sp_derivs = CD0_sp_fun(mach_vals, nu=2)
+    CD1_sp_derivs = CD1_sp_fun(mach_vals, nu=2)
+    CD2_sp_derivs = CD2_sp_fun(mach_vals, nu=2)
+
     coeff_data = (CL0_arr, CLa_arr, CD0_arr, CD1_arr, CD2_arr)
     y_data = (CL0_vals, CLa_vals, CD0_vals, CD1_vals, CD2_vals)
+    y_sp_data = (CL0_sp_vals, CLa_sp_vals, CD0_sp_vals, CD1_sp_vals, CD2_sp_vals)
     y_labels = (r'$C_{L,0}$ [-]', r'$C_{L,\alpha}$ [-]', r'$C_{D,0}$ [-]', r'$C_{D,1}$ [-]', r'$C_{D,2}$ [-]')
 
     fig_coeffs = plt.figure()
@@ -339,11 +394,27 @@ if __name__ == '__main__':
     for idx, coeff in enumerate(coeff_data):
         axes.append(fig_coeffs.add_subplot(5, 1, idx+1))
         ax = axes[idx]
-        ax.plot(mach_vals, y_data[idx])
-        ax.plot(machs, coeff, 'x')
+        ax.plot(mach_vals, y_data[idx], label='CasADi')
+        if y_sp_data[idx] is not None:
+            ax.plot(mach_vals, y_sp_data[idx], label='SciPy')
+        ax.plot(machs, coeff, 'x', label='Data')
         ax.grid()
         ax.set_xlabel('Mach')
         ax.set_ylabel(y_labels[idx])
     fig_coeffs.tight_layout()
+
+    y_sp_data = (CL0_sp_derivs, CLa_sp_derivs, CD0_sp_derivs, CD1_sp_derivs, CD2_sp_derivs)
+
+    fig_derivs = plt.figure()
+    axes = []
+    for idx, y_sp in enumerate(y_sp_data):
+        axes.append(fig_derivs.add_subplot(5, 1, idx+1))
+        ax = axes[idx]
+        if y_sp is not None:
+            ax.plot(mach_vals, y_sp, label='SciPy')
+        ax.grid()
+        ax.set_xlabel('Mach')
+        ax.set_ylabel(y_labels[idx])
+    fig_derivs.tight_layout()
 
     plt.show()
