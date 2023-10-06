@@ -2,7 +2,7 @@ import numpy as np
 import casadi as ca
 import scipy as sp
 
-from giuseppe.utils.examples import Atmosphere1976, create_buffered_linear_interpolator
+from giuseppe.utils.examples import Atmosphere1976, create_buffered_linear_interpolator, create_bezier_spline
 
 # Atmosphere parameters
 mu = 0.14076539e17
@@ -228,10 +228,10 @@ else:
     }
 
 # Extrapolate Machs
-mach_subsonic = (0., 0.4)
+mach_subsonic = (0., 0.4,)
 n_mach_subsonic = len(mach_subsonic)
-mach_hypersonic = (30.,)
-n_mach_hypersonic = len(mach_subsonic)
+mach_hypersonic = (20., 30.,)
+n_mach_hypersonic = len(mach_hypersonic)
 repeats = np.ones(shape=(n_mach,), dtype=int)
 repeats[0] = 1 + n_mach_subsonic
 repeats[-1] = 1 + n_mach_hypersonic
@@ -299,6 +299,26 @@ CD1_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CD1'], b
 CD2_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CD2'], bc_type=bc_type)
 
 
+def manual_calc_bezier(x, t, c, p=3):
+    # Polynomial degree p -> p + 1 coeffs
+    # Knots t0, ..., tm
+    # Index n = p + 1
+    # Basis B(i,p) = 1 if ti <= x < ti+1, 0 otherwise
+    k = min(max(p, np.sum(x >= t) - 1), len(t) - p - 2)
+    d = [c[j + k - p] for j in range(0, p + 1)]
+    for r in range(1, p + 1):
+        for j in range(p, r - 1, -1):
+            alpha = (x - t[j + k - p]) / (t[j + 1 + k - r] - t[j + k - p])
+            d[j] = (1.0 - alpha) * d[j - 1] + alpha * d[j]
+    return d[p]
+
+
+CLa_ca_manual_bezier_expr = create_bezier_spline(
+    CLa_sp_fun.t, CLa_sp_fun.c, CLa_sp_fun.k, mach_sym, extrapolate=False
+)
+CLa_ca_manual_bezier_fun = ca.Function('CLa', (mach_sym,), (CLa_ca_manual_bezier_expr,), ('M',), ('CLa',))
+
+
 def max_ld_fun(_CL0, _CLa, _CD0, _CD1, _CD2):
     _CL_max_ld = (_CD0 / _CD2) ** 0.5
     _CD_max_ld = _CD0 + _CD1 * _CL_max_ld + _CD2 * _CL_max_ld ** 2
@@ -364,7 +384,7 @@ if __name__ == '__main__':
     fig_curves.tight_layout()
 
     # Verify aero function fit
-    mach_vals = np.linspace(lut_data['M'][0], lut_data['M'][-1], 100)
+    mach_vals = np.linspace(lut_data['M'][0], lut_data['M'][-1], 500)
     # mach_vals = np.linspace(0., 20., 100)
     CL0_vals = np.asarray(CL0_fun(mach_vals)).flatten()
     CLa_vals = np.asarray(CLa_fun(mach_vals)).flatten()
@@ -384,9 +404,12 @@ if __name__ == '__main__':
     CD1_sp_derivs = CD1_sp_fun(mach_vals, nu=2)
     CD2_sp_derivs = CD2_sp_fun(mach_vals, nu=2)
 
+    CLa_ca_vals = np.asarray(CLa_ca_manual_bezier_fun(mach_vals)).flatten()
+
     coeff_data = (CL0_arr, CLa_arr, CD0_arr, CD1_arr, CD2_arr)
     y_data = (CL0_vals, CLa_vals, CD0_vals, CD1_vals, CD2_vals)
     y_sp_data = (CL0_sp_vals, CLa_sp_vals, CD0_sp_vals, CD1_sp_vals, CD2_sp_vals)
+    y_ca_data = (None, CLa_ca_vals, None, None, None)
     y_labels = (r'$C_{L,0}$ [-]', r'$C_{L,\alpha}$ [-]', r'$C_{D,0}$ [-]', r'$C_{D,1}$ [-]', r'$C_{D,2}$ [-]')
 
     fig_coeffs = plt.figure()
@@ -397,6 +420,8 @@ if __name__ == '__main__':
         ax.plot(mach_vals, y_data[idx], label='CasADi')
         if y_sp_data[idx] is not None:
             ax.plot(mach_vals, y_sp_data[idx], label='SciPy')
+        if y_ca_data[idx] is not None:
+            ax.plot(mach_vals, y_ca_data[idx], label='Ca Bez')
         ax.plot(machs, coeff, 'x', label='Data')
         ax.grid()
         ax.set_xlabel('Mach')
