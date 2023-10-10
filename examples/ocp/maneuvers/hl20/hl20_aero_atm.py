@@ -23,6 +23,7 @@ sped_fun = ca.Function('a', (h_sym,), (sped_expr,), ('h',), ('a',))
 weight0 = 24479.  # lbm
 s_ref = 286.45  # ft**2
 mass = weight0 / g0  # slug
+load_max = 3.  # Maximum g's of maneuverability
 
 # From HL-20 Data (https://doi.org/10.2514/6.1991-3215)
 raw_aero_data = [
