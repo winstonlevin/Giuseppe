@@ -15,7 +15,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
                     h_min: float = 0., h_max: float = _h_atm_max,
                     mach_min: float = 0.3, mach_max: float = 3.5,
                     manual_derivation=False, energy_state=True, correct_gam=True, flat_earth=False,
-                    nondimensionalize_control=True, remove_nan=True, derive_with_e=False) -> dict:
+                    nondimensionalize_control=True, remove_nan=True, derive_with_e=False, finite_horizon=False) -> dict:
     """
 
     Parameters
