@@ -229,9 +229,9 @@ else:
     }
 
 # Extrapolate Machs
-mach_subsonic = (-0.4, 0., 0.6)
+mach_subsonic = []
 n_mach_subsonic = len(mach_subsonic)
-mach_hypersonic = (20., 30.,)
+mach_hypersonic = []
 n_mach_hypersonic = len(mach_hypersonic)
 repeats = np.ones(shape=(n_mach,), dtype=int)
 repeats[0] = 1 + n_mach_subsonic
@@ -247,6 +247,7 @@ lut_data['CD2'] = np.repeat(lut_data['CD2'], repeats)
 mach_sym = ca.SX.sym('M')
 
 mach_boundary_thickness = 0.05
+# bc_type = "natural"
 bc_type = "clamped"
 extrapolate = False
 CL0_sp_fun = sp.interpolate.make_interp_spline(lut_data['M'], lut_data['CL0'], bc_type=bc_type)
@@ -332,8 +333,8 @@ if __name__ == '__main__':
     fig_curves.tight_layout()
 
     # Verify aero function fit
-    # mach_vals = np.linspace(lut_data['M'][0], lut_data['M'][-1], 500)
-    mach_vals = np.linspace(-1., 15., 500)
+    mach_vals = np.linspace(min(0., lut_data['M'][0] - mach_boundary_thickness), lut_data['M'][-1] + mach_boundary_thickness, 500)
+    # mach_vals = np.linspace(-1., 15., 500)
     CL0_vals = np.asarray(CL0_fun(mach_vals)).flatten()
     CLa_vals = np.asarray(CLa_fun(mach_vals)).flatten()
     CD0_vals = np.asarray(CD0_fun(mach_vals)).flatten()

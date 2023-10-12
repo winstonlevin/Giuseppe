@@ -13,22 +13,22 @@ from glide_slope import get_glide_slope
 SWEEP_SOLUTION_SPACE = True
 
 
-ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.MX)
+ocp = giuseppe.problems.automatic_differentiation.ADiffInputProb(dtype=ca.SX)
 
 # Independent Variables
-t = ca.MX.sym('t', 1)
+t = ca.SX.sym('t', 1)
 ocp.set_independent(t)
 
 # Constants
 weight0 = g0 * mass
 
 # State Variables
-h_nd = ca.MX.sym('h_nd', 1)
-h_scale = ca.MX.sym('h_scale', 1)
-tha = ca.MX.sym('tha', 1)
-v_nd = ca.MX.sym('v_nd', 1)
-v_scale = ca.MX.sym('v_scale', 1)
-gam = ca.MX.sym('gam', 1)
+h_nd = ca.SX.sym('h_nd', 1)
+h_scale = ca.SX.sym('h_scale', 1)
+tha = ca.SX.sym('tha', 1)
+v_nd = ca.SX.sym('v_nd', 1)
+v_scale = ca.SX.sym('v_scale', 1)
+gam = ca.SX.sym('gam', 1)
 
 h = h_nd * h_scale
 v = v_nd * v_scale
@@ -39,12 +39,25 @@ ocp.add_constant(h_scale, h_scale_val)
 ocp.add_constant(v_scale, v_scale_val)
 
 # Atmosphere Func
-_, __, rho = atm.get_ca_atm_expr(h)
+_, __, rho_conditional = atm.get_ca_atm_expr(h)
 sped = atm.get_ca_speed_of_sound_expr(h)
 mach = v / sped
 
+# rho_0 = ca.SX.sym('rho_0')
+# h_ref = ca.SX.sym('h_ref')
+# ocp.add_constant(rho_0, 0.002378)
+# ocp.add_constant(h_ref, 23_800.)
+#
+# rho_exponential = rho_0 * ca.exp(-h / h_ref)
+#
+# conditional = ca.SX.sym('conditional', 1)
+# ocp.add_constant(conditional, 0.)
+#
+# rho = conditional * rho_conditional + (1 - conditional) * rho_exponential
+rho = rho_conditional
+
 # Add Controls
-lift_nd = ca.MX.sym('lift_nd', 1)
+lift_nd = ca.SX.sym('lift_nd', 1)
 lift = lift_nd * weight0
 
 ocp.add_control(lift_nd)
@@ -73,11 +86,11 @@ ocp.add_state(gam, lift / (mass * v) + ca.cos(gam) * (v / r - g / v))
 ocp.set_cost(0, 0, -tha)
 
 # Boundary Values
-# e_0 = ca.MX.sym('e_0', 1)
-h_0 = ca.MX.sym('h_0', 1)
-tha_0 = ca.MX.sym('tha_0', 1)
-v_0 = ca.MX.sym('v_0', 1)
-gam_0 = ca.MX.sym('gam_0', 1)
+# e_0 = ca.SX.sym('e_0', 1)
+h_0 = ca.SX.sym('h_0', 1)
+tha_0 = ca.SX.sym('tha_0', 1)
+v_0 = ca.SX.sym('v_0', 1)
+gam_0 = ca.SX.sym('gam_0', 1)
 
 h_0_val = 260_000
 v_0_val = 25_600
@@ -90,12 +103,12 @@ ocp.add_constant(tha_0, 0.)
 ocp.add_constant(v_0, v_0_val)
 ocp.add_constant(gam_0, gam_0_val)
 
-e_f = ca.MX.sym('e_f', 1)
+e_f = ca.SX.sym('e_f', 1)
 e_f_val = mu/re - mu/(re + 80e3) + 0.5 * 2_500.**2
 ocp.add_constant(e_f, e_f_val)
-h_f = ca.MX.sym('h_f', 1)
-v_f = ca.MX.sym('v_f', 1)
-gam_f = ca.MX.sym('gam_f', 1)
+h_f = ca.SX.sym('h_f', 1)
+v_f = ca.SX.sym('v_f', 1)
+gam_f = ca.SX.sym('gam_f', 1)
 
 ocp.add_constant(h_f, 0.)
 ocp.add_constant(v_f, 10.)
@@ -118,9 +131,9 @@ ocp.add_constraint('terminal', gam - gam_f)
 # h_max_val = atm.h_layers[-1]
 # h_min_val = 0.
 #
-# h_max = ca.MX.sym('h_max')
-# h_min = ca.MX.sym('h_min')
-# eps_h = ca.MX.sym('eps_h')
+# h_max = ca.SX.sym('h_max')
+# h_min = ca.SX.sym('h_min')
+# eps_h = ca.SX.sym('eps_h')
 #
 # ocp.add_constant(h_max, h_max_val)
 # ocp.add_constant(h_min, h_min_val)
