@@ -13,9 +13,10 @@ _f_zero_converged_flag = 1
 
 def get_glide_slope(e_vals: Optional[np.array] = None,
                     h_min: float = 0., h_max: float = _h_atm_max,
-                    mach_min: float = 0.3, mach_max: float = 3.5,
+                    mach_min: float = 0.3, mach_max: float = 30.,
                     manual_derivation=False, energy_state=True, correct_gam=True, flat_earth=False,
-                    nondimensionalize_control=True, remove_nan=True, derive_with_e=False, finite_horizon=False) -> dict:
+                    nondimensionalize_control=True, remove_nan=True, derive_with_e=False, exclude_boundary=True
+                    ) -> dict:
     """
 
     Parameters
@@ -342,11 +343,10 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
                     sol_distance = (sol_array - h_guess0)**2
                     h_sol = sol_array[np.where(sol_distance == np.min(sol_distance))]
 
-        # Ensure Mach not on linear buffer (weird stuff happens there)
-        v_sol = eh_to_v2(e_val, h_sol)**0.5
-        mach_sol = v_sol / atm.speed_of_sound(h_sol)
+        # Ensure altitude not in boundary layer (not physically appropriate)
+        valid_altitude = not exclude_boundary or 'boundary' not in atm.layer(h_sol).lower()
 
-        if flag == _f_zero_converged_flag and h_sol < h_max:
+        if valid_altitude and flag == _f_zero_converged_flag and h_sol < h_max:
             h_guess = h_sol
             h_sol = min(max(h_sol, h_min), h_max_i)
             h_vals[idx] = h_sol
@@ -451,7 +451,7 @@ if __name__ == '__main__':
     r2d = 180/np.pi
 
     h_max_plot = 275e3
-    mach_max_plot = 15.
+    mach_max_plot = 30.
     glide_dict = get_glide_slope(correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
     # glide_dict_e = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot, derive_with_e=True)
     # glide_dict_es = get_glide_slope(energy_state=True, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)

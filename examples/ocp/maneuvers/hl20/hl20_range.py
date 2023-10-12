@@ -170,19 +170,23 @@ if __name__ == '__main__':
     h_f = 0.
     e_h_f = binary_search(
         _x_min=1., _x_max=6e6,
-        _f=lambda _e: get_glide_slope(e_vals=np.array((_e,)), h_min=-2e3)['h'],
+        _f=lambda _e: get_glide_slope(e_vals=np.array((_e,)), h_min=-2e3, exclude_boundary=False)['h'],
         _f_val_target=h_f
     )
 
     # Maximum energy is at maximum Mach (for minimum altitude)
-    mach_max = 3.0
-    e_max = 0.5 * (3.0 * atm.speed_of_sound(0.))**2
+    mach_max = 25.
+    e_max = 0.5 * (mach_max * atm.speed_of_sound(0.))**2
+
+    mach_guess = 3.
+    e_guess = 0.5 * (mach_guess * atm.speed_of_sound(0.))**2
+    glide_dict_guess = get_glide_slope(e_vals=np.array((e_guess,)))
 
     e_vals = np.logspace(np.log10(e_h_f), np.log10(e_max), 100)
     glide_dict = get_glide_slope(e_vals=e_vals)
-    h_guess = glide_dict['h'][-1]
-    v_guess = glide_dict['v'][-1]
-    gam_guess = glide_dict['gam'][-1]
+    h_guess = glide_dict_guess['h'][-1]
+    v_guess = glide_dict_guess['v'][-1]
+    gam_guess = glide_dict_guess['gam'][-1]
     u_interp = sp.interpolate.PchipInterpolator(glide_dict['v'], glide_dict['u'])
 
     def ctrl_law(_t, _x, _p, _k):
@@ -192,9 +196,9 @@ if __name__ == '__main__':
     # d(E)/dt = g d(h)/dt + V d(V)/dt
     # -> lam_v = V lam_E
     # -> lam_h = lam_h + g lam_E
-    lam_v_glide = glide_dict['lam_E'][-1] * glide_dict['v'][-1]
-    lam_h_glide = glide_dict['lam_h'][-1] + glide_dict['g'][-1] * glide_dict['lam_E'][-1]
-    lam_gam_glide = glide_dict['lam_gam'][-1]
+    lam_v_glide = glide_dict_guess['lam_E'][-1] * glide_dict_guess['v'][-1]
+    lam_h_glide = glide_dict_guess['lam_h'][-1] + glide_dict_guess['g'][-1] * glide_dict_guess['lam_E'][-1]
+    lam_gam_glide = glide_dict_guess['lam_gam'][-1]
     lam_tha_guess = -1.  # With terminal cost formulation, H = - d(tha)/dt + ... -> lam_tha = -1
 
     guess = giuseppe.guess_generation.auto_propagate_guess(
@@ -221,7 +225,8 @@ if __name__ == '__main__':
     idx_v0 = adiff_dual.annotations.constants.index('v_0')
     idx_gam0 = adiff_dual.annotations.constants.index('gam_0')
 
-    e0_0 = e_vals[-1]
+    e0_0 = e_guess
+    e0_f = e_max
     ef_0 = mu/re - mu/(re + seed_sol.x[0, -1]*h_scale_val) + 0.5 * (seed_sol.x[2, -1] * v_scale_val)**2
     ef_f = e_vals[0]
     h_interp = sp.interpolate.PchipInterpolator(glide_dict['E'], glide_dict['h'])
@@ -230,33 +235,41 @@ if __name__ == '__main__':
 
 
     def glide_slope_continuation_xf(previous_sol, frac_complete):
+        _constants = previous_sol.k.copy()
+
         _ef = (ef_f/ef_0)**frac_complete * ef_0  # Log step
-        _gamf = gam_interp(_ef)
         _hf = h_interp(_ef)
         _vf = v_interp(_ef)
+        _gamf = gam_interp(_ef)
         previous_sol.k[idx_ef] = _ef
         previous_sol.k[idx_hf] = _hf
         previous_sol.k[idx_vf] = _vf
         previous_sol.k[idx_gamf] = _gamf
         return previous_sol.k
 
-    # def glide_slope_continuation(previous_sol, frac_complete):
-    #     e_val = e0_0 + frac_complete * (e0_f - e0_0)
-    #     _v0 = v0_0 + frac_complete * (v0_1 - v0_0)
-    #     _h0 = h_v_interp(_v0)
-    #     _gam0 = gam_v_interp(_v0)
-    #     previous_sol.k[idx_h0] = _h0
-    #     previous_sol.k[idx_v0] = _v0
-    #     previous_sol.k[idx_gam0] = _gam0
-    #     return previous_sol.k
+    def glide_slope_continuation_x0(previous_sol, frac_complete):
+        _constants = previous_sol.k.copy()
+
+        _e0 = (e0_f/e0_0)**frac_complete * e0_0  # Log step
+        _h0 = h_interp(_e0)
+        _v0 = v_interp(_e0)
+        _gam0 = gam_interp(_e0)
+        _constants[idx_h0] = _h0
+        _constants[idx_v0] = _v0
+        _constants[idx_gam0] = _gam0
+        return _constants
 
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
     # cont.add_logarithmic_series(25, {'eps_h': 1e-8})
     # cont.add_logarithmic_series(100, {'e_f': e_vals[0]})
     # cont.add_logarithmic_series(25, {'eps_h': 1e-6})
-    cont.add_custom_series(100, glide_slope_continuation_xf, 'Glide Slope (tf)')
+    cont.add_custom_series(100, glide_slope_continuation_xf, 'Glide Slope (Ef)')
+    cont.add_custom_series(100, glide_slope_continuation_x0, 'Glide Slope (E0)')
     sol_set = cont.run_continuation()
     sol_set.save('sol_set_range.data')
+
+    with open('damned_sols_range.data', 'wb') as file:
+        pickle.dump(sol_set.damned_sols, file)
 
     hf = sol_set.solutions[-1].x[0, -1] * h_scale_val
     vf = sol_set.solutions[-1].x[2, -1] * v_scale_val
@@ -304,13 +317,12 @@ if __name__ == '__main__':
         #
         #     return _h
 
-        # v0_min = binary_search(
-        #     _x_min=10., _x_max=v0,
-        #     _f=lambda _v: _v / atm.speed_of_sound(-re - mu/(e0 - mu/re - 0.5 * _v**2)),
-        #     _f_val_target=0.5
-        # )
-        # h0_max = min(atm.h_layers[-1], -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
-        h0_max = 145e3
+        v0_min = binary_search(
+            _x_min=10., _x_max=v0,
+            _f=lambda _v: _v / atm.speed_of_sound(-re - mu/(e0 - mu/re - 0.5 * _v**2)),
+            _f_val_target=0.5
+        )
+        h0_max = min(atm.h_layers[-1], -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
         h0_min = 100.  # Compatible with e0 chosen from Mach max.
 
         # Get Low altitude solution

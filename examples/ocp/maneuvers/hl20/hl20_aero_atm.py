@@ -8,7 +8,7 @@ from giuseppe.utils.examples import Atmosphere1976, create_buffered_linear_inter
 mu = 0.14076539e17
 re = 20_902_900.  # ft
 g0 = mu / re ** 2
-atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0, boundary_thickness=5e3)
+atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0, boundary_thickness=1000.)
 
 h_sym = ca.SX.sym('h')
 temp_expr, pres_expr, dens_expr = atm.get_ca_atm_expr(h_sym)

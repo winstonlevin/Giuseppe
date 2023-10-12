@@ -22,9 +22,13 @@ elif DATA == 1:
     with open('seed_sol_range.data', 'rb') as f:
         sol = pickle.load(f)
 elif DATA == 3:
+    with open('damned_sols_range.data', 'rb') as f:
+        sols = pickle.load(f)
+        sol = sols[-1]
+elif DATA == 4:
     with open('sol_set_range_sweep.data', 'rb') as f:
         sols = pickle.load(f)
-        sol = sols[0]
+        sol = sols[-1]
 else:
     with open('sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)
@@ -74,7 +78,7 @@ alpha_max_ld = max_ld_fun(_CL0=CL0, _CLa=CLa, _CD0=CD0, _CD1=CD1, _CD2=CD2)['alp
 ke = 0.5 * x_dict['v']**2
 pe = mu / re - mu / (re + x_dict['h'])
 e = ke + pe
-glide_dict = get_glide_slope(e_vals=e, remove_nan=False)
+glide_dict = get_glide_slope(e_vals=e, remove_nan=False, exclude_boundary=False)
 e_glide = glide_dict['E']
 h_glide = glide_dict['h']
 v_glide = glide_dict['v']
