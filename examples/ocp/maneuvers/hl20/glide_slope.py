@@ -5,7 +5,7 @@ import numpy as np
 import scipy as sp
 
 from hl20_aero_atm import mu, re, g0, mass, s_ref, CLa_fun, CD0_fun, CD1_fun, CD2_fun, max_ld_fun,\
-    atm, dens_fun, sped_fun
+    atm, dens_fun, sped_fun, rho0, h_ref, sped0
 
 _h_atm_max = atm.h_layers[-1]
 _f_zero_converged_flag = 1
@@ -15,7 +15,8 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
                     h_min: float = 0., h_max: float = _h_atm_max,
                     mach_min: float = 0.3, mach_max: float = 30.,
                     manual_derivation=False, energy_state=True, correct_gam=True, flat_earth=False,
-                    nondimensionalize_control=True, remove_nan=True, derive_with_e=False, exclude_boundary=True
+                    nondimensionalize_control=True, remove_nan=True, derive_with_e=False, exclude_boundary=True,
+                    exponential_atmosphere=True
                     ) -> dict:
     """
 
@@ -33,6 +34,8 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     nondimensionalize_control : bool, True -> use u = L/W0. False -> use u = L
     remove_nan : bool, True -> remove values where glide slide could not be found. Otherwise, return NaN.
     derive_with_e : bool, False -> Use E as state for LQR gain calculation
+    exclude_boundary : bool, True -> Remove h values within atmosphere boundary (conditional atmos. only)
+    exponential_atmosphere : bool, True -> use exponential atmosphere (const. temperature)
 
     Returns
     -------
@@ -98,6 +101,19 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         def lift_to_u(_lift):
             return _lift
 
+    if exponential_atmosphere:
+        def density(_h):
+            return np.array((rho0 * np.exp(-_h / h_ref),)).flatten()
+
+        def speed_of_sound(_h):
+            return np.array((sped0 + 0*_h,)).flatten()
+    else:
+        def density(_h):
+            return np.asarray(dens_fun(_h)).flatten()
+
+        def speed_of_sound(_h):
+            return np.asarray(sped_fun(_h)).flatten()
+
     # Initialize arrays for interpolant (h = f(E))
     if e_vals is None:
         e_min = hv_to_e(h_min, atm.speed_of_sound(h_min)*mach_min)
@@ -118,8 +134,13 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     g_sym = h_to_g(h_sym)
     v_sym2 = eh_to_v2(e_sym, h_sym)
     v_sym = v_sym2 ** 0.5
-    _, __, rho_sym = atm.get_ca_atm_expr(h_sym)
-    sped_sym = atm.get_ca_speed_of_sound_expr(h_sym)
+
+    if exponential_atmosphere:
+        rho_sym = rho0 * ca.exp(-h_sym / h_ref)
+        sped_sym = sped0
+    else:
+        _, __, rho_sym = atm.get_ca_atm_expr(h_sym)
+        sped_sym = atm.get_ca_speed_of_sound_expr(h_sym)
     mach_sym = v_sym / sped_sym
     CD0_sym = CD0_fun(mach_sym)
     CD1_sym = CD1_fun(mach_sym)
@@ -190,13 +211,13 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         _dict['g'] = h_to_g(_h)
         _dict['v'] = np.maximum(1., eh_to_v2(_e, _h)) ** 0.5
 
-        _dens_arr = np.asarray(dens_fun(_h)).flatten()
+        _dens_arr = density(_h)
         if len(_dens_arr) > 1:
             _dict['rho'] = _dens_arr
         else:
             _dict['rho'] = _dens_arr[0]
 
-        _sped_arr = np.asarray(sped_fun(_h)).flatten()
+        _sped_arr = speed_of_sound(_h)
         _mach_arr = _dict['v'] / _sped_arr
         _CD0_arr = np.asarray(CD0_fun(_mach_arr)).flatten()
         _CD1_arr = np.asarray(CD1_fun(_mach_arr)).flatten()

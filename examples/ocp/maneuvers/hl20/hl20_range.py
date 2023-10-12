@@ -7,7 +7,7 @@ import pickle
 import giuseppe
 
 from hl20_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1_fun, CD2_fun, atm, lut_data, mach_boundary_thickness,\
-    max_ld_fun, CL0_fun, CLa_fun, dens_fun, sped_fun, load_max
+    max_ld_fun, CL0_fun, CLa_fun, dens_fun, sped_fun, load_max, rho0, h_ref, sped0
 from glide_slope import get_glide_slope
 
 SWEEP_SOLUTION_SPACE = True
@@ -40,21 +40,20 @@ ocp.add_constant(v_scale, v_scale_val)
 
 # Atmosphere Func
 _, __, rho_conditional = atm.get_ca_atm_expr(h)
-sped = atm.get_ca_speed_of_sound_expr(h)
-mach = v / sped
+sped_conditional = atm.get_ca_speed_of_sound_expr(h)
 
-# rho_0 = ca.SX.sym('rho_0')
-# h_ref = ca.SX.sym('h_ref')
-# ocp.add_constant(rho_0, 0.002378)
-# ocp.add_constant(h_ref, 23_800.)
-#
-# rho_exponential = rho_0 * ca.exp(-h / h_ref)
-#
+rho_exponential = rho0 * ca.exp(-h / h_ref)
+sped_exponential = sped0
+
 # conditional = ca.SX.sym('conditional', 1)
 # ocp.add_constant(conditional, 0.)
 #
 # rho = conditional * rho_conditional + (1 - conditional) * rho_exponential
-rho = rho_conditional
+# rho = rho_conditional
+rho = rho_exponential
+sped = sped_exponential
+
+mach = v / sped
 
 # Add Controls
 lift_nd = ca.SX.sym('lift_nd', 1)
@@ -362,7 +361,7 @@ if __name__ == '__main__':
 
         sol_set_sweep = deepcopy(sol_set_sweep2)
         sol_set_sweep.solutions = deepcopy([
-            sol_set_sweep1.solutions[idx_sweep1], sol_set_sweep1.solutions[0], sol_set_sweep2.solutions[-1]
+            sol_set_sweep1.solutions[idx_sweep1], sol_set_sweep1.solutions[-1], sol_set_sweep2.solutions[-1]
         ])
 
         sol_set_sweep.save('sol_set_range_sweep.data')

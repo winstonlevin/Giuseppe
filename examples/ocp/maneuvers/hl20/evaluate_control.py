@@ -7,10 +7,12 @@ import matplotlib as mpl
 import scipy as sp
 
 from hl20_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1_fun, CD2_fun, CL0_fun, CLa_fun, max_ld_fun, atm,\
-    dens_fun, sped_fun
+    dens_fun, sped_fun, rho0, h_ref, sped0
 from glide_slope import get_glide_slope
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
+EXPONENTIAL_ATM = True
+
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
@@ -71,6 +73,21 @@ k_h_interp = sp.interpolate.PchipInterpolator(glide_dict['E'][idx_valid_k_h], gl
 idx_valid_k_gam = np.where(np.logical_not(np.isnan(glide_dict['k_gam'])))
 k_gam_interp = sp.interpolate.PchipInterpolator(glide_dict['E'][idx_valid_k_gam], glide_dict['k_gam'][idx_valid_k_gam])
 
+if EXPONENTIAL_ATM:
+    def density(_h):
+        return np.array((rho0 * np.exp(-_h / h_ref),)).flatten()
+
+
+    def speed_of_sound(_h):
+        return np.array((sped0 + 0 * _h,)).flatten()
+else:
+    def density(_h):
+        return np.asarray(density(_h)).flatten()
+
+
+    def speed_of_sound(_h):
+        return np.asarray(sped_fun(_h)).flatten()
+
 
 # ---- DYNAMICS & CONTROL LAWS -----------------------------------------------------------------------------------------
 def saturate(_val, _val_min, _val_max):
@@ -86,7 +103,7 @@ def generate_constant_ctrl(_const: float) -> Callable:
 def alpha_max_ld_fun(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
     _h = _x[0]
     _v = _x[2]
-    _mach = _v / atm.speed_of_sound(_h)
+    _mach = _v / speed_of_sound(_h)[0]
     _alpha_max_ld = max_ld_fun(
         _CL0=float(CL0_fun(_mach)), _CLa=float(CLa_fun(_mach)),
         _CD0=float(CD0_fun(_mach)), _CD1=float(CD1_fun(_mach)), _CD2=float(CD2_fun(_mach))
@@ -100,8 +117,8 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _v = _x[2]
     _gam = _x[3]
     _e = mu/re - mu/(re + _h) + 0.5 * _v**2
-    _qdyn_s_ref = 0.5 * atm.density(_h) * _v**2 * s_ref
-    _mach = _v / atm.speed_of_sound(_h)
+    _qdyn_s_ref = 0.5 * density(_h)[0] * _v**2 * s_ref
+    _mach = _v / speed_of_sound(_h)[0]
 
     # Conditions at glide slope
     _h_glide = h_e_interp(_e)
@@ -113,8 +130,8 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     _g_glide = mu / _r_glide ** 2
     _v_glide = saturate(2 * (_e + mu/_r_glide - mu/re), 0., np.inf)**0.5
 
-    _qdyn_s_ref_glide = max(0.5 * atm.density(_h_glide) * _v_glide**2 * s_ref, 1.)
-    _mach_glide = _v_glide / atm.speed_of_sound(_h_glide)
+    _qdyn_s_ref_glide = max(0.5 * density(_h_glide)[0] * _v_glide**2 * s_ref, 1.)
+    _mach_glide = _v_glide / speed_of_sound(_h_glide)[0]
     _lift_glide = mass * (_g_glide - _v_glide ** 2 / _r_glide)
     _CD0_glide = float(CD0_fun(_mach_glide))
     _CD1_glide = float(CD1_fun(_mach_glide))
@@ -157,8 +174,8 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
     _cgam = np.cos(_gam)
     _tgam = np.tan(_gam)
     _lift0 = mass * (_g - _v**2/_r) * _cgam
-    _qdyn_s_ref = 0.5 * atm.density(_h) * _v**2 * s_ref
-    _mach = _v / atm.speed_of_sound(_h)
+    _qdyn_s_ref = 0.5 * density(_h)[0] * _v**2 * s_ref
+    _mach = _v / speed_of_sound(_h)[0]
 
     _h_glide = h_e_interp(_e)
     _dh_de_glide = dh_de_interp(_e)
@@ -167,8 +184,8 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
     _g_glide = mu / _r_glide ** 2
     _v_glide = saturate(2 * (_e + mu / _r_glide - mu / re), 0., np.inf) ** 0.5
 
-    _qdyn_s_ref_glide = max(0.5 * atm.density(_h_glide) * _v_glide ** 2 * s_ref, 1.)
-    _mach_glide = _v_glide / atm.speed_of_sound(_h_glide)
+    _qdyn_s_ref_glide = max(0.5 * density(_h_glide)[0] * _v_glide ** 2 * s_ref, 1.)
+    _mach_glide = _v_glide / speed_of_sound(_h_glide)[0]
     _lift_glide = mass * (_g_glide - _v_glide ** 2 / _r_glide)
     _CD0_glide = float(CD0_fun(_mach_glide))
     _CD1_glide = float(CD1_fun(_mach_glide))
@@ -204,8 +221,8 @@ def generate_ctrl_law(_aoa_law, _u_interp=None) -> Callable:
         def _aoa_ctrl(_t, _x, _p_dict, _k_dict):
             _h = _x[0]
             _v = _x[2]
-            _qdyn_s_ref = 0.5 * atm.density(_h) * _v ** 2 * s_ref
-            _mach = _v / atm.speed_of_sound(_h)
+            _qdyn_s_ref = 0.5 * density(_h)[0] * _v ** 2 * s_ref
+            _mach = _v / speed_of_sound(_h)[0]
             _load = _u_interp(_t)
             _cl = _load * g0 * mass / _qdyn_s_ref
             _alpha = (_cl - float(CL0_fun(_mach))) / float(CLa_fun(_mach))
@@ -229,7 +246,7 @@ def eom(_t: float, _x: np.array, _u: np.array, _p_dict: dict, _k_dict: dict) -> 
 
     _alpha = _u[0]
 
-    _mach = _v / atm.speed_of_sound(_h)
+    _mach = _v / speed_of_sound(_h)[0]
     CL0 = float(CL0_fun(_mach))
     CLa = float(CLa_fun(_mach))
     CD0 = float(CD0_fun(_mach))
@@ -238,7 +255,7 @@ def eom(_t: float, _x: np.array, _u: np.array, _p_dict: dict, _k_dict: dict) -> 
 
     _r = _h + re
     _g = mu / _r**2
-    _qdyn_s_ref = 0.5 * atm.density(_h) * _v**2 * s_ref
+    _qdyn_s_ref = 0.5 * density(_h)[0] * _v**2 * s_ref
     _cl = CL0 + CLa * _alpha
     _cd = CD0 + CD1 * _cl + CD2 * _cl**2
     _lift = _qdyn_s_ref * _cl
@@ -365,8 +382,8 @@ for idx, sol in enumerate(sols):
         x = np.vstack((e, h, gam))
 
         # Calculate Alternate Control
-        qdyn_s_ref = 0.5 * np.asarray(dens_fun(h)).flatten() * v**2 * s_ref
-        mach = v / np.asarray(sped_fun(h)).flatten()
+        qdyn_s_ref = 0.5 * np.asarray(density(h)).flatten() * v**2 * s_ref
+        mach = v / np.asarray(speed_of_sound(h)).flatten()
 
         CL0 = np.asarray(CL0_fun(mach)).flatten()
         CL = CL0 + np.asarray(CLa_fun(mach)).flatten() * alpha_sol
