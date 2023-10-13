@@ -5,7 +5,7 @@ import numpy as np
 import scipy as sp
 
 from airplane2_aero_atm import mu, re, g0, mass, s_ref, CLa_fun, CD0_fun, CD1, CD2_fun, max_ld_fun, \
-    atm, dens_fun, sped_fun
+    atm, dens_fun, sped_fun, CL0
 
 _h_atm_max = atm.h_layers[-1]
 _f_zero_converged_flag = 1
@@ -416,6 +416,150 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     return glide_dict
 
 
+def get_costate_feedback(glide_dict, return_interp=False):
+    # This function derives feedback gains for the costates with V, h, gam as states:
+    # lam = lam* + P (x - x*)
+    # Then the optimal control law for alpha can be used with the approximate costates:
+    # V CDa lam_V = CLa lam_gam
+    # alp = CLa/(2 CD2) lam_gam / (V lam_V) - CD1 / (2 CD2)
+    h_sym = ca.MX.sym('h', 1)
+    v_sym = ca.MX.sym('V', 1)
+    gam_sym = ca.MX.sym('gam', 1)
+    x_sym = ca.vcat((h_sym, v_sym, gam_sym))
+
+    lam_v_sym = ca.MX.sym('lam_V', 1)
+    lam_h_sym = ca.MX.sym('lam_h', 1)
+    lam_gam_sym = ca.MX.sym('lam_gam', 1)
+
+    alpha_sym = ca.MX.sym('alpha', 1)
+
+    r_sym = re + h_sym
+    g_sym = mu / r_sym**2
+    _, __, rho_sym = atm.get_ca_atm_expr(h_sym)
+    sped_sym = atm.get_ca_speed_of_sound_expr(h_sym)
+    mach_sym = v_sym / sped_sym
+    CLa_sym = CLa_fun(mach_sym)
+    CD0_sym = CD0_fun(mach_sym)
+    CD2_sym = CD2_fun(mach_sym)
+
+    qdyn_s_ref_sym = 0.5 * rho_sym * v_sym**2 * s_ref
+    CL_sym = CL0 + CLa_sym * alpha_sym
+    CD_sym = CD0_sym + CD1 * CL_sym + CD2_sym * CL_sym**2
+    lift_sym = qdyn_s_ref_sym * CL_sym
+    drag_sym = qdyn_s_ref_sym * CD_sym
+    ddrag_dh_sym = ca.jacobian(drag_sym, h_sym)
+    ddrag_dh_fun = ca.Function('Dh', (h_sym, v_sym, alpha_sym), (ddrag_dh_sym,), ('E', 'h', 'u'), ('Dh',))
+
+    dh_dt = v_sym * ca.sin(gam_sym)
+    dtha_dt = v_sym / r_sym * ca.cos(gam_sym)
+    dv_dt = -drag_sym / mass - g_sym * ca.sin(gam_sym)
+    dgam_dt = lift_sym / (mass * v_sym) + (v_sym / r_sym - g_sym / v_sym) * ca.cos(gam_sym)
+    dynamics_sym = ca.vcat((dh_dt, dv_dt, dgam_dt))
+
+    hamiltonian_sym = -dtha_dt + lam_h_sym * dh_dt + lam_v_sym * dv_dt + lam_gam_sym * dgam_dt
+
+    # Derivation of values to calculate neighboring optimal control feedback gains from ARE
+    ham_x = ca.jacobian(hamiltonian_sym, x_sym)
+    ham_u = ca.jacobian(hamiltonian_sym, alpha_sym)
+
+    a_noc_sym = ca.jacobian(dynamics_sym, x_sym)
+    b_noc_sym = ca.jacobian(dynamics_sym, alpha_sym)
+    q_noc_sym = ca.jacobian(ham_x, x_sym)
+    n_noc_sym = ca.jacobian(ham_x, alpha_sym)
+    r_noc_sym = ca.jacobian(ham_u, alpha_sym)
+
+    a_noc_fun = ca.Function('A', (h_sym, v_sym, gam_sym, lam_h_sym, lam_v_sym, lam_gam_sym, alpha_sym),
+                            (a_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'u'), ('A',))
+    b_noc_fun = ca.Function('B', (h_sym, v_sym, gam_sym, lam_h_sym, lam_v_sym, lam_gam_sym, alpha_sym),
+                            (b_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'u'), ('B',))
+    q_noc_fun = ca.Function('Q', (h_sym, v_sym, gam_sym, lam_h_sym, lam_v_sym, lam_gam_sym, alpha_sym),
+                            (q_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'u'), ('Q',))
+    n_noc_fun = ca.Function('N', (h_sym, v_sym, gam_sym, lam_h_sym, lam_v_sym, lam_gam_sym, alpha_sym),
+                            (n_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'u'), ('N',))
+    r_noc_fun = ca.Function('R', (h_sym, v_sym, gam_sym, lam_h_sym, lam_v_sym, lam_gam_sym, alpha_sym),
+                            (r_noc_sym,), ('E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam', 'u'), ('R',))
+
+    # Unpack values from glide_dict
+    h = glide_dict['h']
+    v = glide_dict['v']
+    gam = glide_dict['gam']
+
+    # Convert costate values from E/h/gam to h/V/gam
+    lam_h = glide_dict['lam_h'] + glide_dict['g'] * glide_dict['lam_E']
+    lam_v = glide_dict['lam_E'] * glide_dict['v']
+    lam_gam = glide_dict['lam_gam']
+
+    # Get alpha value
+    CL = glide_dict['lift'] / glide_dict['qdyn_s_ref']
+    CLa = np.asarray(CLa_fun(glide_dict['M'])).flatten()
+    alpha = (CL - CL0) / CLa
+
+    # Solve ARE for each value
+    n_x = x_sym.shape[0]
+    n_e = len(glide_dict['E'])
+    p_vals = np.empty((n_x, n_x, n_e))
+    k_h_vals = np.empty((n_e,))
+    k_v_vals = np.empty((n_e,))
+    k_gam_vals = np.empty((n_e,))
+
+    for idx, (h_i, v_i, gam_i, lam_h_i, lam_v_i, lam_gam_i, alpha_i) in enumerate(zip(
+       h, v, gam, lam_h, lam_v, lam_gam, alpha
+    )):
+        a_noc = a_noc_fun(h_i, v_i, gam_i, lam_h_i, lam_v_i, lam_gam_i, alpha_i)
+        b_noc = b_noc_fun(h_i, v_i, gam_i, lam_h_i, lam_v_i, lam_gam_i, alpha_i)
+        q_noc = q_noc_fun(h_i, v_i, gam_i, lam_h_i, lam_v_i, lam_gam_i, alpha_i)
+        n_noc = n_noc_fun(h_i, v_i, gam_i, lam_h_i, lam_v_i, lam_gam_i, alpha_i)
+        r_noc = r_noc_fun(h_i, v_i, gam_i, lam_h_i, lam_v_i, lam_gam_i, alpha_i)
+
+        try:
+            p_noc = sp.linalg.solve_continuous_are(a=a_noc, b=b_noc, q=q_noc, s=n_noc, r=r_noc)
+            k_noc = np.linalg.solve(a=r_noc, b=(p_noc @ b_noc + n_noc).T)  # inv(R) * (PB + N)^T
+        except np.linalg.LinAlgError:
+            p_noc = np.nan * np.zeros((n_x, n_x))
+            k_noc = np.nan * np.zeros((1, n_x))
+
+        p_vals[:, :, idx] = p_noc
+        k_h_vals[idx] = k_noc[0, 0]
+        k_v_vals[idx] = k_noc[0, 1]
+        k_gam_vals[idx] = k_noc[0, 2]
+
+    k_lam_ratio_vals = p_vals[1, :, :] / p_vals[2, :, :]  # lam_gam / lam_v
+
+    if return_interp:
+        valid_idces = np.where(np.logical_not(np.isnan(k_h_vals)))
+        e_interp_vals = glide_dict['E'][valid_idces]
+        k_h_interp_vals = k_h_vals[valid_idces]
+        k_v_interp_vals = k_v_vals[valid_idces]
+        k_gam_interp_vals = k_gam_vals[valid_idces]
+        p_interp_vals = p_vals[:, :, valid_idces[0]].transpose(2, 0, 1)
+        k_lam_ratio_vals = k_lam_ratio_vals[:, valid_idces[0]].transpose(1, 0)
+
+        if e_interp_vals[-1] < e_interp_vals[0]:
+            # Flip arrays to ensure monotonically increasing
+            e_interp_vals = np.flip(e_interp_vals)
+            k_h_interp_vals = np.flip(k_h_interp_vals)
+            k_v_interp_vals = np.flip(k_v_interp_vals)
+            k_gam_interp_vals = np.flip(k_gam_interp_vals)
+            p_interp_vals = np.flip(p_interp_vals, 0)
+            k_lam_ratio_vals = np.flip(k_lam_ratio_vals, 0)
+
+        k_h_interp = sp.interpolate.PchipInterpolator(e_interp_vals, k_h_interp_vals)
+        k_v_interp = sp.interpolate.PchipInterpolator(e_interp_vals, k_v_interp_vals)
+        k_gam_interp = sp.interpolate.PchipInterpolator(e_interp_vals, k_gam_interp_vals)
+        p_interp = sp.interpolate.PchipInterpolator(e_interp_vals, p_interp_vals)
+        k_lam_ratio_interp = sp.interpolate.PchipInterpolator(e_interp_vals, k_lam_ratio_vals)
+        _dict = {
+            'P': p_interp, 'k_lam_ratio': k_lam_ratio_interp,
+            'k_h': k_h_interp, 'k_v': k_v_interp, 'k_gam': k_gam_interp,
+        }
+    else:
+        _dict = {
+            'P': p_vals, 'k_lam_ratio': k_lam_ratio_vals,
+            'k_h': k_h_vals, 'k_v': k_v_vals, 'k_gam': k_gam_vals
+        }
+    return _dict
+
+
 if __name__ == '__main__':
     from matplotlib import pyplot as plt
 
@@ -423,8 +567,11 @@ if __name__ == '__main__':
 
     h_max_plot = 275e3
     mach_max_plot = 3.5
+
+    p_hvgam = get_costate_feedback(get_glide_slope(correct_gam=False, h_max=h_max_plot, mach_max=mach_max_plot))
+
     glide_dict = get_glide_slope(correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
-    # glide_dict_e = get_glide_slope(energy_state=False, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot, derive_with_e=True)
+    # glide_dict_e = get_glide_slope(correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot, derive_with_e=True)
     # glide_dict_es = get_glide_slope(energy_state=True, correct_gam=True, h_max=h_max_plot, mach_max=mach_max_plot)
     # glide_dict_gam0 = get_glide_slope(energy_state=False, correct_gam=False, h_max=h_max_plot, mach_max=mach_max_plot)
     glide_dict_flat = get_glide_slope(correct_gam=True, flat_earth=True,

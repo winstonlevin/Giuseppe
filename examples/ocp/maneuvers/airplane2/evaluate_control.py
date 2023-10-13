@@ -8,14 +8,15 @@ import scipy as sp
 
 from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, CL0, CLa_fun, max_ld_fun, atm,\
     dens_fun, sped_fun
-from glide_slope import get_glide_slope
+from glide_slope import get_glide_slope, get_costate_feedback
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-AOA_LAWS = ('energy_climb', 'max_ld')  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
+# AOA_LAWS are: {weight, max_ld, approx_costate, energy_climb, lam_h0, interp, 0}
+AOA_LAWS = ('approx_costate', 'energy_climb', 'max_ld')
 PLOT_PAPER = True
 
 if COMPARE_SWEEP:
@@ -45,7 +46,8 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
 
 
 e_opt = mu/re - mu/(re + x_dict['h_nd'] * k_dict['h_scale']) + 0.5 * (x_dict['v_nd'] * k_dict['v_scale']) ** 2
-glide_dict = get_glide_slope(e_vals=np.flip(e_opt))
+glide_dict = get_glide_slope(e_vals=np.flip(e_opt), correct_gam=False)
+costate_feedback_dict = get_costate_feedback(glide_dict, return_interp=True)
 
 # CONTROL LIMITS
 alpha_max = 35 * np.pi / 180
@@ -138,6 +140,78 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     return _alpha
 
 
+def alpha_approx_costate(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+    # Conditions at current state
+    _h = _x[0]
+    _v = _x[2]
+    _gam = _x[3]
+    _e = mu/re - mu/(re + _h) + 0.5 * _v**2
+    _qdyn_s_ref = 0.5 * atm.density(_h) * _v**2 * s_ref
+    _mach = _v / atm.speed_of_sound(_h)
+    _CLa = float(CLa_fun(_mach))
+    _CD0 = float(CD0_fun(_mach))
+    _CD2 = float(CD2_fun(_mach))
+
+    # Conditions at glide slope
+    _h_glide = h_e_interp(_e)
+    _dh_de_glide = dh_de_interp(_e)
+    _k_h = k_h_interp(_e)
+    _k_gam = k_gam_interp(_e)
+
+    _r_glide = re + _h_glide
+    _g_glide = mu / _r_glide ** 2
+    _v_glide = saturate(2 * (_e + mu/_r_glide - mu/re), 0., np.inf)**0.5
+
+    _qdyn_s_ref_glide = max(0.5 * atm.density(_h_glide) * _v_glide**2 * s_ref, 1.)
+    _mach_glide = _v_glide / atm.speed_of_sound(_h_glide)
+    _lift_glide = mass * (_g_glide - _v_glide ** 2 / _r_glide)
+    _CL_glide = _lift_glide / _qdyn_s_ref_glide
+    _CD0_glide = float(CD0_fun(_mach_glide))
+    _CD2_glide = float(CD2_fun(_mach_glide))
+    _drag_glide = _qdyn_s_ref_glide * _CD0_glide + CD1 * _lift_glide + _CD2_glide/_qdyn_s_ref_glide * _lift_glide**2
+    # _gam_glide = np.arcsin(saturate(-_drag_glide / mass * _dh_de_glide, -1., 1.))
+    _gam_glide = 0.
+    # _CLa_glide = float(CLa_fun(_mach_glide))
+    # _alpha_glide = (_CL_glide - CL0) / _CLa_glide
+    #
+    # _k_h = costate_feedback_dict['k_h'](_e)
+    # _k_v = costate_feedback_dict['k_v'](_e)
+    # _k_gam = costate_feedback_dict['k_gam'](_e)
+    # _d_alpha = _k_h * (_h_glide - _h) + _k_v * (_v_glide - _v) + _k_gam * (_gam_glide - _gam)
+    # _alpha = _alpha_glide + _d_alpha
+
+    _lam_h_glide = -mass * _g_glide / (_drag_glide * _r_glide)
+    _lam_v_glide = - mass * _v_glide / (_drag_glide * _r_glide)
+    _lam_gam_glide = - mass * _v_glide**2 / (_drag_glide * _r_glide) * (CD1 + 2 * _CD2_glide * _CL_glide)
+    _lam_glide = np.vstack((_lam_h_glide, _lam_v_glide, _lam_gam_glide))
+
+    _dx = np.vstack((_h - _h_glide, _v - _v_glide, _gam - _gam_glide))
+    _p = costate_feedback_dict['P'](_e)
+    _dlam = _p @ _dx
+    _dlam_v = _dlam[1, 0]
+    _dlam_gam = _dlam[2, 0]
+
+    # Ensure minimium (lam_v < 0 -> dlam_v < -lam_v_glide)
+    dlam_v_max = 0.99 * -_lam_v_glide
+    if _dlam_v > dlam_v_max:
+        _mult = dlam_v_max / _dlam_v
+        _dlam_v = dlam_v_max
+        _dlam_gam = _dlam_gam * _mult
+
+    # Optimal Control Law Hu = 0
+    _lam_v = _lam_v_glide + _dlam[1, 0]
+    _lam_gam = _lam_gam_glide + _dlam[2, 0]
+
+    _CL = (_lam_gam/(_v * _lam_v) - CD1) / (2 * _CD2)
+    #
+    # if _CL < 0:
+    #     print('CL < 0')
+
+    _alpha = (_CL - CL0) / _CLa
+    _alpha = saturate(_alpha, alpha_min, alpha_max)
+    return _alpha
+
+
 def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
     # Assuming lam_h = 0, this control law ensures H = 0. Note that two values of alpha satisfy this, so the value
     # which drives h -> h_glide is chosen.
@@ -194,6 +268,8 @@ def generate_ctrl_law(_aoa_law, _u_interp=None) -> Callable:
         _aoa_ctrl = alpha_max_ld_fun
     elif _aoa_law == 'energy_climb':
         _aoa_ctrl = alpha_energy_climb
+    elif _aoa_law == 'approx_costate':
+        _aoa_ctrl = alpha_approx_costate
     elif _aoa_law == 'lam_h0':
         _aoa_ctrl = alpha_lam_h0
     elif _aoa_law == 'interp':
