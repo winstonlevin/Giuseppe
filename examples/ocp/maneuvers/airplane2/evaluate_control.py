@@ -169,43 +169,14 @@ def alpha_approx_costate(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) 
     _CD0_glide = float(CD0_fun(_mach_glide))
     _CD2_glide = float(CD2_fun(_mach_glide))
     _drag_glide = _qdyn_s_ref_glide * _CD0_glide + CD1 * _lift_glide + _CD2_glide/_qdyn_s_ref_glide * _lift_glide**2
-    # _gam_glide = np.arcsin(saturate(-_drag_glide / mass * _dh_de_glide, -1., 1.))
     _gam_glide = 0.
-    # _CLa_glide = float(CLa_fun(_mach_glide))
-    # _alpha_glide = (_CL_glide - CL0) / _CLa_glide
-    #
-    # _k_h = costate_feedback_dict['k_h'](_e)
-    # _k_v = costate_feedback_dict['k_v'](_e)
-    # _k_gam = costate_feedback_dict['k_gam'](_e)
-    # _d_alpha = _k_h * (_h_glide - _h) + _k_v * (_v_glide - _v) + _k_gam * (_gam_glide - _gam)
-    # _alpha = _alpha_glide + _d_alpha
 
-    _lam_h_glide = -mass * _g_glide / (_drag_glide * _r_glide)
-    _lam_v_glide = - mass * _v_glide / (_drag_glide * _r_glide)
-    _lam_gam_glide = - mass * _v_glide**2 / (_drag_glide * _r_glide) * (CD1 + 2 * _CD2_glide * _CL_glide)
-    _lam_glide = np.vstack((_lam_h_glide, _lam_v_glide, _lam_gam_glide))
-
-    _dx = np.vstack((_h - _h_glide, _v - _v_glide, _gam - _gam_glide))
-    _p = costate_feedback_dict['P'](_e)
-    _dlam = _p @ _dx
-    _dlam_v = _dlam[1, 0]
-    _dlam_gam = _dlam[2, 0]
-
-    # Ensure minimium (lam_v < 0 -> dlam_v < -lam_v_glide)
-    dlam_v_max = 0.99 * -_lam_v_glide
-    if _dlam_v > dlam_v_max:
-        _mult = dlam_v_max / _dlam_v
-        _dlam_v = dlam_v_max
-        _dlam_gam = _dlam_gam * _mult
-
-    # Optimal Control Law Hu = 0
-    _lam_v = _lam_v_glide + _dlam[1, 0]
-    _lam_gam = _lam_gam_glide + _dlam[2, 0]
-
-    _CL = (_lam_gam/(_v * _lam_v) - CD1) / (2 * _CD2)
-    #
-    # if _CL < 0:
-    #     print('CL < 0')
+    # Order E/gam/h -> Hh = 0, but gam_inner = gam [Flat Earth]
+    _cgam = np.cos(_gam)
+    _CL_glide_inner = _CL_glide * _cgam - np.sign(_cgam) * (_CD0_glide/_CD2_glide * (1. - _cgam))**0.5
+    _CDa_glide_inner = CD1 + 2 * _CD2_glide * _CL_glide_inner
+    _lam_ratio_inner = _v_glide**2 * _CDa_glide_inner  # lam_gam_inner / lam_e_outer
+    _CL = (_lam_ratio_inner/_v**2 - CD1) / (2 * _CD2)
 
     _alpha = (_CL - CL0) / _CLa
     _alpha = saturate(_alpha, alpha_min, alpha_max)
