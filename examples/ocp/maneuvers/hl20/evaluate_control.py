@@ -17,7 +17,8 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-AOA_LAWS = ('energy_climb', 'max_ld')  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
+# AOA laws are {approx_costate, weight, max_ld, energy_climb, lam_h0, interp, 0}
+AOA_LAWS = ('approx_costate', 'energy_climb', 'max_ld')
 PLOT_PAPER = True
 
 if COMPARE_SWEEP:
@@ -160,6 +161,29 @@ def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) ->
     return _alpha
 
 
+def alpha_approx_costate(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+    # Conditions at current state
+    _h = _x[0]
+    _v = _x[2]
+    _gam = _x[3]
+
+    _mach = _v / atm.speed_of_sound(_h)
+    _CL0 = float(CL0_fun(_mach))
+    _CLa = float(CLa_fun(_mach))
+    _CD0 = float(CD0_fun(_mach))
+    _CD1 = float(CD1_fun(_mach))
+    _CD2 = float(CD2_fun(_mach))
+
+    # Order E/gam/h -> Hh = 0, but gam_inner = gam [Flat Earth]
+    _CL_max_ld = max_ld_fun(_CL0=_CL0, _CLa=_CLa, _CD0=_CD0, _CD1=_CD1, _CD2=_CD2)['CL']
+    _CL = _CL_max_ld * (1 - np.sign(_gam) * (1 - np.cos(_gam))**0.5)
+    # _CL = _CL_max_ld * np.tan(_gam)
+
+    _alpha = (_CL - _CL0) / _CLa
+    _alpha = saturate(_alpha, alpha_min, alpha_max)
+    return _alpha
+
+
 def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
     # Assuming lam_h = 0, this control law ensures H = 0. Note that two values of alpha satisfy this, so the value
     # which drives h -> h_glide is chosen.
@@ -215,6 +239,8 @@ def generate_ctrl_law(_aoa_law, _u_interp=None) -> Callable:
         _aoa_ctrl = alpha_max_ld_fun
     elif _aoa_law == 'energy_climb':
         _aoa_ctrl = alpha_energy_climb
+    elif _aoa_law == 'approx_costate':
+        _aoa_ctrl = alpha_approx_costate
     elif _aoa_law == 'lam_h0':
         _aoa_ctrl = alpha_lam_h0
     elif _aoa_law == 'interp':

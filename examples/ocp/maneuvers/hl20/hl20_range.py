@@ -45,13 +45,10 @@ sped_conditional = atm.get_ca_speed_of_sound_expr(h)
 rho_exponential = rho0 * ca.exp(-h / h_ref)
 sped_exponential = sped0
 
-# conditional = ca.SX.sym('conditional', 1)
-# ocp.add_constant(conditional, 0.)
-#
-# rho = conditional * rho_conditional + (1 - conditional) * rho_exponential
-# rho = rho_conditional
-rho = rho_exponential
-sped = sped_exponential
+rho = rho_conditional
+sped = sped_conditional
+# rho = rho_exponential
+# sped = sped_exponential
 
 mach = v / sped
 
@@ -151,6 +148,8 @@ with giuseppe.utils.Timer(prefix='Compilation Time:'):
     )
 
 if __name__ == '__main__':
+    d2r = np.pi/180
+
     def binary_search(_x_min, _x_max, _f, _f_val_target, max_iter: int = 1000, tol: float = 1e-3):
         increasing = _f(_x_max) > _f(_x_min)
         if increasing:
@@ -186,9 +185,13 @@ if __name__ == '__main__':
         _f_val_target=h_f
     )
 
-    # Maximum energy is at maximum Mach (for minimum altitude)
-    mach_max = 25.
-    e_max = 0.5 * (mach_max * atm.speed_of_sound(0.))**2
+    # Find energy where h = top of atm
+    h_0 = atm.h_layers[-1]
+    e_max = binary_search(
+        _x_min=3e8, _x_max=3.5e8,
+        _f=lambda _e: get_glide_slope(e_vals=np.array((_e,)), h_min=0., h_max=2*h_0, exclude_boundary=False)['h'],
+        _f_val_target=h_0
+    )
 
     mach_guess = 3.
     e_guess = 0.5 * (mach_guess * atm.speed_of_sound(0.))**2
@@ -238,7 +241,7 @@ if __name__ == '__main__':
     idx_gam0 = adiff_dual.annotations.constants.index('gam_0')
 
     e0_0 = e_guess
-    e0_f = e_max
+    e0_f = e_vals[-1]
     ef_0 = mu/re - mu/(re + seed_sol.x[0, -1]*h_scale_val) + 0.5 * (seed_sol.x[2, -1] * v_scale_val)**2
     ef_f = e_vals[0]
     h_interp = sp.interpolate.PchipInterpolator(glide_dict['E'], glide_dict['h'])
@@ -329,39 +332,42 @@ if __name__ == '__main__':
         #
         #     return _h
 
-        v0_min = binary_search(
-            _x_min=10., _x_max=v0,
-            _f=lambda _v: _v / atm.speed_of_sound(-re - mu/(e0 - mu/re - 0.5 * _v**2)),
-            _f_val_target=0.5
-        )
-        h0_max = min(atm.h_layers[-1], -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
-        h0_min = 100.  # Compatible with e0 chosen from Mach max.
-
-        # Get Low altitude solution
+        # v0_min = binary_search(
+        #     _x_min=10., _x_max=v0,
+        #     _f=lambda _v: _v / atm.speed_of_sound(-re - mu/(e0 - mu/re - 0.5 * _v**2)),
+        #     _f_val_target=0.5
+        # )
+        # h0_max = min(atm.h_layers[-1], -re - mu/(e0 - mu/re - 0.5 * v0_min**2))
+        # h0_min = 100.  # Compatible with e0 chosen from Mach max.
+        #
+        # # Get Low altitude solution
+        # cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+        # cont.add_custom_series(
+        #     100, generate_energy_sweep_continuation(h0, h0_min), 'Const. energy', keep_bisections=False
+        # )
+        # sol_set_sweep1 = cont.run_continuation()
+        #
+        # # Choose solution that does not violate g-load bound.
+        # idx_sweep1 = 0
+        # for idx, sol in enumerate(sol_set_sweep1.solutions):
+        #     _load = sol.u[0, :]
+        #     _load_max = np.max(abs(_load))
+        #     if _load_max > load_max:
+        #         idx_sweep1 = idx - 1
+        #         break
+        #
+        # cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
+        # cont.add_custom_series(
+        #     100, generate_energy_sweep_continuation(h0, h0_max), 'Const. energy', keep_bisections=False
+        # )
+        # sol_set_sweep2 = cont.run_continuation()
+        #
+        # sol_set_sweep = deepcopy(sol_set_sweep2)
+        # sol_set_sweep.solutions = deepcopy([
+        #     sol_set_sweep1.solutions[idx_sweep1], sol_set_sweep1.solutions[-1], sol_set_sweep2.solutions[-1]
+        # ])
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-        cont.add_custom_series(
-            100, generate_energy_sweep_continuation(h0, h0_min), 'Const. energy', keep_bisections=False
-        )
-        sol_set_sweep1 = cont.run_continuation()
-
-        # Choose solution that does not violate g-load bound.
-        idx_sweep1 = 0
-        for idx, sol in enumerate(sol_set_sweep1.solutions):
-            _load = sol.u[0, :]
-            _load_max = np.max(abs(_load))
-            if _load_max > load_max:
-                idx_sweep1 = idx - 1
-                break
-
-        cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
-        cont.add_custom_series(
-            100, generate_energy_sweep_continuation(h0, h0_max), 'Const. energy', keep_bisections=False
-        )
-        sol_set_sweep2 = cont.run_continuation()
-
-        sol_set_sweep = deepcopy(sol_set_sweep2)
-        sol_set_sweep.solutions = deepcopy([
-            sol_set_sweep1.solutions[idx_sweep1], sol_set_sweep1.solutions[-1], sol_set_sweep2.solutions[-1]
-        ])
+        cont.add_linear_series(25, {'gam_0': -15. * d2r})
+        sol_set_sweep = cont.run_continuation()
 
         sol_set_sweep.save('sol_set_range_sweep.data')

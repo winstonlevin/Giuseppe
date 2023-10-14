@@ -16,7 +16,7 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
                     mach_min: float = 0.3, mach_max: float = 30.,
                     manual_derivation=False, energy_state=True, correct_gam=True, flat_earth=False,
                     nondimensionalize_control=True, remove_nan=True, derive_with_e=False, exclude_boundary=True,
-                    exponential_atmosphere=True
+                    exponential_atmosphere=False
                     ) -> dict:
     """
 
@@ -322,17 +322,17 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
     if fgrad is Callable:
         def solve_zero(_e_val, _h_guess):
             _x_val, _, _flag, __ = sp.optimize.fsolve(
-                func=lambda _x: fzero(e_val, _x[0]),
-                x0=np.array((h_guess,)),
-                fprime=lambda _x: fgrad(e_val, _x[0]),
+                func=lambda _x: fzero(_e_val, _x[0]),
+                x0=np.array((_h_guess,)),
+                fprime=lambda _x: fgrad(_e_val, _x[0]),
                 full_output=True
             )
             return _x_val[0], _flag
     else:
         def solve_zero(_e_val, _h_guess):
             _x_val, _, _flag, __ = sp.optimize.fsolve(
-                func=lambda _x: fzero(e_val, _x[0]),
-                x0=np.array((h_guess,)),
+                func=lambda _x: fzero(_e_val, _x[0]),
+                x0=np.array((_h_guess,)),
                 full_output=True
             )
             return _x_val[0], _flag
@@ -342,6 +342,10 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         h_max_i = min(h_max, ev_to_h(e_val, 1.))
 
         h_sol, flag = solve_zero(e_val, h_guess)
+        if abs(fzero(e_val, h_sol)) < 1e-8:
+            # Sometimes solution does not think it is making progress, but it still finds the zero.
+            flag = _f_zero_converged_flag
+
         if flag != _f_zero_converged_flag or h_sol > h_max_i:
             # Solution did not converge, try other initial states.
             h_search_vals = h_min + np.linspace(0., 1., 100) * (h_max_i - h_min)
@@ -382,6 +386,9 @@ def get_glide_slope(e_vals: Optional[np.array] = None,
         e_vals = e_vals[valid_idces]
         h_vals = h_vals[valid_idces]
         valid_idces = np.arange(0, len(e_vals), 1)
+
+        if len(e_vals) == 0:
+            print('Oh no! No valid E Vals')
 
     # Calculate gliding flight-path angle
     if correct_gam and len(e_vals[valid_idces]) > 2:

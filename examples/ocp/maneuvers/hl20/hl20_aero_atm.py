@@ -9,7 +9,7 @@ mu = 0.14076539e17
 re = 20_902_900.  # ft
 g0 = mu / re ** 2
 
-atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0)
+atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0, boundary_thickness=1000.)
 rho0 = 0.002378
 h_ref = 23_800.
 temp0 = h_ref * g0 / atm.gas_constant
