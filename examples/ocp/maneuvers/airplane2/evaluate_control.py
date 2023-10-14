@@ -172,11 +172,13 @@ def alpha_approx_costate(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) 
     _gam_glide = 0.
 
     # Order E/gam/h -> Hh = 0, but gam_inner = gam [Flat Earth]
-    _cgam = np.cos(_gam)
-    _CL_glide_inner = _CL_glide * _cgam - np.sign(_cgam) * (_CD0_glide/_CD2_glide * (1. - _cgam))**0.5
-    _CDa_glide_inner = CD1 + 2 * _CD2_glide * _CL_glide_inner
-    _lam_ratio_inner = _v_glide**2 * _CDa_glide_inner  # lam_gam_inner / lam_e_outer
-    _CL = (_lam_ratio_inner/_v**2 - CD1) / (2 * _CD2)
+    _CL_max_ld = max_ld_fun(_CLa=_CLa, _CD0=_CD0, _CD2=_CD2)['CL']
+    _CL = _CL_max_ld * (1 - np.sign(_gam) * (1 - np.cos(_gam))**0.5)
+    # _cgam = np.cos(_gam)
+    # _CL_glide_inner = _CL_glide * _cgam - np.sign(_cgam) * (_CD0_glide/_CD2_glide * (1. - _cgam))**0.5
+    # _CDa_glide_inner = CD1 + 2 * _CD2_glide * _CL_glide_inner
+    # _lam_ratio_inner = _v_glide**2 * _CDa_glide_inner  # lam_gam_inner / lam_e_outer
+    # _CL = (_lam_ratio_inner/_v**2 - CD1) / (2 * _CD2)
 
     _alpha = (_CL - CL0) / _CLa
     _alpha = saturate(_alpha, alpha_min, alpha_max)
