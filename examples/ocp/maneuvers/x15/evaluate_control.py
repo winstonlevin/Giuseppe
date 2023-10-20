@@ -15,7 +15,7 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARISON = 'max_range'
-AOA_LAW = 'energy_climb'  # {weight, max_ld, energy_climb, 0}
+AOA_LAW = 'max_ld'  # {weight, max_ld, energy_climb, 0}
 ROLL_LAW = 'regulator'  # {0, regulator}
 THRUST_LAW = '0'  # {0, min, max}
 

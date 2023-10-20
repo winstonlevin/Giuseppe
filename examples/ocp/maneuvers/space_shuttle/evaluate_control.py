@@ -15,7 +15,7 @@ mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-AOA_LAW = 'lam_h0'  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
+AOA_LAW = 'fpa_feedback'  # {weight, max_ld, energy_climb, lam_h0, interp, 0}
 
 if COMPARE_SWEEP:
     with open('sol_set_range_sweep.data', 'rb') as f:
@@ -80,6 +80,13 @@ def generate_constant_ctrl(_const: float) -> Callable:
 
 
 def alpha_max_ld_fun(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+    return alpha_max_ld
+
+
+def alpha_fpa_feedback(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+    _gam = _x[3]
+    _CDuu = 2 * CD2
+    _alpha = alpha_max_ld - 2/CLa * (CD_max_ld / _CDuu)**0.5 * _gam
     return alpha_max_ld
 
 
@@ -164,6 +171,8 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
 def generate_ctrl_law(_u_interp=None) -> Callable:
     if AOA_LAW == 'max_ld':
         _aoa_ctrl = alpha_max_ld_fun
+    elif AOA_LAW == 'fpa_feedback':
+        _aoa_ctrl = alpha_fpa_feedback
     elif AOA_LAW == 'energy_climb':
         _aoa_ctrl = alpha_energy_climb
     elif AOA_LAW == 'lam_h0':

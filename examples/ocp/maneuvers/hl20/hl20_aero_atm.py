@@ -23,6 +23,7 @@ temp_fun = ca.Function('T', (h_sym,), (temp_expr,), ('h',), ('T',))
 pres_fun = ca.Function('P', (h_sym,), (pres_expr,), ('h',), ('P',))
 dens_fun = ca.Function('rho', (h_sym,), (dens_expr,), ('h',), ('rho',))
 sped_fun = ca.Function('a', (h_sym,), (sped_expr,), ('h',), ('a',))
+dens_deriv_fun = ca.Function('drho_dh', (h_sym,), (ca.jacobian(dens_expr, h_sym),), ('h',), ('drho_dh',))
 
 # Vehicle properties (https://doi.org/10.2514/6.2001-2887)
 weight0 = 24479.  # lbm

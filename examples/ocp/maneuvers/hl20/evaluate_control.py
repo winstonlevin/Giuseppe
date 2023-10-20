@@ -7,7 +7,7 @@ import matplotlib as mpl
 import scipy as sp
 
 from hl20_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1_fun, CD2_fun, CL0_fun, CLa_fun, max_ld_fun, atm,\
-    dens_fun, sped_fun, rho0, h_ref, sped0
+    dens_fun, dens_deriv_fun, sped_fun, rho0, h_ref, sped0
 from glide_slope import get_glide_slope
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
@@ -18,13 +18,14 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
 # AOA laws are {approx_costate, weight, max_ld, energy_climb, lam_h0, interp, 0}
-AOA_LAWS = ('approx_costate', 'energy_climb', 'max_ld')
+AOA_LAWS = ('energy_climb', 'max_ld', 'fpa_feedback')
 PLOT_PAPER = True
 
 if COMPARE_SWEEP:
     with open('sol_set_range_sweep.data', 'rb') as f:
         sols = pickle.load(f)
         sol = sols[0]
+        sols = [sols[0], sols[-1]]
 else:
     with open('sol_set_range.data', 'rb') as f:
         sols = pickle.load(f)
@@ -79,11 +80,19 @@ if EXPONENTIAL_ATM:
         return np.array((rho0 * np.exp(-_h / h_ref),)).flatten()
 
 
+    def dens_ratio(_h):
+        return 1 / h_ref
+
+
     def speed_of_sound(_h):
         return np.array((sped0 + 0 * _h,)).flatten()
 else:
     def density(_h):
-        return np.asarray(density(_h)).flatten()
+        return np.asarray(dens_fun(_h)).flatten()
+
+
+    def dens_ratio(_h):
+        return np.asarray(-dens_deriv_fun(_h) / dens_fun(_h)).flatten()
 
 
     def speed_of_sound(_h):
@@ -110,6 +119,33 @@ def alpha_max_ld_fun(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> f
         _CD0=float(CD0_fun(_mach)), _CD1=float(CD1_fun(_mach)), _CD2=float(CD2_fun(_mach))
     )['alpha']
     return _alpha_max_ld
+
+
+def alpha_fpa_feedback(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+    _h = _x[0]
+    _v = _x[2]
+    _gam = _x[3]
+    _mach = _v / speed_of_sound(_h)[0]
+    _CL0 = float(CL0_fun(_mach))
+    _CLa = float(CLa_fun(_mach))
+    _CD0 = float(CD0_fun(_mach))
+    _CD1 = float(CD1_fun(_mach))
+    _CD2 = float(CD2_fun(_mach))
+    _max_ld_dict = max_ld_fun(
+        _CL0=_CL0, _CLa=_CLa,
+        _CD0=_CD0, _CD1=_CD1, _CD2=_CD2
+    )
+    _alpha_max_ld = _max_ld_dict['alpha']
+    _CL_max_ld = _max_ld_dict['CL']
+    _CD_max_ld = _max_ld_dict['CD']
+    _CDuu = 2 * _CD2
+    _beta = dens_ratio(_h)
+
+    _gam_qdyn0 = - np.arcsin(2 * g0 * _CD_max_ld / ((_beta * _v**2 + 2 * g0)*_CL_max_ld))
+
+    _k_gamma = 2 * (_CD_max_ld / _CDuu)**0.5 / _CLa
+    _alpha = _alpha_max_ld - _k_gamma * _gam
+    return _alpha
 
 
 def alpha_energy_climb(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
@@ -237,6 +273,8 @@ def alpha_lam_h0(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float
 def generate_ctrl_law(_aoa_law, _u_interp=None) -> Callable:
     if _aoa_law == 'max_ld':
         _aoa_ctrl = alpha_max_ld_fun
+    elif _aoa_law == 'fpa_feedback':
+        _aoa_ctrl = alpha_fpa_feedback
     elif _aoa_law == 'energy_climb':
         _aoa_ctrl = alpha_energy_climb
     elif _aoa_law == 'approx_costate':
