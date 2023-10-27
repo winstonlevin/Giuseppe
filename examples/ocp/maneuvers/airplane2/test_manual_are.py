@@ -87,42 +87,29 @@ R_fun_ca = ca.Function(
 
 
 # Explicit functions
-def A_fun(_V):
-    _a1 = _V
-    _a2 = (beta1 + 2 * g / _V**2) * g / _V
-    _A = np.vstack(((0., _a1), (-_a2, 0.)))
-    return _A
-
-
-def B_fun(_V):
-    _b = g / (_V * CL_max_ld)
-    _B = np.vstack(((0.,), (_b,)))
-    return _B
-
-
-def Q_fun(_V):
-    _q = 4 * g/_V * (2 * g/_V**2 + beta1)
-    _Q = np.vstack(((_q, 0.), (0., 0.)))
-    return _Q
-
-
-def N_fun(_V):
-    _CDu = CD1 + 2 * CD2 * CL_max_ld
-    _n = -2 * g/_V * _CDu / CD_max_ld
-    _N = np.vstack(((_n,), (0.,)))
-    return _N
-
-
-def R_fun(_V):
-    _r = 2*CD2/CD_max_ld * _V
-    _R = np.array((_r,)).reshape((1, 1))
-    return _R
-
-
 def check_are(_A, _B, _Q, _N, _R, _P):
     _PBN = _P @ _B + _N
     _ARE = _P @ _A + _A.T @ _P - _PBN @ np.linalg.solve(_R, _PBN.T) + _Q
     return _ARE
+
+
+def gen_are_functions(_V):
+    _a = _V
+    _b = g / (_V * CL_max_ld)
+    _q = g / _V * (2 * g / _V ** 2 + beta1)
+    _r = 2 * CD2 / CD_max_ld * _V
+
+    _A = np.vstack(((0., _a), (-_q, 0.)))
+    _B = np.vstack(((0.,), (_b,)))
+    _Q = np.vstack(((4 * _q, 0.), (0., 0.)))
+    _N = np.vstack(((-2 * _b,), (0.,)))
+    _R = np.array((_r,)).reshape((1, 1))
+    _P = np.vstack(((2. * _q / _b * (_r / _a) ** 0.5, 2.), (2., 2. / _b * (_a * _r) ** 0.5)))
+    _K = np.array((0., 2 * (_a / _r) ** 0.5)).reshape((1, -1))
+    _err = check_are(_A, _B, _Q, _N, _R, _P)
+    _out_dict = {'A': _A, 'B': _B, 'Q': _Q, 'N': _N, 'R': _R, 'P': _P, 'K': _K, 'err': _err}
+    return _out_dict
+
 
 # Glide-slope values
 h_g = 10e3
@@ -148,13 +135,17 @@ Q_ca = Q_fun_ca(E_g, h_g, gam_g, lam_E_g, lam_h_g, lam_gam_g, CL_g)
 N_ca = N_fun_ca(E_g, h_g, gam_g, lam_E_g, lam_h_g, lam_gam_g, CL_g)
 R_ca = R_fun_ca(E_g, h_g, gam_g, lam_E_g, lam_h_g, lam_gam_g, CL_g)
 
-A = A_fun(V_g)
-B = B_fun(V_g)
-
-Q = Q_fun(V_g)
-N = N_fun(V_g)
-R = R_fun(V_g)
+are_dict = gen_are_functions(V_g)
+A = are_dict['A']
+B = are_dict['B']
+Q = are_dict['Q']
+N = are_dict['N']
+R = are_dict['R']
+P = are_dict['P']
+K = are_dict['K']
+err = are_dict['err']
 
 P_sp = sp.linalg.solve_continuous_are(a=A, b=B, q=Q, s=N, r=R)
 K_sp = sp.linalg.solve(R, B.T@P_sp + N.T)
+
 err_sp = check_are(A, B, Q, N, R, P_sp)
