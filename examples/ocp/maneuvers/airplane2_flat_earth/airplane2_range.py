@@ -6,8 +6,8 @@ import pickle
 
 import giuseppe
 
-from airplane2_aero_atm import mu, re, g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, lut_data, mach_boundary_thickness,\
-    load_max, alpha_max, CL0, CLa_fun, dens_fun, sped_fun, max_ld_fun_mach, dens_deriv_fun
+from airplane2_aero_atm import g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, lut_data,\
+    load_max, dens_fun, sped_fun, max_ld_fun_mach, gam_qdyn0
 
 SWEEP_SOLUTION_SPACE = True
 
@@ -76,7 +76,7 @@ gam_0 = ca.MX.sym('gam_0', 1)
 
 h_0_val = 260_000
 v_0_val = 25_600
-e_0_val = mu/re - mu/(re + h_0_val) + 0.5 * v_0_val**2
+e_0_val = g * h_0_val + 0.5 * v_0_val**2
 gam_0_val = -1 / 180 * np.pi
 
 # ocp.add_constant(e_0, e_0_val)
@@ -86,7 +86,7 @@ ocp.add_constant(v_0, v_0_val)
 ocp.add_constant(gam_0, gam_0_val)
 
 e_f = ca.MX.sym('e_f', 1)
-e_f_val = mu/re - mu/(re + 80e3) + 0.5 * 2_500.**2
+e_f_val = g * h_0_val + 0.5 * v_0_val**2
 ocp.add_constant(e_f, e_f_val)
 h_f = ca.MX.sym('h_f', 1)
 v_f = ca.MX.sym('v_f', 1)
@@ -152,9 +152,9 @@ if __name__ == '__main__':
     )
     mach_f = v_f / atm.speed_of_sound(h_f)
 
-    # Find altitude where Mach = 3.0
-    mach_0 = 3.0
-    CL_0 = max_ld_fun_mach(mach_0)['CL']
+    # Find altitude where Mach = 2.5
+    mach_0 = 2.5
+    CL_0 = float(max_ld_fun_mach(mach_0)['CL'])
     h_0 = binary_search(
         1e3, 90e3,
         lambda _h: atm.density(_h) * (mach_0 * atm.speed_of_sound(_h))**2 * s_ref * CL_0 / (2*weight0) - 1, 0.
@@ -170,13 +170,6 @@ if __name__ == '__main__':
         _CL_gam0 = weight0 / _qdyn_s_ref
         return np.array((_CL_gam0,))
 
-
-    def gam_qdyn0(_h, _v):
-        _mach = _v / atm.speed_of_sound(_h)
-        _ld_max = max_ld_fun_mach(_mach)['LD'][0]
-        _beta = - float(dens_deriv_fun(_h)) / atm.density(_h)
-        _sin_gam_qdyn0 = -1 / (_ld_max * (1 + _beta * _v**2 / (2*g)))
-        return np.arcsin(max(min(_sin_gam_qdyn0, 1.), -1.))
 
     # Flat earth costates
     h_guess = h_0
@@ -254,12 +247,14 @@ if __name__ == '__main__':
     sol_set.save('sol_set_range.data')
 
     hf = sol_set.solutions[-1].x[0, -1] * h_scale_val
+    xdf = sol_set.solutions[-1].x[1, -1] * xd_scale_val
     vf = sol_set.solutions[-1].x[2, -1] * v_scale_val
     gamf = sol_set.solutions[-1].x[3, -1]
-    ef = mu / re - mu / (re + hf) + 0.5 * vf ** 2
+    ef = g * hf + 0.5 * vf ** 2
     h0 = sol_set.solutions[-1].x[0, 0] * h_scale_val
     v0 = sol_set.solutions[-1].x[2, 0] * v_scale_val
-    e0 = mu / re - mu / (re + h0) + 0.5 * v0 ** 2
+    gam0 = sol_set.solutions[-1].x[3, 0]
+    e0 = g * h0 + 0.5 * v0 ** 2
 
     # Sweep Solution Space (perturb initial h/v with gam0 = 0, e0 const.)
     if SWEEP_SOLUTION_SPACE:
@@ -269,10 +264,10 @@ if __name__ == '__main__':
 
                 _h0 = previous_sol.k[idx_h0]
                 _v0 = previous_sol.k[idx_v0]
-                _e0 = mu/re - mu/(re + _h0) + 0.5 * _v0**2
+                _e0 = g * _h0 + 0.5 * _v0**2
 
                 _h0_next = _h0_0 + frac_complete * (_h0_f - _h0_0)
-                _v0_next = (2 * (_e0 - mu/re + mu/(re + _h0_next))) ** 0.5
+                _v0_next = (2 * (_e0 - g * _h0_next)) ** 0.5
                 _gam0_next = gam_qdyn0(_h0_next, _v0_next)
                 _constants[idx_h0] = _h0_next
                 _constants[idx_v0] = _v0_next
@@ -290,16 +285,19 @@ if __name__ == '__main__':
         )
         sol_set_sweep1 = cont.run_continuation()
 
-        # Choose solution that does not violate g-load bound.
+        # Choose solution that does not violate g-load or Mach bound.
+        mach_max = lut_data['M'][-1]
         idx_sweep1 = 0
         for idx, sol in enumerate(sol_set_sweep1.solutions):
             _h = sol.x[0, :] * h_scale_val
             _v = sol.x[2, :] * v_scale_val
             _cl = sol.u[0, :]
+            _mach = _v / np.asarray(sped_fun(_h)).flatten()
+            _mach_max = np.max(_mach)
             _qdyn_s_ref = 0.5 * np.asarray(dens_fun(_h)).flatten() * _v**2 * s_ref
             _load = _qdyn_s_ref * _cl / weight0
             _load_max = np.max(abs(_load))
-            if _load_max > load_max:
+            if _load_max > load_max or _mach_max > mach_max:
                 idx_sweep1 = idx - 1
                 break
 
@@ -317,10 +315,12 @@ if __name__ == '__main__':
         sol_set_sweep.save('sol_set_range_sweep.data')
 
         h0_case1 = sol_set_sweep.solutions[0].x[0, 0] * h_scale_val
+        xdf_case1 = sol_set_sweep.solutions[0].x[1, -1] * xd_scale_val
         v0_case1 = sol_set_sweep.solutions[0].x[2, 0] * v_scale_val
         gam0_case1 = sol_set_sweep.solutions[0].x[3, 0]
         mach0_case1 = v0_case1 / atm.speed_of_sound(h0_case1)
 
         h0_case3 = sol_set_sweep.solutions[-1].x[0, 0] * h_scale_val
+        xdf_case3 = sol_set_sweep.solutions[-1].x[1, -1] * xd_scale_val
         v0_case3 = sol_set_sweep.solutions[-1].x[2, 0] * v_scale_val
         gam0_case3 = sol_set_sweep.solutions[-1].x[3, 0]

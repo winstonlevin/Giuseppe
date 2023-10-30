@@ -11,6 +11,7 @@ d2r = 1/r2d
 mu = 0.14076539e17
 re = 20_902_900.  # ft
 g0 = mu / re ** 2
+g = g0
 atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0, boundary_thickness=1000.)
 
 
@@ -122,6 +123,14 @@ def max_ld_fun_mach(_mach):
     _alpha_max_ld = (_CL_max_ld - CL0) / _CLa
     _dict = {'alpha': _alpha_max_ld, 'CL': _CL_max_ld, 'CD': _CD_max_ld, 'LD': _CL_max_ld / _CD_max_ld}
     return _dict
+
+
+def gam_qdyn0(_h, _v):
+    _mach = _v / atm.speed_of_sound(_h)
+    _ld_max = max_ld_fun_mach(_mach)['LD'][0]
+    _beta = - float(dens_deriv_fun(_h)) / atm.density(_h)
+    _sin_gam_qdyn0 = -1 / (_ld_max * (1 + _beta * _v**2 / (2*g)))
+    return np.arcsin(max(min(_sin_gam_qdyn0, 1.), -1.))
 
 
 if __name__ == '__main__':
