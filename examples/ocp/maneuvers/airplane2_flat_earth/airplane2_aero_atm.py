@@ -61,39 +61,34 @@ CL0 = 0.
 # CD2 = eta CLa / CLa**2 = eta / CLa
 lut_data['CD2'] = eta / lut_data['CLa']
 
-# Build aero look-up tables
+# Symbolic variables for LUT interpolants
 mach_sym = ca.MX.sym('M')
+
+# Saturation functions [since out-of-bounds inputs are ill conditioned for CasADi interpolants]
+eps_mach = 1e-3
+mach_min = lut_data['M'][0] + eps_mach
+mach_max = lut_data['M'][-1] - eps_mach
+mach_sat_gain = 10.
+
+mach_with_ub = ca.if_else(mach_sym < mach_max, mach_sym, mach_max)
+mach_smooth_with_ub = mach_with_ub - ca.log(
+            ca.exp(-(mach_sym - mach_with_ub)*mach_sat_gain)
+            + np.exp(-(mach_max - mach_with_ub)*mach_sat_gain)
+        ) / mach_sat_gain
+mach_with_sub_lb = ca.if_else(mach_smooth_with_ub > mach_min, mach_smooth_with_ub, mach_min)
+mach_sat = mach_with_sub_lb + np.log(
+            np.exp((mach_smooth_with_ub - mach_with_sub_lb)*mach_sat_gain)
+            + np.exp((mach_min - mach_with_sub_lb)*mach_sat_gain)
+        ) / mach_sat_gain
+mach_sat_fun = ca.Function('Msat', (mach_sym,), (mach_sat,), ('M',), ('Msat',))
+
+# Build aero look-up tables
 interpolant_CLa = ca.interpolant('CLa', 'bspline', (lut_data['M'],), lut_data['CLa'])
 interpolant_CD0 = ca.interpolant('CD0', 'bspline', (lut_data['M'],), lut_data['CD0'])
 interpolant_CD2 = ca.interpolant('CD2', 'bspline', (lut_data['M'],), lut_data['CD2'])
-interp_fun_CLa = ca.Function('CLa', (mach_sym,), (interpolant_CLa(mach_sym),), ('M',), ('CLa',))
-interp_fun_CD0 = ca.Function('CD0', (mach_sym,), (interpolant_CD0(mach_sym),), ('M',), ('CD0',))
-interp_fun_CD2 = ca.Function('CD2', (mach_sym,), (interpolant_CD2(mach_sym),), ('M',), ('CD2',))
-
-# Since tables have a discontinuity at the endpoints of Mach number, create buffered conditional function with constant
-# extrapolation.
-mach_boundary_thickness = 0.05
-CLa_expr = create_buffered_conditional_function(
-    expr_list=[lut_data['CLa'][0], interp_fun_CLa(mach_sym), lut_data['CLa'][-1]],
-    break_points=[-np.inf, lut_data['M'][0] + mach_boundary_thickness, lut_data['M'][-1] - mach_boundary_thickness],
-    independent_var=mach_sym,
-    boundary_thickness=0.1  # 0.1 Mach boundary thickness
-)
-CD0_expr = create_buffered_conditional_function(
-    expr_list=[lut_data['CD0'][0], interp_fun_CD0(mach_sym), lut_data['CD0'][-1]],
-    break_points=[-np.inf, lut_data['M'][0] + mach_boundary_thickness, lut_data['M'][-1] - mach_boundary_thickness],
-    independent_var=mach_sym,
-    boundary_thickness=0.1  # 0.1 Mach boundary thickness
-)
-CD2_expr = create_buffered_conditional_function(
-    expr_list=[lut_data['CD2'][0], interp_fun_CD2(mach_sym), lut_data['CD2'][-1]],
-    break_points=[-np.inf, lut_data['M'][0] + mach_boundary_thickness, lut_data['M'][-1] - mach_boundary_thickness],
-    independent_var=mach_sym,
-    boundary_thickness=0.1  # 0.1 Mach boundary thickness
-)
-CLa_fun = ca.Function('CLa', (mach_sym,), (CLa_expr,), ('M',), ('CLa',))
-CD0_fun = ca.Function('CD0', (mach_sym,), (CD0_expr,), ('M',), ('CD0',))
-CD2_fun = ca.Function('CD2', (mach_sym,), (CD2_expr,), ('M',), ('CD2',))
+CLa_fun = ca.Function('CLa', (mach_sym,), (interpolant_CLa(mach_sat),), ('M',), ('CLa',))
+CD0_fun = ca.Function('CD0', (mach_sym,), (interpolant_CD0(mach_sat),), ('M',), ('CD0',))
+CD2_fun = ca.Function('CD2', (mach_sym,), (interpolant_CD2(mach_sat),), ('M',), ('CD2',))
 
 # Aerodynamic limits
 load_max = 9.
@@ -159,5 +154,18 @@ if __name__ == '__main__':
         ax.grid()
 
     fig_coeffs.tight_layout()
+
+    mach_vals = np.linspace(mach_min-1., mach_max+1., 1000)
+    fig_saturation = plt.figure()
+    ax_mach = fig_saturation.add_subplot(111)
+    ax_mach.plot(mach_vals, mach_vals, label='Unsaturated')
+    ax_mach.plot(mach_vals, np.asarray(mach_sat_fun(mach_vals)).flatten(), label='Saturated')
+    ax_mach.plot(mach_vals, 0*mach_vals + mach_min, 'k--', label='Bounds')
+    ax_mach.plot(mach_vals, 0*mach_vals + mach_max, 'k--')
+    ax_mach.legend()
+    ax_mach.set_xlabel('Mach In')
+    ax_mach.set_ylabel('Mach Out')
+    ax_mach.grid()
+    fig_saturation.tight_layout()
 
     plt.show()
