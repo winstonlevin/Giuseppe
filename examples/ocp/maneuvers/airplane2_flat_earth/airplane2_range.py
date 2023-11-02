@@ -7,7 +7,7 @@ import pickle
 import giuseppe
 
 from airplane2_aero_atm import g0, mass, s_ref, CD0_fun, CD1, CD2_fun, atm, lut_data,\
-    load_max, dens_fun, sped_fun, max_ld_fun_mach, gam_qdyn0
+    load_max, dens_fun, sped_fun, max_ld_fun_mach, gam_qdyn0, CL0, CLa_fun, alpha_max, qdyn_max
 
 SWEEP_SOLUTION_SPACE = True
 
@@ -275,8 +275,20 @@ if __name__ == '__main__':
                 return _constants
             return energy_sweep_continuation
 
-        h0_max = 145e3
-        h0_min = 100.  # Compatible with e0 chosen from Mach max.
+        # Maximum altitude where stall occurs
+        h0_max = binary_search(
+            145e3, h0,
+            lambda _h:
+            atm.density(_h) * (e0 - g*_h) * s_ref
+            * float(CL0 + CLa_fun((2*(e0 - g*_h)**0.5/atm.speed_of_sound(_h))) * alpha_max)
+            / weight0 - 1, 0.
+        )
+
+        # Minimum altitude where initial dynamic pressure is maximized
+        h0_min = binary_search(
+            100., h0,
+            lambda _h: atm.density(_h) * (e0 - g*_h) / qdyn_max - 1, 0.
+        )
 
         # Get Low altitude solution
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
@@ -284,22 +296,6 @@ if __name__ == '__main__':
             100, generate_energy_sweep_continuation(h0, h0_min), 'Const. energy', keep_bisections=False
         )
         sol_set_sweep1 = cont.run_continuation()
-
-        # Choose solution that does not violate g-load or Mach bound.
-        mach_max = lut_data['M'][-1]
-        idx_sweep1 = 0
-        for idx, sol in enumerate(sol_set_sweep1.solutions):
-            _h = sol.x[0, :] * h_scale_val
-            _v = sol.x[2, :] * v_scale_val
-            _cl = sol.u[0, :]
-            _mach = _v / np.asarray(sped_fun(_h)).flatten()
-            _mach_max = np.max(_mach)
-            _qdyn_s_ref = 0.5 * np.asarray(dens_fun(_h)).flatten() * _v**2 * s_ref
-            _load = _qdyn_s_ref * _cl / weight0
-            _load_max = np.max(abs(_load))
-            if _load_max > load_max or _mach_max > mach_max:
-                idx_sweep1 = idx - 1
-                break
 
         cont = giuseppe.continuation.ContinuationHandler(num_solver, deepcopy(sol_set.solutions[-1]))
         cont.add_custom_series(
@@ -309,7 +305,7 @@ if __name__ == '__main__':
 
         sol_set_sweep = deepcopy(sol_set_sweep2)
         sol_set_sweep.solutions = deepcopy([
-            sol_set_sweep1.solutions[idx_sweep1], sol_set_sweep1.solutions[0], sol_set_sweep2.solutions[-1]
+            sol_set_sweep1.solutions[-1], sol_set_sweep1.solutions[0], sol_set_sweep2.solutions[-1]
         ])
 
         sol_set_sweep.save('sol_set_range_sweep.data')

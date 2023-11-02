@@ -34,19 +34,19 @@ mass = weight0 / g0  # slug
 # CD = CD0 + eta CLa alpha**2
 lut_data = {
     'M': np.array((0., 0.4, 0.8, 1.2, 1.6, 2., 2.4, 2.8, 3.2)),
-    'h': 1e3 * np.array((-2., 0., 5., 15., 25., 35., 45., 55., 65., 75., 85., 95., 105.)),
+    'h': 1e3 * np.array((0., 5., 15., 25., 35., 45., 55., 65., 75., 85., 95., 105.)),
     'CLa': np.array((2.240, 2.325, 2.350, 2.290, 2.160, 1.950, 1.700, 1.435, 1.250)),
     'CD0': np.array((0.0065, 0.0055, 0.0060, 0.0118, 0.0110, 0.00860, 0.0074, 0.0069, 0.0068)),
     'T': 1e3 * np.array((
-        (23.3, 23.3, 20.6, 15.4, 9.9, 5.8, 2.9, 1.3, 0.7, 0.3, 0.1, 0.1, 0.),
-        (22.8, 22.8, 19.8, 14.4, 9.9, 6.2, 3.4, 1.7, 1.0, 0.5, 0.3, 0.1, 0.1),
-        (24.5, 24.5, 22.0, 16.5, 12.0, 7.9, 4.9, 2.8, 1.6, 0.9, 0.5, 0.3, 0.2),
-        (29.4, 29.4, 27.3, 21.0, 15.8, 11.4, 7.2, 3.8, 2.7, 1.6, 0.9, 0.6, 0.4),
-        (29.7, 29.7, 29.0, 27.5, 21.8, 15.7, 10.5, 6.5, 3.8, 2.3, 1.4, 0.8, 0.5),
-        (29.9, 29.9, 29.4, 28.4, 26.6, 21.2, 14.0, 8.7, 5.1, 3.3, 1.9, 1.0, 0.5),
-        (29.9, 29.9, 29.2, 28.4, 27.1, 25.6, 17.2, 10.7, 6.5, 4.1, 2.3, 1.2, 0.5),
-        (29.8, 29.8, 29.1, 28.2, 26.8, 25.6, 20.0, 12.2, 7.6, 4.7, 2.8, 1.4, 0.5),
-        (29.7, 29.7, 28.9, 27.5, 26.1, 24.9, 20.3, 13.0, 8.0, 4.9, 2.8, 1.4, 0.5),
+        (23.3, 20.6, 15.4, 9.9, 5.8, 2.9, 1.3, 0.7, 0.3, 0.1, 0.1, 0.),
+        (22.8, 19.8, 14.4, 9.9, 6.2, 3.4, 1.7, 1.0, 0.5, 0.3, 0.1, 0.1),
+        (24.5, 22.0, 16.5, 12.0, 7.9, 4.9, 2.8, 1.6, 0.9, 0.5, 0.3, 0.2),
+        (29.4, 27.3, 21.0, 15.8, 11.4, 7.2, 3.8, 2.7, 1.6, 0.9, 0.6, 0.4),
+        (29.7, 29.0, 27.5, 21.8, 15.7, 10.5, 6.5, 3.8, 2.3, 1.4, 0.8, 0.5),
+        (29.9, 29.4, 28.4, 26.6, 21.2, 14.0, 8.7, 5.1, 3.3, 1.9, 1.0, 0.5),
+        (29.9, 29.2, 28.4, 27.1, 25.6, 17.2, 10.7, 6.5, 4.1, 2.3, 1.2, 0.5),
+        (29.8, 29.1, 28.2, 26.8, 25.6, 20.0, 12.2, 7.6, 4.7, 2.8, 1.4, 0.5),
+        (29.7, 28.9, 27.5, 26.1, 24.9, 20.3, 13.0, 8.0, 4.9, 2.8, 1.4, 0.5),
     ))
 }
 eta = 1.
@@ -61,10 +61,26 @@ CL0 = 0.
 # CD2 = eta CLa / CLa**2 = eta / CLa
 lut_data['CD2'] = eta / lut_data['CLa']
 
-# Symbolic variables for LUT interpolants
+# Saturation functions [since out-of-bounds inputs are ill conditioned for CasADi interpolants]
 mach_sym = ca.MX.sym('M')
 
-# Saturation functions [since out-of-bounds inputs are ill conditioned for CasADi interpolants]
+eps_h = 1.
+h_min = lut_data['h'][0] + eps_h
+h_max = lut_data['h'][-1] - eps_h
+h_sat_gain = 1.
+
+h_with_ub = ca.if_else(h_sym < h_max, h_sym, h_max)
+h_smooth_with_ub = h_with_ub - ca.log(
+            ca.exp(-(h_sym - h_with_ub)*h_sat_gain)
+            + np.exp(-(h_max - h_with_ub)*h_sat_gain)
+        ) / h_sat_gain
+h_with_sub_lb = ca.if_else(h_smooth_with_ub > h_min, h_smooth_with_ub, h_min)
+h_sat = h_with_sub_lb + np.log(
+            np.exp((h_smooth_with_ub - h_with_sub_lb)*h_sat_gain)
+            + np.exp((h_min - h_with_sub_lb)*h_sat_gain)
+        ) / h_sat_gain
+h_sat_fun = ca.Function('hsat', (h_sym,), (h_sat,), ('h',), ('hsat',))
+
 eps_mach = 1e-3
 mach_min = lut_data['M'][0] + eps_mach
 mach_max = lut_data['M'][-1] - eps_mach
@@ -92,7 +108,8 @@ CD2_fun = ca.Function('CD2', (mach_sym,), (interpolant_CD2(mach_sat),), ('M',), 
 
 # Aerodynamic limits
 load_max = 9.
-alpha_max = 15. * d2r
+alpha_max = 10. * d2r
+qdyn_max = 1e3
 
 
 def max_ld_fun(_CLa, _CD0, _CD2):
@@ -156,8 +173,10 @@ if __name__ == '__main__':
     fig_coeffs.tight_layout()
 
     mach_vals = np.linspace(mach_min-1., mach_max+1., 1000)
+    h_vals = np.linspace(h_min-1e3, h_max+1e3, 1000)
     fig_saturation = plt.figure()
-    ax_mach = fig_saturation.add_subplot(111)
+
+    ax_mach = fig_saturation.add_subplot(121)
     ax_mach.plot(mach_vals, mach_vals, label='Unsaturated')
     ax_mach.plot(mach_vals, np.asarray(mach_sat_fun(mach_vals)).flatten(), label='Saturated')
     ax_mach.plot(mach_vals, 0*mach_vals + mach_min, 'k--', label='Bounds')
@@ -166,6 +185,17 @@ if __name__ == '__main__':
     ax_mach.set_xlabel('Mach In')
     ax_mach.set_ylabel('Mach Out')
     ax_mach.grid()
+
+    ax_h = fig_saturation.add_subplot(122)
+    ax_h.plot(h_vals, h_vals, label='Unsaturated')
+    ax_h.plot(h_vals, np.asarray(h_sat_fun(h_vals)).flatten(), label='Saturated')
+    ax_h.plot(h_vals, 0*h_vals + h_min, 'k--', label='Bounds')
+    ax_h.plot(h_vals, 0*h_vals + h_max, 'k--')
+    ax_h.legend()
+    ax_h.set_xlabel('h In')
+    ax_h.set_ylabel('h Out')
+    ax_h.grid()
+
     fig_saturation.tight_layout()
 
     plt.show()
