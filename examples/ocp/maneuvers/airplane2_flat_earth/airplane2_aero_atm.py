@@ -15,7 +15,7 @@ g = g0
 atm = Atmosphere1976(use_metric=False, earth_radius=re, gravity=g0, boundary_thickness=1000.)
 
 
-h_sym = ca.SX.sym('h')
+h_sym = ca.MX.sym('h')
 temp_expr, pres_expr, dens_expr = atm.get_ca_atm_expr(h_sym)
 sped_expr = atm.get_ca_speed_of_sound_expr(h_sym)
 
@@ -64,10 +64,10 @@ lut_data['CD2'] = eta / lut_data['CLa']
 # Saturation functions [since out-of-bounds inputs are ill conditioned for CasADi interpolants]
 mach_sym = ca.MX.sym('M')
 
-eps_h = 1.
+eps_h = 1e-3
 h_min = lut_data['h'][0] + eps_h
 h_max = lut_data['h'][-1] - eps_h
-h_sat_gain = 1.
+h_sat_gain = 10.
 
 h_with_ub = ca.if_else(h_sym < h_max, h_sym, h_max)
 h_smooth_with_ub = h_with_ub - ca.log(
@@ -102,9 +102,13 @@ mach_sat_fun = ca.Function('Msat', (mach_sym,), (mach_sat,), ('M',), ('Msat',))
 interpolant_CLa = ca.interpolant('CLa', 'bspline', (lut_data['M'],), lut_data['CLa'])
 interpolant_CD0 = ca.interpolant('CD0', 'bspline', (lut_data['M'],), lut_data['CD0'])
 interpolant_CD2 = ca.interpolant('CD2', 'bspline', (lut_data['M'],), lut_data['CD2'])
+interpolant_thrust = ca.interpolant(
+    'thrust_table', 'bspline', (lut_data['M'], lut_data['h']), lut_data['T'].ravel(order='F')
+)
 CLa_fun = ca.Function('CLa', (mach_sym,), (interpolant_CLa(mach_sat),), ('M',), ('CLa',))
 CD0_fun = ca.Function('CD0', (mach_sym,), (interpolant_CD0(mach_sat),), ('M',), ('CD0',))
 CD2_fun = ca.Function('CD2', (mach_sym,), (interpolant_CD2(mach_sat),), ('M',), ('CD2',))
+thrust_fun = ca.Function('T', (mach_sym, h_sym), (interpolant_thrust(ca.vcat((mach_sat, h_sat))),), ('M', 'h'), ('T',))
 
 # Aerodynamic limits
 load_max = 9.
