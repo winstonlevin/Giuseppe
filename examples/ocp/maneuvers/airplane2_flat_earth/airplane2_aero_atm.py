@@ -52,6 +52,7 @@ lut_data = {
 eta = 1.
 CD1 = 0.
 CL0 = 0.
+Isp = g * 2800.
 
 # Convert aero model to:
 # CD = CD0 + CD1 + CD2 * CL**2
