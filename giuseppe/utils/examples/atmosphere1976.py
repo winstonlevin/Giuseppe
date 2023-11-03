@@ -207,6 +207,7 @@ class Atmosphere1976:
 
     def pressure(self, altitude_geometric):
         _, pressure, __ = self.atm_data(altitude_geometric)
+        return pressure
 
     def density(self, altitude_geometric):
         _, __, density = self.atm_data(altitude_geometric)
