@@ -53,7 +53,7 @@ eta = 1.
 CD1 = 0.
 CL0 = 0.
 
-# Convert to:
+# Convert aero model to:
 # CD = CD0 + CD1 + CD2 * CL**2
 # NOTE:
 # CD2 * CL**2 = (CD2 CLa**2) alpha**2 = eta CLa alpha**2
@@ -61,13 +61,20 @@ CL0 = 0.
 # CD2 = eta CLa / CLa**2 = eta / CLa
 lut_data['CD2'] = eta / lut_data['CLa']
 
+# # Convert thrust model to:
+# # T = CT * Qdyn * Sref
+# h_arr_2d = lut_data['h'].copy().reshape((1, -1))
+# lut_data['V'] = lut_data['M'].copy().reshape((-1, 1)) * np.asarray(sped_fun(h_arr_2d))
+# lut_data['qdyn'] = 0.5 * np.asarray(dens_fun(h_arr_2d)) * lut_data['V']**2
+# lut_data['CT'] = lut_data['T'] / np.maximum(lut_data['qdyn'] * s_ref, 1e-6)
+
 # Saturation functions [since out-of-bounds inputs are ill conditioned for CasADi interpolants]
 mach_sym = ca.MX.sym('M')
 
 eps_h = 1e-3
 h_min = lut_data['h'][0] + eps_h
 h_max = lut_data['h'][-1] - eps_h
-h_sat_gain = 10.
+h_sat_gain = 100.
 
 h_with_ub = ca.if_else(h_sym < h_max, h_sym, h_max)
 h_smooth_with_ub = h_with_ub - ca.log(
@@ -84,7 +91,7 @@ h_sat_fun = ca.Function('hsat', (h_sym,), (h_sat,), ('h',), ('hsat',))
 eps_mach = 1e-3
 mach_min = lut_data['M'][0] + eps_mach
 mach_max = lut_data['M'][-1] - eps_mach
-mach_sat_gain = 10.
+mach_sat_gain = 100.
 
 mach_with_ub = ca.if_else(mach_sym < mach_max, mach_sym, mach_max)
 mach_smooth_with_ub = mach_with_ub - ca.log(
