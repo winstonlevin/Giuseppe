@@ -57,6 +57,14 @@ L_cl_fun = ca.Function(
     'L', (m, E, h, gam, lam_E, lam_h, lam_gam), (L_cl,), ('m', 'E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam'), ('G',)
 )
 
+# Refactor fast dynamics to use E instead of t
+dzdE = dzdt / dEdt
+dzdE_cl = ca.substitute(dzdE, lift, L_cl)
+GE = ca.jacobian(dzdE_cl, z_vec)
+GE_fun = ca.Function(
+    'GE', (m, E, h, gam, lam_E, lam_h, lam_gam), (GE,), ('m', 'E', 'h', 'gam', 'lam_E', 'lam_h', 'lam_gam'), ('GE',)
+)
+
 # Energy State Solution
 drag_es = ca.substitute(drag, lift, weight)
 
