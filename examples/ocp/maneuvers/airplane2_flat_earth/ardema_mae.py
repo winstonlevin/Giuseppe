@@ -2,7 +2,7 @@ import numpy as np
 import scipy as sp
 import casadi as ca
 
-from airplane2_aero_atm import g, weight0, dens_fun, sped_fun, s_ref, CD0_fun, CD2_fun, thrust_fun
+from airplane2_aero_atm import g, weight0, dens_fun, sped_fun, s_ref, CD0_fun, CD2_fun, thrust_fun, Isp
 
 _f_zero_converged_flag = 1
 
@@ -67,14 +67,32 @@ GE_fun = ca.Function(
 
 # Energy State Solution
 drag_es = ca.substitute(drag, lift, weight)
+dEdt_es = v * (thrust - drag_es) / m
+dmdt_es = - thrust / Isp
 
-obj_es = v * (thrust - drag_es) / weight
+obj_es = dEdt_es
 zero_es = ca.jacobian(obj_es, h)
 grad_es = ca.jacobian(zero_es, h)
 
 obj_fun_es = ca.Function('F', (m, E, h), (obj_es,), ('m', 'E', 'h'), ('F',))
 zero_fun_es = ca.Function('Fz', (m, E, h), (zero_es,), ('m', 'E', 'h'), ('Fz',))
 grad_fun_es = ca.Function('DFz', (m, E, h), (grad_es,), ('m', 'E', 'h'), ('DFz',))
+
+# Control to stay on energy state solution
+# Using d(Fz*)/dt = 0 results in a corrected gam* due to d(E*)/dt and d(m*)/dt
+# Solving d(gam*)/dt results in a correction to the lift coefficient
+x_es = ca.vcat((m, E, h))
+grad_es_full = ca.jacobian(zero_es, x_es)
+dhdt_es = -(1/grad_es_full[2]) * (grad_es_full[0] * dmdt_es + grad_es_full[1] * dEdt_es)
+dx_dt_es = ca.vcat((dmdt_es, dEdt_es, dhdt_es))
+gam_es = ca.arcsin(dhdt_es / v)
+gam_es_grad_full = ca.jacobian(zero_es, x_es)
+dgamdt_es = gam_es_grad_full @ dx_dt_es
+
+grad_fun_es_full = ca.Function('dFz_dmEh', (m, E, h), (grad_es_full,), ('m', 'E', 'h'), ('dFz_dmEh',))
+dhdt_es_fun = ca.Function('dhdt', (m, E, h), (dhdt_es,), ('m', 'E', 'h'), ('dhdt',))
+gam_es_fun = ca.Function('gam', (m, E, h), (gam_es,), ('m', 'E', 'h'), ('gam',))
+dgamdt_es_fun = ca.Function('dgamdt', (m, E, h), (dgamdt_es,), ('m', 'E', 'h'), ('dgamdt',))
 
 
 def solve_zero(mass, energy, h_guess):

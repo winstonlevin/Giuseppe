@@ -8,7 +8,7 @@ import scipy as sp
 
 from airplane2_aero_atm import g, s_ref, CD0_fun, CD1, CD2_fun, CL0, CLa_fun, max_ld_fun, atm,\
     dens_fun, sped_fun, gam_qdyn0, thrust_fun, Isp
-from ardema_mae import find_climb_path
+from ardema_mae import find_climb_path, zero_fun_es, grad_fun_es_full
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -64,8 +64,8 @@ e_vals = g * h_vals + 0.5 * v_vals**2
 h_es_seed_vals = np.empty(e_vals.shape)
 h_guess = h_vals[0]
 
-for idx, e_val in enumerate(e_vals):
-    h_es_seed_vals[idx] = find_climb_path(mass0, e_val, h_guess)['h']
+for idx, (m_val, e_val) in enumerate(zip(mass_vals, e_vals)):
+    h_es_seed_vals[idx] = find_climb_path(m_val, e_val, h_guess)['h']
     h_guess = h_es_seed_vals[idx]
 
 h_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, h_es_seed_vals)
@@ -89,8 +89,8 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _mass = _x[3]
     _e = g * _h + 0.5 * _v**2
 
-    if _e > 4.46e6:
-        print(_e*1e-6)
+    # if _e > 4.46e6:
+    #     print(_e*1e-6)
 
     # Solve for neighboring costate value to achieve required terminal conditions
     # Solutions have form:
@@ -191,6 +191,37 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     return _load
 
 
+def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+    _h = _x[0]
+    _v = _x[1]
+    _gam = _x[2]
+    _mass = _x[3]
+    _h_es = _x[4]
+
+    _e = g * _h + 0.5 * _v**2
+    _mach = _v / atm.speed_of_sound(_h)
+    _CD0 = float(CD0_fun(_mach))
+    _CD2 = float(CD2_fun(_mach))
+    _rho = atm.density(_h)
+    _qdyn_s_ref = 0.5 * _rho * _v ** 2 * s_ref
+    _thrust = float(thrust_fun(_mach, _h))
+    _drag0 = _qdyn_s_ref * _CD0
+
+    _lift = _mass * g  # TODO replace with
+
+    # Ensure lift results in positive T - D
+    _lift_mag = abs(_lift)
+    _lift_mag_max = (_qdyn_s_ref/_CD2 * (_thrust - _drag0))**0.5
+    if _thrust < _drag0:
+        # Choose min. drag value if it is impossible to achieve T > D
+        _lift = 0.
+    elif _lift_mag > _lift_mag_max:
+        # If unconstrained lift causes T < D (loss of energy), constrain it.
+        _lift = np.sign(_lift) * _lift_mag_max
+
+    _load = _lift / (_mass * g)
+
+    return _load
 def generate_ctrl_law(_ctrl_law, _u_interp=None) -> Callable:
     if _ctrl_law == 'interp':
         def _load_ctrl(_t, _x, _p_dict, _k_dict):

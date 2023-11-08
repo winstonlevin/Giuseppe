@@ -101,7 +101,7 @@ ocp.add_constraint('initial', mass - m_0)
 # Terminal state
 ocp.add_constraint('terminal', h - h_f)
 ocp.add_constraint('terminal', v - v_f)
-# ocp.add_constraint('terminal', gam - gam_f)
+ocp.add_constraint('terminal', gam - gam_f)
 
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)
@@ -232,14 +232,14 @@ if __name__ == '__main__':
         return _constants
 
     cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-    cont.add_linear_series(1, {'h_f': h_interp(vf_seed)})
+    cont.add_linear_series(3, {'h_f': h_interp(vf_seed), 'gam_f': 0.})
     cont.add_custom_series(n_coninuations, energy_state_continuation, 'Energy State (hf, vf)')
     cont.add_linear_series(15, {'h_0': h0, 'v_0': v0})
     sol_set = cont.run_continuation()
     sol_set.save('sol_set_mtc.data')
 
     cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
-    cont.add_linear_series(15, {'h_f': hf, 'v_f': vf})
+    cont.add_linear_series(25, {'h_f': hf, 'v_f': vf})
     sol_set_xf = cont.run_continuation()
     sol_set_xf.save('sol_set_mtc_xf.data')
 
