@@ -18,10 +18,10 @@ COMPARE_SWEEP = True
 # CTRL_LAWS are: {interp, aenoc}
 CTRL_LAWS = ('aenoc',)
 
-with open('sol_set_mtc.data', 'rb') as f:
+with open('sol_set_mtc_xf.data', 'rb') as f:
     sols = pickle.load(f)
-    sol = sols[-1]
-    sols = [sol]
+    sol = sols[0]
+    sols = [sol, sols[-1]]
 
 # Create Dicts
 k_dict = {}
@@ -89,8 +89,64 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _mass = _x[3]
     _e = g * _h + 0.5 * _v**2
 
-    # Solve for neighboring costate value
-    _h_guess = h_es_guess_interp(_e)
+    if _e > 4.46e6:
+        print(_e*1e-6)
+
+    # Solve for neighboring costate value to achieve required terminal conditions
+    # Solutions have form:
+    # s = sig +- j w [Complex eigenvalue]
+    # v = vs +- j vw [Complex eigenvector]
+    # [dx(dE); dlam(dE)] = exp(sig * dE) [vs vw] [cos(w dE) sin(w dE); -sin(w dE) cos(w dE)] [c1; c2]
+    # With known final perturbation (gamf free) dhf = hf_cmd - hf_outer, dlam_gamf = 0
+    _hf = _k_dict['h_f']
+    _vf = _k_dict['v_f']
+
+    _ef = g * _hf + 0.5 * _vf**2
+    _ego = max(_ef - _e, 0.)
+    _hf_guess = h_es_guess_interp(_ef)
+    _energy_climb_dictf = find_climb_path(_mass, _ef, _hf_guess)
+    eig_Gf, eig_vec_Gf = np.linalg.eig(_energy_climb_dictf['GE'])
+    idx_stablef = np.where(np.real(eig_Gf) > 0)  # Req. stability BACKWARDS in energy -> positive eigenvalues
+    eig_stablef = eig_Gf[idx_stablef]
+    eig_vec_stablef = eig_vec_Gf[:, idx_stablef[0]]
+
+    # Initial Conditions (Ego = 0)
+    Vsf_Ego0 = np.hstack((np.real(eig_vec_stablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_stablef[:, 0].reshape(-1, 1))))
+    dhf_Ego0 = _hf - _energy_climb_dictf['h']
+    dlam_gamf_Ego0 = 0.  # gamf free
+    zf_known_Ego0 = np.vstack((dhf_Ego0, dlam_gamf_Ego0))
+    Vsf_Ego0_known = Vsf_Ego0[(0, 3), :]  # dhf, dlam_gamf known [gamf free]
+    cf = np.linalg.solve(Vsf_Ego0_known, zf_known_Ego0)
+    _rotation_Ego = np.imag(eig_stablef[0]) * _ego
+
+    # Saturate rotation to the value the rotation does not cause z to oscillate (i.e. find the rotation angles where
+    # each element of z = 0 and choose the smallest)
+    for _row in list(Vsf_Ego0):
+        _rotation_Ego_row_max = np.arctan2(
+            (_row[0] * cf[0, 0] + _row[1] * cf[1, 0]), (_row[1] * cf[0, 0] - _row[0] * cf[1, 0])
+        )
+        _rotation_Ego_row_max = _rotation_Ego_row_max % (2 * np.pi)  # Wrap to positive angle
+        if _rotation_Ego > _rotation_Ego_row_max:
+            _rotation_Ego = _rotation_Ego_row_max
+
+    _c_dE = np.cos(_rotation_Ego)
+    _s_dE = np.sin(_rotation_Ego)
+    _DCM = np.vstack(((_c_dE, _s_dE), (-_s_dE, _c_dE)))
+    Vsf = Vsf_Ego0 @ _DCM
+    zf = np.exp(-np.real(eig_stablef[0])*_ego) * Vsf @ cf
+    dhf = zf[0, 0]
+    dgamf = zf[1, 0]
+    dlam_gamf = 0.
+    dlam_gamf = zf[-1, 0]
+
+    # # Saturate dhf, dgamf based on direction of terminal constraint (i.e. remove oscillations)
+    # _sign_dhf = np.sign(dhf_Ego0)
+    # dhf = _sign_dhf * max(dhf * _sign_dhf, 0.)
+    # dgamf = _sign_dhf * max(dgamf * _sign_dhf, 0.)
+    # dlam_gamf = -_sign_dhf * max(dlam_gamf * -_sign_dhf, 0.)  # sign(lam_gam) opposite to sin(lift)
+
+    # Solve for neighboring costate value to damp out perturbation
+    _h_guess = float(h_es_guess_interp(_e))
     _energy_climb_dict = find_climb_path(_mass, _e, _h_guess)
     eig_G, eig_vec_G = np.linalg.eig(_energy_climb_dict['G'])
     idx_stable = np.where(np.real(eig_G) < 0)
@@ -99,15 +155,17 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
 
     Vs_known = Vs[(0, 1), :]  # h0, gam0 fixed
     Vs_unknown = Vs[(2, 3), :]  # lam_h0, lam_gam0 unknown
-    dh0 = _h - _energy_climb_dict['h']
-    dgam0 = _gam - _energy_climb_dict['gam']
+    # dh0 = _h - _energy_climb_dict['h']
+    # dgam0 = _gam - _energy_climb_dict['gam']
+    dh0 = _h - (_energy_climb_dict['h'] + dhf)  # Include dhf in offset
+    dgam0 = _gam - (_energy_climb_dict['gam'] + dgamf)
     z0_known = np.vstack((dh0, dgam0))
     z0_unknown = Vs_unknown @ np.linalg.solve(Vs_known, z0_known)
     dlam_h = z0_unknown[0, 0]
     dlam_gam = z0_unknown[1, 0]
 
     # Use the perturbed costate to estimate the optimal control
-    _lam_gam = _energy_climb_dict['lam_gam'] + dlam_gam
+    _lam_gam = _energy_climb_dict['lam_gam'] + dlam_gam + dlam_gamf
     _lam_e = _energy_climb_dict['lam_E']
     _mach = _v / atm.speed_of_sound(_h)
     _CD2 = float(CD2_fun(_mach))
@@ -175,6 +233,10 @@ def eom(_t: float, _x: np.array, _u: np.array, _p_dict: dict, _k_dict: dict) -> 
     _dgam = _lift / (_mass * _v) - g/_v * np.cos(_gam)
     _dm = -_thrust / Isp
 
+    if hasattr(_dh, '__len__') or hasattr(_dv, '__len__') or hasattr(_dgam, '__len__') or hasattr(_dm, '__len__'):
+        print('Ragged array!')
+        zeroth_order_ae_ctrl_law(_t, _x, _p_dict, _k_dict)
+
     return np.array((_dh, _dv, _dgam, _dm))
 
 
@@ -219,6 +281,10 @@ print('____ Evaluation ____')
 for idx, sol in enumerate(sols):
     for key, val in zip(sol.annotations.states, list(sol.x)):
         x_dict[key] = val
+    for key, val in zip(sol.annotations.constants, sol.k):
+        k_dict[key] = val
+    for key, val in zip(sol.annotations.parameters, sol.p):
+        p_dict[key] = val
     e_opt = g * x_dict['h_nd'] * k_dict['h_scale'] + 0.5 * (x_dict['v_nd'] * k_dict['v_scale']) ** 2
     load_opt = sol.u[0, :]
     u_opt = sp.interpolate.PchipInterpolator(sol.t, load_opt)

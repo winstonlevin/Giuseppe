@@ -238,6 +238,11 @@ if __name__ == '__main__':
     sol_set = cont.run_continuation()
     sol_set.save('sol_set_mtc.data')
 
+    cont = giuseppe.continuation.ContinuationHandler(num_solver, sol_set.solutions[-1])
+    cont.add_linear_series(15, {'h_f': hf, 'v_f': vf})
+    sol_set_xf = cont.run_continuation()
+    sol_set_xf.save('sol_set_mtc_xf.data')
+
     # hf = sol_set.solutions[-1].x[0, -1] * h_scale_val
     # mf = sol_set.solutions[-1].x[3, -1] * m_scale_val
     # vf = sol_set.solutions[-1].x[1, -1] * v_scale_val

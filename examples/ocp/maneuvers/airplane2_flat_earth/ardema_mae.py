@@ -109,7 +109,7 @@ def find_climb_path(mass, energy, h_guess):
             if len(sol_list) > 0:
                 sol_array = np.array(sol_list)
                 sol_distance = (sol_array - h_guess) ** 2
-                _h = sol_array[np.where(sol_distance == np.min(sol_distance))]
+                _h = sol_array[np.where(sol_distance == np.min(sol_distance))[0][0]]
 
     _v = (2 * (energy - g * _h))**0.5
     _mach = _v / float(sped_fun(_h))
@@ -128,11 +128,14 @@ def find_climb_path(mass, energy, h_guess):
     _G = np.asarray(G_fun(
         mass, energy, _h, _gam, _lam_E, _lam_h, _lam_gam
     ))
+    _GE = np.asarray(GE_fun(
+        mass, energy, _h, _gam, _lam_E, _lam_h, _lam_gam
+    ))
     _climb_dict = {
         'm': mass, 'E': energy, 'h': _h, 'V': _v, 'gam': _gam,
         'lam_E': _lam_E, 'lam_h': _lam_h, 'lam_gam': _lam_gam,
         'L': _lift, 'D': _drag, 'T': _thrust, 'M': _mach, 'qdyn_s_ref': _qdyn_s_ref,
-        'G': _G
+        'G': _G, 'GE': _GE
     }
     return _climb_dict
 
@@ -173,9 +176,39 @@ if __name__ == '__main__':
     z0_unknown = Vs_unknown @ np.linalg.solve(Vs_known, z0_known)
     dgam0 = z0_unknown[0, 0]
     dlam_h0 = z0_unknown[1, 0]
+    gam0 = dgam0
 
     z0 = np.array((dh0, dgam0, dlam_h0, dgam0))
     sol_ivp = sp.integrate.solve_ivp(fun=lambda t, z: (G00 @ z).flatten(), t_span=np.array((0., 60.)), y0=z0)
+
+    # Terminal Conditions
+    hf = 80e3
+    machf = 2.
+    gamf = 0.
+    vf = machf * float(sped_fun(hf))
+    Ef = g * hf + 0.5 * vf**2
+    outer_dictf = find_climb_path(mass0, Ef, 30e3)
+    GEf = outer_dictf['GE']
+    Ego = Ef - E0
+
+    # Solve for NOC to achieve terminal conditions
+    dhf = hf - outer_dictf['h']
+    dgamf = gamf - outer_dictf['gam']
+    zf_known = np.vstack((dhf, dgamf))
+    eig_GEf, eig_vec_GEf = np.linalg.eig(GEf)
+    idx_stable = np.where(np.real(eig_GEf) > 0)
+    eig_stable = eig_GEf[idx_stable]
+    eig_vec_stable = eig_vec_GEf[:, idx_stable[0]]
+    Vsf = np.hstack((np.real(eig_vec_stable[:, 0].reshape(-1, 1)), np.imag(eig_vec_stable[:, 0].reshape(-1, 1))))
+    _rotation_Vs = np.imag(eig_stable[0]) * Ego
+    _c_rot = np.cos(_rotation_Vs)
+    _s_rot = np.sin(_rotation_Vs)
+    _DCM = np.vstack(((_c_rot, _s_rot), (-_s_rot, _c_rot)))
+    Vs = Vsf @ _DCM
+    Vsf_known = Vsf[(0, 1), :]  # hf, gamf fixed
+    Vs_unknown = Vs[(2, 3), :]  # lam_h0, lam_gam0 free
+    zf_Ego = np.exp(-np.real(eig_stable[0]) * Ego) * Vs @ np.linalg.solve(Vsf_known, zf_known)
+
 
     fig = plt.figure()
 
