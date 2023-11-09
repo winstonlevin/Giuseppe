@@ -8,14 +8,15 @@ import scipy as sp
 
 from airplane2_aero_atm import g, s_ref, CD0_fun, CD1, CD2_fun, CL0, CLa_fun, max_ld_fun, atm,\
     dens_fun, sped_fun, gam_qdyn0, thrust_fun, Isp
-from ardema_mae import find_climb_path, zero_fun_es, grad_fun_es_full
+from ardema_mae import find_climb_path, zero_fun_es, grad_fun_es, gam_es_fun, dhdt_es_fun, d2hdt2_es_fun,\
+    G_es_fun, GE_es_fun
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
-# CTRL_LAWS are: {interp, aenoc}
+# CTRL_LAWS are: {interp, aenoc, d2hdt2}
 CTRL_LAWS = ('aenoc',)
 
 with open('sol_set_mtc_xf.data', 'rb') as f:
@@ -61,14 +62,19 @@ v_vals = sol.x[1, :] * k_dict['v_scale']
 mass_vals = sol.x[3, :] * k_dict['m_scale']
 mass0 = mass_vals[0]
 e_vals = g * h_vals + 0.5 * v_vals**2
-h_es_seed_vals = np.empty(e_vals.shape)
+h_es_vals = np.empty(e_vals.shape)
 h_guess = h_vals[0]
 
 for idx, (m_val, e_val) in enumerate(zip(mass_vals, e_vals)):
-    h_es_seed_vals[idx] = find_climb_path(m_val, e_val, h_guess)['h']
-    h_guess = h_es_seed_vals[idx]
+    h_es_vals[idx] = find_climb_path(m_val, e_val, h_guess)['h']
+    h_guess = h_es_vals[idx]
 
-h_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, h_es_seed_vals)
+h_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, h_es_vals)
+v_es_vals = (2 * (e_vals - g * h_es_vals))**0.5
+mach_es_vals = v_es_vals / np.asarray(sped_fun(h_es_vals)).flatten()
+gam_es_vals = np.asarray(gam_es_fun(mass_vals, e_vals, h_es_vals)).flatten()
+lift_es_vals = mass_vals * (g + np.asarray(d2hdt2_es_fun(mass_vals, e_vals, h_es_vals)).flatten())
+_gain_h_es = 1.
 
 
 # ---- DYNAMICS & CONTROL LAWS -----------------------------------------------------------------------------------------
@@ -82,7 +88,7 @@ def generate_constant_ctrl(_const: float) -> Callable:
     return _const_control
 
 
-def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> np.array:
     _h = _x[0]
     _v = _x[1]
     _gam = _x[2]
@@ -100,7 +106,6 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     # With known final perturbation (gamf free) dhf = hf_cmd - hf_outer, dlam_gamf = 0
     _hf = _k_dict['h_f']
     _vf = _k_dict['v_f']
-
     _ef = g * _hf + 0.5 * _vf**2
     _ego = max(_ef - _e, 0.)
     _hf_guess = h_es_guess_interp(_ef)
@@ -137,7 +142,7 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     dhf = zf[0, 0]
     dgamf = zf[1, 0]
     dlam_gamf = 0.
-    dlam_gamf = zf[-1, 0]
+    # dlam_gamf = zf[-1, 0]
 
     # # Saturate dhf, dgamf based on direction of terminal constraint (i.e. remove oscillations)
     # _sign_dhf = np.sign(dhf_Ego0)
@@ -155,10 +160,10 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
 
     Vs_known = Vs[(0, 1), :]  # h0, gam0 fixed
     Vs_unknown = Vs[(2, 3), :]  # lam_h0, lam_gam0 unknown
-    # dh0 = _h - _energy_climb_dict['h']
-    # dgam0 = _gam - _energy_climb_dict['gam']
-    dh0 = _h - (_energy_climb_dict['h'] + dhf)  # Include dhf in offset
-    dgam0 = _gam - (_energy_climb_dict['gam'] + dgamf)
+    dh0 = _h - _energy_climb_dict['h']
+    dgam0 = _gam - _energy_climb_dict['gam']
+    # dh0 = _h - (_energy_climb_dict['h'] + dhf)  # Include dhf in offset
+    # dgam0 = _gam - (_energy_climb_dict['gam'] + dgamf)
     z0_known = np.vstack((dh0, dgam0))
     z0_unknown = Vs_unknown @ np.linalg.solve(Vs_known, z0_known)
     dlam_h = z0_unknown[0, 0]
@@ -173,13 +178,13 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _lift = _lam_gam/_lam_e * (_rho * s_ref) / (4 * _CD2)
 
     # Ensure lift results in positive T - D
-    _thrust = float(thrust_fun(_mach, _h))
+    _thrust_max = float(thrust_fun(_mach, _h))
     _qdyn_s_ref = 0.5 * _rho * _v**2 * s_ref
     _CD0 = float(CD0_fun(_mach))
     _drag0 = _qdyn_s_ref * _CD0
     _lift_mag = abs(_lift)
-    _lift_mag_max = (_qdyn_s_ref/_CD2 * (_thrust - _drag0))**0.5
-    if _thrust < _drag0:
+    _lift_mag_max = (_qdyn_s_ref/_CD2 * (_thrust_max - _drag0))**0.5
+    if _thrust_max < _drag0:
         # Choose min. drag value if it is impossible to achieve T > D
         _lift = 0.
     elif _lift_mag > _lift_mag_max:
@@ -188,15 +193,23 @@ def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
 
     _load = _lift / (_mass * g)
 
-    return _load
+    _thrust_frac = 1.
+    # # Use max thrust until E = Ef. Then dE/dt = 0
+    # if _e < _ef:
+    #     _thrust_frac = 1.
+    # else:
+    #     _drag = _qdyn_s_ref * _CD0 + _CD2 / _qdyn_s_ref * _lift ** 2
+    #     _thrust_frac = _drag / _thrust_max
+
+    return np.asarray((_load, _thrust_frac))
 
 
-def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> float:
+def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> np.array:
     _h = _x[0]
     _v = _x[1]
     _gam = _x[2]
     _mass = _x[3]
-    _h_es = _x[4]
+    # _h_es = _x[4]
 
     _e = g * _h + 0.5 * _v**2
     _mach = _v / atm.speed_of_sound(_h)
@@ -204,39 +217,90 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _CD2 = float(CD2_fun(_mach))
     _rho = atm.density(_h)
     _qdyn_s_ref = 0.5 * _rho * _v ** 2 * s_ref
-    _thrust = float(thrust_fun(_mach, _h))
     _drag0 = _qdyn_s_ref * _CD0
 
-    _lift = _mass * g  # TODO replace with
+    _h_guess = float(h_es_guess_interp(_e))
+    _outer_dict = find_climb_path(_mass, _e, _h_guess)
+    _h_es = _outer_dict['h']
+
+    # Propagation of Energy State Estimate
+    _F = float(zero_fun_es(_mass, _e, _h_es))
+    _G = float(grad_fun_es(_mass, _e, _h_es))
+    _dhes_dt_ff = float(dhdt_es_fun(_mass, _e, _h_es))
+    _dhes_dt = -_gain_h_es/_G * _F + _dhes_dt_ff  # Gradient descent + FF term to account for d(E)/dt, d(m)/dt =/= 0
+
+    # Calculate d2(h)/dt2 due to energy state (feed forward)
+    _d2hes_dt2 = float(d2hdt2_es_fun(_mass, _e, _h_es))
+
+    # Calculate displacement from equilibrium state (for feedback)
+    # z = z0 + zf
+    # d2(dh)/dt2 = Gh G z
+    # First, calculate zf from h_esf, gam_es
+    zf = np.zeros((4, 1))
+    # Second, calculate z0 from h_es, gam_es
+    _gam_es = gam_es_fun(_mass, _e, _h_es)
+    _dx0 = np.vstack((_h_es, _gam_es))
+
+    _G = float(G_es_fun(_mass, _e, _h_es))
+    eig_G, eig_vec_G = np.linalg.eig(_G)
+    idx_stable = np.where(np.real(eig_G) < 0)
+    eig_vec_stable = eig_vec_G[:, idx_stable[0]]
+    Vs = np.hstack((np.real(eig_vec_stable[:, 0].reshape(-1, 1)), np.imag(eig_vec_stable[:, 0].reshape(-1, 1))))
+
+    Vs_x = Vs[(0, 1), :]  # h0, gam0 fixed -> use to determine constants for z0
+    z0 = Vs @ np.linalg.solve(Vs_x, _dx0)
+    # Third, calculate d2(dh)/dt2 from z = z0 + zf
+    z = z0 + zf
+    d2dhdt2 = _G[0, :] @ _G @ z
+    d2hdt2 = _d2hes_dt2 + d2dhdt2
+
+    # Calculate control input in order to achieve d2(h)/dt2
+    # d2(h)/dt2 = -D/m sin(gam) - g sin(gam)**2 + L/m cos(gam) - g cos(gam)**2
+    # For gam ~= 0:
+    # d2(h)/dt2 = L/m - g
+    # Hence the lift is:
+    _lift = _mass * (d2hdt2 + g)
 
     # Ensure lift results in positive T - D
+    _thrust_max = float(thrust_fun(_mach, _h))
     _lift_mag = abs(_lift)
-    _lift_mag_max = (_qdyn_s_ref/_CD2 * (_thrust - _drag0))**0.5
-    if _thrust < _drag0:
+    _lift_mag_max = (_qdyn_s_ref/_CD2 * (_thrust_max - _drag0))**0.5
+    if _thrust_max < _drag0:
         # Choose min. drag value if it is impossible to achieve T > D
         _lift = 0.
     elif _lift_mag > _lift_mag_max:
         # If unconstrained lift causes T < D (loss of energy), constrain it.
         _lift = np.sign(_lift) * _lift_mag_max
 
+    _thrust_frac = 1.
+    # # Use max thrust until E = Ef. Then dE/dt = 0
+    # if _e < _ef:
+    #     _thrust_frac = 1.
+    # else:
+    #     _drag = _qdyn_s_ref * _CD0 + _CD2 / _qdyn_s_ref * _lift ** 2
+    #     _thrust_frac = _drag / _thrust_max
+
     _load = _lift / (_mass * g)
 
-    return _load
+    if hasattr(_load, '__len__') or hasattr(_thrust_frac, '__len__'):
+        print('Oops!')
+
+    return np.asarray((_load, _thrust_frac))
+
+
 def generate_ctrl_law(_ctrl_law, _u_interp=None) -> Callable:
     if _ctrl_law == 'interp':
-        def _load_ctrl(_t, _x, _p_dict, _k_dict):
+        def _ctrl_fun(_t, _x, _p_dict, _k_dict):
             _load = _u_interp(_t)
             # _load = saturate(_load, load_min, load_max)
-            return _load
+            _thrust_frac = 1.
+            return np.asarray((_load, _thrust_frac))
     elif _ctrl_law == 'aenoc':
-        _load_ctrl = zeroth_order_ae_ctrl_law
+        _ctrl_fun = zeroth_order_ae_ctrl_law
+    elif _ctrl_law == 'd2hdt2':
+        _ctrl_fun = climb_estimator_ctrl_law
     else:
-        _load_ctrl = generate_constant_ctrl(0.)
-
-    def _ctrl_fun(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> np.array:
-        return np.array((
-            _load_ctrl(_t, _x, _p_dict, _k_dict),
-        ))
+        _ctrl_fun = generate_constant_ctrl(0.)
     return _ctrl_fun
 
 
@@ -247,6 +311,7 @@ def eom(_t: float, _x: np.array, _u: np.array, _p_dict: dict, _k_dict: dict) -> 
     _mass = _x[3]
 
     _load = _u[0]
+    _thrust_frac = _u[1]
     _lift = _load * _mass * g
 
     _mach = _v / atm.speed_of_sound(_h)
@@ -257,7 +322,7 @@ def eom(_t: float, _x: np.array, _u: np.array, _p_dict: dict, _k_dict: dict) -> 
     _cl = _lift / _qdyn_s_ref
     _cd = CD0 + CD1 * _cl + CD2 * _cl**2
     _drag = _qdyn_s_ref * _cd
-    _thrust = float(thrust_fun(_mach, _h))
+    _thrust = _thrust_frac * float(thrust_fun(_mach, _h))
 
     _dh = _v * np.sin(_gam)
     _dv = (_thrust - _drag) / _mass - g * np.sin(_gam)
@@ -354,7 +419,7 @@ for idx, sol in enumerate(sols):
         # Calculate Control
         load_sol = np.empty(shape=(ivp_sol.t.shape[0],))
         for jdx, (t, x) in enumerate(zip(ivp_sol.t, ivp_sol.y.T)):
-            load_sol[jdx] = ctrl_law(t, x, p_dict, k_dict)
+            load_sol[jdx] = ctrl_law(t, x, p_dict, k_dict)[0]
 
         # Wrap FPA
         _fpa_unwrapped = ivp_sol.y[2, :]
@@ -438,6 +503,12 @@ for idx, ivp_sol_dict in enumerate(ivp_sols_dict):
     ydata_opt = list(y_arr_opt)
     xdata_opt = ivp_sols_dict[idx][CTRL_LAWS[0]]['x_opt'][0, :]
 
+    y_arr_ec = np.vstack((
+        h_es_vals, gam_es_vals, mach_es_vals, lift_es_vals/(mass_vals * g)
+    ))
+    ydata_ec = list(y_arr_ec)
+    xdata_ec = e_vals
+
     ydata_eval_list = []
     xdata_eval_list = []
 
@@ -471,6 +542,8 @@ for idx, ivp_sol_dict in enumerate(ivp_sols_dict):
                     x * xmult, ydata_eval_list[eval_idx][plt_idx] * ymult[plt_idx],
                     color=col[1+eval_idx], label=CTRL_LAWS[eval_idx]
                 )
+
+        ax.plot(xdata_ec * xmult, ydata_ec[plt_idx] * ymult[plt_idx], 'k--', label=f'Energy Climb')
 
     fig.tight_layout()
     fig.savefig(

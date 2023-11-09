@@ -66,11 +66,12 @@ GE_fun = ca.Function(
 )
 
 # Energy State Solution
-drag_es = ca.substitute(drag, lift, weight)
+L_es = weight * np.cos(gam)
+drag_es = ca.substitute(drag, lift, L_es)
 dEdt_es = v * (thrust - drag_es) / m
 dmdt_es = - thrust / Isp
 
-obj_es = dEdt_es
+obj_es = ca.substitute(dEdt_es, gam, 0.)
 zero_es = ca.jacobian(obj_es, h)
 grad_es = ca.jacobian(zero_es, h)
 
@@ -81,6 +82,7 @@ grad_fun_es = ca.Function('DFz', (m, E, h), (grad_es,), ('m', 'E', 'h'), ('DFz',
 # Control to stay on energy state solution
 # Using d(Fz*)/dt = 0 results in a corrected gam* due to d(E*)/dt and d(m*)/dt
 # Solving d(gam*)/dt results in a correction to the lift coefficient
+zero_es_full = ca.jacobian(dEdt_es, h)
 x_es = ca.vcat((m, E, h))
 grad_es_full = ca.jacobian(zero_es, x_es)
 dhdt_es = -(1/grad_es_full[2]) * (grad_es_full[0] * dmdt_es + grad_es_full[1] * dEdt_es)
@@ -88,11 +90,31 @@ dx_dt_es = ca.vcat((dmdt_es, dEdt_es, dhdt_es))
 gam_es = ca.arcsin(dhdt_es / v)
 gam_es_grad_full = ca.jacobian(zero_es, x_es)
 dgamdt_es = gam_es_grad_full @ dx_dt_es
+d2hdt2_es = ca.jacobian(dhdt_es, x_es) @ dx_dt_es
 
-grad_fun_es_full = ca.Function('dFz_dmEh', (m, E, h), (grad_es_full,), ('m', 'E', 'h'), ('dFz_dmEh',))
-dhdt_es_fun = ca.Function('dhdt', (m, E, h), (dhdt_es,), ('m', 'E', 'h'), ('dhdt',))
-gam_es_fun = ca.Function('gam', (m, E, h), (gam_es,), ('m', 'E', 'h'), ('gam',))
-dgamdt_es_fun = ca.Function('dgamdt', (m, E, h), (dgamdt_es,), ('m', 'E', 'h'), ('dgamdt',))
+grad_fun_es_full = ca.Function('dFz_dmEh', (m, E, h, gam), (grad_es_full,), ('m', 'E', 'h', 'gam'), ('dFz_dmEh',))
+dhdt_es_fun = ca.Function('dhdt', (m, E, h, gam), (dhdt_es,), ('m', 'E', 'h', 'gam'), ('dhdt',))
+d2hdt2_es_fun = ca.Function('d2hdt2', (m, E, h, gam), (d2hdt2_es,), ('m', 'E', 'h', 'gam'), ('d2hdt2',))
+gam_es_fun = ca.Function('gam', (m, E, h, gam), (gam_es,), ('m', 'E', 'h', 'gam'), ('gam',))
+dgamdt_es_fun = ca.Function('dgamdt', (m, E, h, gam), (dgamdt_es,), ('m', 'E', 'h', 'gam'), ('dgamdt',))
+
+# Iterative function to get h_es, gam_es
+# Altitude function (assuming del(E)/del(h) = 0)
+h_es = E/g - 0.5 * (thrust - drag_es) / ca.jacobian(thrust - drag_es, h)
+x_es = ca.vcat((h_es, gam_es))
+x_es_fun = ca.Function('x_es', (m, E, h, gam), (x_es,), ('m', 'E', 'h', 'gam',), ('x_es',))
+
+# Get G function in terms of states by pre-calculating u, lam ess
+DL_es = 2 * CD2 / (qdyn * s_ref) * L_es
+lam_E_es = -1 / dEdt_es
+lam_gam_es = lam_E_es * v ** 2 * DL_es
+lam_h_es = 0.
+G_es_fun = ca.Function(
+    'G', (m, E, h, gam), (G_fun(m, E, h, gam, lam_E_es, lam_h_es, lam_gam_es),), ('m', 'E', 'h', 'gam'), ('G',)
+)
+GE_es_fun = ca.Function(
+    'GE', (m, E, h, gam), (GE_fun(m, E, h, gam, lam_E_es, lam_h_es, lam_gam_es),), ('m', 'E', 'h', 'gam'), ('GE',)
+)
 
 
 def solve_zero(mass, energy, h_guess):
@@ -172,6 +194,23 @@ if __name__ == '__main__':
 
     # Outer Solution
     _outer_dict = find_climb_path(mass0, E0, 8.e3)
+
+    # Other option: start with h = h_max, gam = 0. and work iteratively.
+    h_es0 = 0.9 * E0/g
+    for idx in range(1000):
+        h_es0_last = h_es0
+        h_es0 = h_es0_last - float(zero_fun_es(mass0, E0, h_es0_last) / grad_fun_es(mass0, E0, h_es0_last))
+
+        if (h_es0 - h_es0_last)**2 < 1e-6 or np.isnan(h_es0) or np.isinf(h_es0):
+            break
+
+    x_es0 = np.vstack(((E0 - 0.5 * 100.**2) / g, 0.))
+    for idx in range(1000):
+        x_es0_last = x_es0
+        x_es0 = np.asarray(x_es_fun(mass0, E0, x_es0[0], x_es0[1]))
+
+        if np.dot(x_es0, x_es0_last) < 1e-6:
+            break
 
     # Linearization about E
     G00 = np.asarray(G_fun(

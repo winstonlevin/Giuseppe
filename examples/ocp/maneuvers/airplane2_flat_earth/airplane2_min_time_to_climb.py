@@ -243,12 +243,12 @@ if __name__ == '__main__':
     sol_set_xf = cont.run_continuation()
     sol_set_xf.save('sol_set_mtc_xf.data')
 
-    # hf = sol_set.solutions[-1].x[0, -1] * h_scale_val
-    # mf = sol_set.solutions[-1].x[3, -1] * m_scale_val
-    # vf = sol_set.solutions[-1].x[1, -1] * v_scale_val
-    # gamf = sol_set.solutions[-1].x[2, -1]
-    # ef = g * hf + 0.5 * vf ** 2
-    # h0 = sol_set.solutions[-1].x[0, 0] * h_scale_val
-    # v0 = sol_set.solutions[-1].x[1, 0] * v_scale_val
-    # gam0 = sol_set.solutions[-1].x[2, 0]
-    # e0 = g * h0 + 0.5 * v0 ** 2
+    hf = sol_set.solutions[-1].x[0, -1] * h_scale_val
+    mf = sol_set.solutions[-1].x[3, -1] * m_scale_val
+    vf = sol_set.solutions[-1].x[1, -1] * v_scale_val
+    gamf = sol_set.solutions[-1].x[2, -1]
+    ef = g * hf + 0.5 * vf ** 2
+    h0 = sol_set.solutions[-1].x[0, 0] * h_scale_val
+    v0 = sol_set.solutions[-1].x[1, 0] * v_scale_val
+    gam0 = sol_set.solutions[-1].x[2, 0]
+    e0 = g * h0 + 0.5 * v0 ** 2
