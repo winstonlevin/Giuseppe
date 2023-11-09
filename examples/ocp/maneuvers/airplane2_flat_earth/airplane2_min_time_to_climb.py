@@ -225,7 +225,7 @@ if __name__ == '__main__':
 
     def energy_state_continuation(previous_sol, frac_complete):
         _constants = previous_sol.k.copy()
-        _vf = vf_seed + frac_complete * (vf - vf_seed)
+        _vf = vf_seed + frac_complete * (v_vals[-1] - vf_seed)
         _hf = h_interp(_vf)
         _constants[idx_hf] = _hf
         _constants[idx_vf] = _vf
