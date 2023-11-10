@@ -100,7 +100,8 @@ dgamdt_es_fun = ca.Function('dgamdt', (m, E, h, gam), (dgamdt_es,), ('m', 'E', '
 
 # Iterative function to get h_es, gam_es
 # Altitude function (assuming del(E)/del(h) = 0)
-h_es = E/g - 0.5 * (thrust - drag_es) / ca.jacobian(thrust - drag_es, h)
+h_es = h - zero_es_full / ca.jacobian(zero_es_full, h)
+# h_es = E/g - 0.5 * (thrust - drag_es) / ca.jacobian(thrust - drag_es, h)
 x_es = ca.vcat((h_es, gam_es))
 x_es_fun = ca.Function('x_es', (m, E, h, gam), (x_es,), ('m', 'E', 'h', 'gam',), ('x_es',))
 
@@ -204,12 +205,12 @@ if __name__ == '__main__':
         if (h_es0 - h_es0_last)**2 < 1e-6 or np.isnan(h_es0) or np.isinf(h_es0):
             break
 
-    x_es0 = np.vstack(((E0 - 0.5 * 100.**2) / g, 0.))
+    x_es0 = np.vstack((0.25 * E0/g, 0.))
     for idx in range(1000):
         x_es0_last = x_es0
         x_es0 = np.asarray(x_es_fun(mass0, E0, x_es0[0], x_es0[1]))
 
-        if np.dot(x_es0, x_es0_last) < 1e-6:
+        if (x_es0 - x_es0_last).T@(x_es0 - x_es0_last) < 1e-6 or np.any(np.isnan(x_es0)) or np.any(np.isinf(x_es0)):
             break
 
     # Linearization about E

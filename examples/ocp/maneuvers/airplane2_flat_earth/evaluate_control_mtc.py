@@ -8,8 +8,8 @@ import scipy as sp
 
 from airplane2_aero_atm import g, s_ref, CD0_fun, CD1, CD2_fun, CL0, CLa_fun, max_ld_fun, atm,\
     dens_fun, sped_fun, gam_qdyn0, thrust_fun, Isp
-from ardema_mae import find_climb_path, zero_fun_es, grad_fun_es, gam_es_fun, dhdt_es_fun, d2hdt2_es_fun,\
-    G_es_fun, GE_es_fun
+from ardema_mae import find_climb_path, obj_fun_es, zero_fun_es, grad_fun_es, gam_es_fun, dhdt_es_fun, d2hdt2_es_fun,\
+    G_es_fun, GE_es_fun, x_es_fun
 
 # ---- UNPACK DATA -----------------------------------------------------------------------------------------------------
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -62,18 +62,62 @@ v_vals = sol.x[1, :] * k_dict['v_scale']
 mass_vals = sol.x[3, :] * k_dict['m_scale']
 mass0 = mass_vals[0]
 e_vals = g * h_vals + 0.5 * v_vals**2
-h_es_vals = np.empty(e_vals.shape)
-h_guess = h_vals[0]
+h_es_vals = np.nan * np.empty(e_vals.shape)
+gam_es_vals = np.nan * np.empty(e_vals.shape)
+h_guess0 = h_vals[0]
+gam_guess0 = 0.
+relax_fac_min = 2**-8
 
+# Get initial values for h (Newton's Method)
 for idx, (m_val, e_val) in enumerate(zip(mass_vals, e_vals)):
-    h_es_vals[idx] = find_climb_path(m_val, e_val, h_guess)['h']
-    h_guess = h_es_vals[idx]
+    relax_fac = 1.
+    h_guess = h_guess0
+    h_guess_last = h_guess
+    for jdx in range(1000):
+        h_guess_last = h_guess
+        h_guess = h_guess_last - relax_fac * float(
+            zero_fun_es(m_val, e_val, h_guess_last) / grad_fun_es(m_val, e_val, h_guess_last)
+        )
+        if (np.isnan(h_guess)
+                or np.isinf(h_guess)
+                or float(obj_fun_es(m_val, e_val, h_guess)) < float(obj_fun_es(m_val, e_val, h_guess_last))
+            ) and relax_fac >= relax_fac_min:
+            h_guess = h_guess_last
+            relax_fac = 0.5 * relax_fac
+        elif float(zero_fun_es(m_val, e_val, h_guess))**2 < 1e-8:
+            break
+        else:
+            relax_fac = 1.
+    if float(zero_fun_es(m_val, e_val, h_guess))**2 > 1e-8:
+        print('Newtons Method Failed!')
+        h_guess = h_guess0
+    else:
+        # Correct Value with Gam
+        x_guess = np.array((h_guess, gam_guess0))
+        x_guess_last = x_guess
+        failed = False
+        for jdx in range(1000):
+            x_guess_last = x_guess
+            x_guess = np.asarray(x_es_fun(m_val, e_val, x_guess[0], x_guess[1])).flatten()
+            if np.any(np.isnan(x_guess)) or np.any(np.isinf(x_guess)):
+                x_guess = x_guess_last
+                print('Gam Correction Failed!')
+                failed = True
+                break
+            elif np.linalg.norm(x_guess - x_guess_last) < 1e-4:
+                break
+        if failed:
+            h_es_vals[idx] = h_guess
+        else:
+            h_es_vals[idx] = x_guess[0]
+            gam_es_vals[idx] = x_guess[1]
+            gam_guess0 = x_guess[1]
+        h_guess0 = h_es_vals[idx]
 
 h_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, h_es_vals)
 v_es_vals = (2 * (e_vals - g * h_es_vals))**0.5
 mach_es_vals = v_es_vals / np.asarray(sped_fun(h_es_vals)).flatten()
-gam_es_vals = np.asarray(gam_es_fun(mass_vals, e_vals, h_es_vals)).flatten()
-lift_es_vals = mass_vals * (g + np.asarray(d2hdt2_es_fun(mass_vals, e_vals, h_es_vals)).flatten())
+lift_es_vals = mass_vals * (g + np.asarray(d2hdt2_es_fun(mass_vals, e_vals, h_es_vals, gam_es_vals)).flatten())
 _gain_h_es = 1.
 
 
