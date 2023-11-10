@@ -5,6 +5,7 @@ import casadi as ca
 from airplane2_aero_atm import g, weight0, dens_fun, sped_fun, s_ref, CD0_fun, CD2_fun, thrust_fun, Isp
 
 _f_zero_converged_flag = 1
+d2r = np.pi/180
 
 # This example is Mark Ardema's solution to the Minimum Time to Climb problem by matched asymptotic expansions.
 # https://doi.org/10.2514/3.7161
@@ -69,7 +70,7 @@ GE_fun = ca.Function(
 L_es = weight * np.cos(gam)
 drag_es = ca.substitute(drag, lift, L_es)
 dEdt_es = v * (thrust - drag_es) / m
-dmdt_es = - thrust / Isp
+dmdt = - thrust / Isp
 
 obj_es = ca.substitute(dEdt_es, gam, 0.)
 zero_es = ca.jacobian(obj_es, h)
@@ -79,31 +80,22 @@ obj_fun_es = ca.Function('F', (m, E, h), (obj_es,), ('m', 'E', 'h'), ('F',))
 zero_fun_es = ca.Function('Fz', (m, E, h), (zero_es,), ('m', 'E', 'h'), ('Fz',))
 grad_fun_es = ca.Function('DFz', (m, E, h), (grad_es,), ('m', 'E', 'h'), ('DFz',))
 
-# Control to stay on energy state solution
-# Using d(Fz*)/dt = 0 results in a corrected gam* due to d(E*)/dt and d(m*)/dt
-# Solving d(gam*)/dt results in a correction to the lift coefficient
-zero_es_full = ca.jacobian(dEdt_es, h)
-x_es = ca.vcat((m, E, h))
-grad_es_full = ca.jacobian(zero_es, x_es)
-dhdt_es = -(1/grad_es_full[2]) * (grad_es_full[0] * dmdt_es + grad_es_full[1] * dEdt_es)
-dx_dt_es = ca.vcat((dmdt_es, dEdt_es, dhdt_es))
-gam_es = ca.arcsin(dhdt_es / v)
-gam_es_grad_full = ca.jacobian(zero_es, x_es)
-dgamdt_es = gam_es_grad_full @ dx_dt_es
-d2hdt2_es = ca.jacobian(dhdt_es, x_es) @ dx_dt_es
+# Use higher derivatives to calculate h, gam, L to ensure d(Eh)/dt = 0 for all time -> d2(Eh)/dt2 = d3(Eh)/dt3 = 0
+x_hd = ca.vcat((m, E, h, gam))  # Variables with Dynamics
+z_hd = ca.vcat((h, gam, lift))  # Design variables (m, E fixed)
+dx_hd_dt = ca.vcat((dmdt, dEdt, dhdt, dgamdt))  # Assume Lift can change instantaneously -> no dynamics
+f1_hd = ca.jacobian(dEdt, h)
+f2_hd = ca.jacobian(f1_hd, x_hd) @ dx_hd_dt
+f3_hd = ca.jacobian(f2_hd, x_hd) @ dx_hd_dt
 
-grad_fun_es_full = ca.Function('dFz_dmEh', (m, E, h, gam), (grad_es_full,), ('m', 'E', 'h', 'gam'), ('dFz_dmEh',))
-dhdt_es_fun = ca.Function('dhdt', (m, E, h, gam), (dhdt_es,), ('m', 'E', 'h', 'gam'), ('dhdt',))
-d2hdt2_es_fun = ca.Function('d2hdt2', (m, E, h, gam), (d2hdt2_es,), ('m', 'E', 'h', 'gam'), ('d2hdt2',))
-gam_es_fun = ca.Function('gam', (m, E, h, gam), (gam_es,), ('m', 'E', 'h', 'gam'), ('gam',))
-dgamdt_es_fun = ca.Function('dgamdt', (m, E, h, gam), (dgamdt_es,), ('m', 'E', 'h', 'gam'), ('dgamdt',))
+zero_hd = ca.vcat((f1_hd, f2_hd, f3_hd))
+obj_hd = 0.5 * zero_hd.T @ zero_hd
+hess_hd = ca.jacobian(zero_hd, z_hd)
 
-# Iterative function to get h_es, gam_es
-# Altitude function (assuming del(E)/del(h) = 0)
-h_es = h - zero_es_full / ca.jacobian(zero_es_full, h)
-# h_es = E/g - 0.5 * (thrust - drag_es) / ca.jacobian(thrust - drag_es, h)
-x_es = ca.vcat((h_es, gam_es))
-x_es_fun = ca.Function('x_es', (m, E, h, gam), (x_es,), ('m', 'E', 'h', 'gam',), ('x_es',))
+obj_fun_hd = ca.Function('R', (m, E, h, gam, lift), (obj_hd,), ('m', 'E', 'h', 'gam', 'L'), ('R',))
+zero_fun_hd = ca.Function('F', (m, E, h, gam, lift), (zero_hd,), ('m', 'E', 'h', 'gam', 'L'), ('F',))
+hess_fun_hd = ca.Function('H', (m, E, h, gam, lift), (hess_hd,), ('m', 'E', 'h', 'gam', 'L'), ('H',))
+
 
 # Get G function in terms of states by pre-calculating u, lam ess
 DL_es = 2 * CD2 / (qdyn * s_ref) * L_es
@@ -181,6 +173,58 @@ def find_climb_path(mass, energy, h_guess):
     return _climb_dict
 
 
+def newton_search_x_hd(_m, _E, _h, _gam, _L, max_iter=100, relax_fac_min=2**-5, _x_min=None, _x_max=None):
+    _x = np.vstack((_h, _gam, _L))
+    _f = float(obj_fun_hd(_m, _E, _x[0, 0], _x[1, 0], _x[2, 0]))
+    _success = False
+
+    # Generous, but feasible, default bounds for the MTC problem
+    if _x_min is None:
+        _x_min = np.vstack((0., 0., 0.))
+    else:
+        _x_min = _x_min.reshape((-1, 1))
+    if _x_max is None:
+        _x_max = np.vstack((0.95 * _E / g, 45 * d2r, 3. * _m * g))
+    else:
+        _x_max = _x_max.reshape((-1, 1))
+
+    for _ in range(max_iter):
+        _x_last = _x.copy()
+        _f_last = _f
+        _hess = np.asarray(hess_fun_hd(_m, _E, _x_last[0, 0], _x_last[1, 0], _x_last[2, 0]))
+        _grad = np.asarray(zero_fun_hd(_m, _E, _x_last[0, 0], _x_last[1, 0], _x_last[2, 0]))
+
+        # Full step
+        _relax_fac = 1.
+        _x = _x_last - _relax_fac * np.linalg.solve(_hess, _grad)
+        _f = float(obj_fun_hd(_m, _E, _x[0, 0], _x[1, 0], _x[2, 0]))
+        infeasible = np.any(_x < _x_min) or np.any(_x > _x_max)
+
+        while infeasible or _f > _f_last or np.any(np.isnan(_x)) or np.any(np.isinf(_x)):
+            # Backtracking Line Search
+            _relax_fac = 0.5 * _relax_fac
+
+            if _relax_fac < relax_fac_min:
+                break
+
+            _x = _x_last - _relax_fac * np.linalg.solve(_hess, _grad)
+            _f = float(obj_fun_hd(_m, _E, _x[0, 0], _x[1, 0], _x[2, 0]))
+            infeasible = np.any(_x < _x_min) or np.any(_x > _x_max)
+
+        if _f < 1e-8:
+            # Success, stop iterations
+            _success = True
+            break
+        elif _relax_fac < relax_fac_min:
+            # Failure, stop iteration
+            break
+        else:
+            # Step ok, but not yet done.
+            _relax_fac = 1.
+
+    return _x.flatten(), _success
+
+
 if __name__ == '__main__':
     # NUMERICAL SOLUTION [from ref] ------------------------------------------------------------------------------------
     from matplotlib import pyplot as plt
@@ -197,21 +241,7 @@ if __name__ == '__main__':
     _outer_dict = find_climb_path(mass0, E0, 8.e3)
 
     # Other option: start with h = h_max, gam = 0. and work iteratively.
-    h_es0 = 0.9 * E0/g
-    for idx in range(1000):
-        h_es0_last = h_es0
-        h_es0 = h_es0_last - float(zero_fun_es(mass0, E0, h_es0_last) / grad_fun_es(mass0, E0, h_es0_last))
-
-        if (h_es0 - h_es0_last)**2 < 1e-6 or np.isnan(h_es0) or np.isinf(h_es0):
-            break
-
-    x_es0 = np.vstack((0.25 * E0/g, 0.))
-    for idx in range(1000):
-        x_es0_last = x_es0
-        x_es0 = np.asarray(x_es_fun(mass0, E0, x_es0[0], x_es0[1]))
-
-        if (x_es0 - x_es0_last).T@(x_es0 - x_es0_last) < 1e-6 or np.any(np.isnan(x_es0)) or np.any(np.isinf(x_es0)):
-            break
+    x_es0, success = newton_search_x_hd(mass0, E0, 0.25*E0/g, 0., mass0*g)
 
     # Linearization about E
     G00 = np.asarray(G_fun(
