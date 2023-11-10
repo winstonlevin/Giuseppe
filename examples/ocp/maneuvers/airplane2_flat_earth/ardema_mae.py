@@ -26,6 +26,8 @@ mach = v / sped_fun(h)
 qdyn = 0.5 * rho * v**2
 CD0 = CD0_fun(mach)
 CD2 = CD2_fun(mach)
+D0 = qdyn * s_ref * CD0
+D1 = CD2 / (qdyn * s_ref)
 thrust = thrust_fun(mach, h)
 drag = CD0 * qdyn * s_ref + CD2/(qdyn * s_ref) * lift**2
 weight = m * g
@@ -80,22 +82,47 @@ obj_fun_es = ca.Function('F', (m, E, h), (obj_es,), ('m', 'E', 'h'), ('F',))
 zero_fun_es = ca.Function('Fz', (m, E, h), (zero_es,), ('m', 'E', 'h'), ('Fz',))
 grad_fun_es = ca.Function('DFz', (m, E, h), (grad_es,), ('m', 'E', 'h'), ('DFz',))
 
-# Use higher derivatives to calculate h, gam, L to ensure d(Eh)/dt = 0 for all time -> d2(Eh)/dt2 = d3(Eh)/dt3 = 0
-x_hd = ca.vcat((m, E, h, gam))  # Variables with Dynamics
-z_hd = ca.vcat((h, gam, lift))  # Design variables (m, E fixed)
-dx_hd_dt = ca.vcat((dmdt, dEdt, dhdt, dgamdt))  # Assume Lift can change instantaneously -> no dynamics
-f1_hd = ca.jacobian(dEdt, h)
-f2_hd = ca.jacobian(f1_hd, x_hd) @ dx_hd_dt
-f3_hd = ca.jacobian(f2_hd, x_hd) @ dx_hd_dt
+# Use higher derivatives to calculate h, gam, lam_h, lam_gam to ensure d(Eh)/dt = 0 for all time
+# -> d2(Eh)/dt2 = d3(Eh)/dt3 = d4(Eh)/dt4 = 0
+lam_E_hs = rho * s_ref * lam_gam / (4 * CD2 * lift)  # From Hu = 0
 
-zero_hd = ca.vcat((f1_hd, f2_hd, f3_hd))
+# H = 0 has two roots for L. The smaller root corresponds with L = W at energy climb.
+half_b = (1 + lam_h * v * ca.sin(gam)) * m * v / lam_gam - m*g*ca.cos(gam)
+c = (thrust - D0)/D1
+lift_hd = -half_b - (half_b ** 2 - c) ** 0.5
+lam_E_hs_cl = ca.substitute(lam_E_hs, lift, lift_hd)
+
+lift_hs_fun = ca.Function(
+    'L', (m, E, h, gam, lam_h, lam_gam), (lift_hd,), ('m', 'E', 'h', 'gam', 'lam_h', 'lam_gam'), ('L',)
+)
+
+x_hd = ca.vcat((m, E, h, gam, lam_h, lam_gam))  # Variables with Dynamics
+z_hd = ca.vcat((h, gam, lam_h, lam_gam))  # Design variables (m, E fixed)
+dx_hd_dt = ca.vcat((dmdt, dEdt, dhdt, dgamdt, dlam_hdt, dlam_gamdt))
+dx_hd_dt_cl = ca.substitute(dx_hd_dt, ca.vcat((lam_E, lift)), ca.vcat((lam_E_hs_cl, lift_hd)))
+dEdt_hd = ca.substitute(dEdt, lift, lift_hd)
+
+f1_hd = ca.jacobian(dEdt_hd, h)
+f2_hd = ca.jacobian(f1_hd, x_hd) @ dx_hd_dt_cl
+f3_hd = ca.jacobian(f2_hd, x_hd) @ dx_hd_dt_cl
+f4_hd = ca.jacobian(f3_hd, x_hd) @ dx_hd_dt_cl
+
+zero_hd = ca.vcat((f1_hd, f2_hd, f3_hd, f4_hd))
 obj_hd = 0.5 * zero_hd.T @ zero_hd
 hess_hd = ca.jacobian(zero_hd, z_hd)
 
-obj_fun_hd = ca.Function('R', (m, E, h, gam, lift), (obj_hd,), ('m', 'E', 'h', 'gam', 'L'), ('R',))
-zero_fun_hd = ca.Function('F', (m, E, h, gam, lift), (zero_hd,), ('m', 'E', 'h', 'gam', 'L'), ('F',))
-hess_fun_hd = ca.Function('H', (m, E, h, gam, lift), (hess_hd,), ('m', 'E', 'h', 'gam', 'L'), ('H',))
-
+obj_fun_hd = ca.Function(
+    'R', (m, E, z_hd), (obj_hd,), ('m', 'E', 'x'), ('R',)
+)
+zero_fun_hd = ca.Function(
+    'F', (m, E, z_hd), (zero_hd,), ('m', 'E', 'x'), ('F',)
+)
+hess_fun_hd = ca.Function(
+    'H', (m, E, z_hd), (hess_hd,), ('m', 'E', 'x'), ('H',)
+)
+lift_fun_hd = ca.Function(
+    'L', (m, E, z_hd), (lift_hd,), ('m', 'E', 'x'), ('L',)
+)
 
 # Get G function in terms of states by pre-calculating u, lam ess
 DL_es = 2 * CD2 / (qdyn * s_ref) * L_es
@@ -107,6 +134,9 @@ G_es_fun = ca.Function(
 )
 GE_es_fun = ca.Function(
     'GE', (m, E, h, gam), (GE_fun(m, E, h, gam, lam_E_es, lam_h_es, lam_gam_es),), ('m', 'E', 'h', 'gam'), ('GE',)
+)
+lam_gam_es_fun = ca.Function(
+    'lam_gam', (m, E, h, gam), (lam_gam_es,), ('m', 'E', 'h', 'gam'), ('lam_gam',)
 )
 
 
@@ -173,34 +203,52 @@ def find_climb_path(mass, energy, h_guess):
     return _climb_dict
 
 
-def newton_search_x_hd(_m, _E, _h, _gam, _L, max_iter=100, relax_fac_min=2**-5, _x_min=None, _x_max=None):
-    _x = np.vstack((_h, _gam, _L))
-    _f = float(obj_fun_hd(_m, _E, _x[0, 0], _x[1, 0], _x[2, 0]))
+def newton_search_x_hd(
+        _m, _E, _h, _gam=None, _lam_h=None, _lam_gam=None, max_iter=100, relax_fac_min=2**-5,
+        _h_bounds=None, _gam_bounds=None, _lift_bounds=None
+):
     _success = False
 
+    # Default to energy state values
+    if _gam is None:
+        _gam = 0.
+    if _lam_h is None:
+        _lam_h = 0.
+    if _lam_gam is None:
+        _lam_gam = float(lam_gam_es_fun(_m, _E, _h, _gam))
+
+    _x = np.vstack((_h, _gam, _lam_h, _lam_gam))
+    _f = float(obj_fun_hd(_m, _E, _x))
+
     # Generous, but feasible, default bounds for the MTC problem
-    if _x_min is None:
-        _x_min = np.vstack((0., 0., 0.))
+    if _h_bounds is None:
+        _h_bounds = np.array((0., 0.95 * _E/g))
     else:
-        _x_min = _x_min.reshape((-1, 1))
-    if _x_max is None:
-        _x_max = np.vstack((0.95 * _E / g, 45 * d2r, 3. * _m * g))
+        _h_bounds = _h_bounds.reshape((-1,))
+    if _gam_bounds is None:
+        _gam_bounds = np.array((0., 45 * d2r))
     else:
-        _x_max = _x_max.reshape((-1, 1))
+        _gam_bounds = _gam_bounds.reshape((-1,))
+    if _lift_bounds is None:
+        _lift_bounds = np.array((0., 3. * _m * g))
+    else:
+        _lift_bounds = _lift_bounds.reshape((-1,))
 
     for _ in range(max_iter):
         _x_last = _x.copy()
         _f_last = _f
-        _hess = np.asarray(hess_fun_hd(_m, _E, _x_last[0, 0], _x_last[1, 0], _x_last[2, 0]))
-        _grad = np.asarray(zero_fun_hd(_m, _E, _x_last[0, 0], _x_last[1, 0], _x_last[2, 0]))
+        _hess = np.asarray(hess_fun_hd(_m, _E, _x_last))
+        _grad = np.asarray(zero_fun_hd(_m, _E, _x_last))
 
         # Full step
         _relax_fac = 1.
         _x = _x_last - _relax_fac * np.linalg.solve(_hess, _grad)
-        _f = float(obj_fun_hd(_m, _E, _x[0, 0], _x[1, 0], _x[2, 0]))
-        infeasible = np.any(_x < _x_min) or np.any(_x > _x_max)
+        _f = float(obj_fun_hd(_m, _E, _x))
+        feasible = _h_bounds[0] < _x[0, 0] < _h_bounds[1] \
+            and _gam_bounds[0] < _x[1, 0] < _gam_bounds[1] \
+            and _lift_bounds[0] < lift_fun_hd(_m, _E, _x) < _lift_bounds[1]
 
-        while infeasible or _f > _f_last or np.any(np.isnan(_x)) or np.any(np.isinf(_x)):
+        while not feasible or _f > _f_last or np.any(np.isnan(_x)) or np.any(np.isinf(_x)):
             # Backtracking Line Search
             _relax_fac = 0.5 * _relax_fac
 
@@ -209,7 +257,9 @@ def newton_search_x_hd(_m, _E, _h, _gam, _L, max_iter=100, relax_fac_min=2**-5, 
 
             _x = _x_last - _relax_fac * np.linalg.solve(_hess, _grad)
             _f = float(obj_fun_hd(_m, _E, _x[0, 0], _x[1, 0], _x[2, 0]))
-            infeasible = np.any(_x < _x_min) or np.any(_x > _x_max)
+            feasible = _h_bounds[0] < _x[0, 0] < _h_bounds[1] \
+                and _gam_bounds[0] < _x[1, 0] < _gam_bounds[1] \
+                and _lift_bounds[0] < lift_fun_hd(_m, _E, _x) < _lift_bounds[1]
 
         if _f < 1e-8:
             # Success, stop iterations
@@ -241,7 +291,7 @@ if __name__ == '__main__':
     _outer_dict = find_climb_path(mass0, E0, 8.e3)
 
     # Other option: start with h = h_max, gam = 0. and work iteratively.
-    x_es0, success = newton_search_x_hd(mass0, E0, 0.25*E0/g, 0., mass0*g)
+    x_es0, success = newton_search_x_hd(mass0, E0, 0.25*E0/g)
 
     # Linearization about E
     G00 = np.asarray(G_fun(
