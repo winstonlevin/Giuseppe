@@ -69,6 +69,8 @@ GE_fun = ca.Function(
 )
 
 # Energy State Solution
+obj_fun_full = ca.Function('F', (m, E, h, gam, lift), (ca.jacobian(dEdt, h),), ('m', 'E', 'h', 'gam', 'L'), ('F',))
+
 L_es = weight * np.cos(gam)
 drag_es = ca.substitute(drag, lift, L_es)
 dEdt_es = v * (thrust - drag_es) / m
@@ -84,30 +86,32 @@ grad_fun_es = ca.Function('DFz', (m, E, h), (grad_es,), ('m', 'E', 'h'), ('DFz',
 
 # Use higher derivatives to calculate h, gam, lam_h, lam_gam to ensure d(Eh)/dt = 0 for all time
 # -> d2(Eh)/dt2 = d3(Eh)/dt3 = d4(Eh)/dt4 = 0
-lam_E_hs = rho * s_ref * lam_gam / (4 * CD2 * lift)  # From Hu = 0
+lam_E_hd = rho * s_ref * lam_gam / (4 * CD2 * lift)  # From Hu = 0
 
-# H = 0 has two roots for L. The smaller root corresponds with L = W at energy climb.
+# H = 0 has two roots for L. The smaller root corresponds with L = W at energy climb and is therefore assumed.
 half_b = (1 + lam_h * v * ca.sin(gam)) * m * v / lam_gam - m*g*ca.cos(gam)
 c = (thrust - D0)/D1
 lift_hd = -half_b - (half_b ** 2 - c) ** 0.5
-lam_E_hs_cl = ca.substitute(lam_E_hs, lift, lift_hd)
+lam_E_hd_cl = ca.substitute(lam_E_hd, lift, lift_hd)
 
-lift_hs_fun = ca.Function(
-    'L', (m, E, h, gam, lam_h, lam_gam), (lift_hd,), ('m', 'E', 'h', 'gam', 'lam_h', 'lam_gam'), ('L',)
-)
+lam_h_hd = 0.  # By assumption. Prevents having to take too many Jacobians
 
-x_hd = ca.vcat((m, E, h, gam, lam_h, lam_gam))  # Variables with Dynamics
-z_hd = ca.vcat((h, gam, lam_h, lam_gam))  # Design variables (m, E fixed)
-dx_hd_dt = ca.vcat((dmdt, dEdt, dhdt, dgamdt, dlam_hdt, dlam_gamdt))
-dx_hd_dt_cl = ca.substitute(dx_hd_dt, ca.vcat((lam_E, lift)), ca.vcat((lam_E_hs_cl, lift_hd)))
-dEdt_hd = ca.substitute(dEdt, lift, lift_hd)
+x_hd = ca.vcat((m, E, h, gam, lam_gam))  # Variables with Dynamics
+z_hd = ca.vcat((h, gam, lam_gam))  # Design variables (m, E fixed)
+dx_hd_dt = ca.vcat((dmdt, dEdt, dhdt, dgamdt, dlam_gamdt))
+dx_hd_dt_cl = dx_hd_dt
+dEdt_hd_cl = dEdt
+lift_hd_cl = lift_hd
+for var, val in zip((lam_E, lift, lam_h), (lam_E_hd_cl, lift_hd, 0.)):
+    dx_hd_dt_cl = ca.substitute(dx_hd_dt_cl, var, val)
+    dEdt_hd_cl = ca.substitute(dEdt_hd_cl, var, val)
+    lift_hd_cl = ca.substitute(lift_hd_cl, var, val)
 
-f1_hd = ca.jacobian(dEdt_hd, h)
+f1_hd = ca.jacobian(dEdt_hd_cl, h)
 f2_hd = ca.jacobian(f1_hd, x_hd) @ dx_hd_dt_cl
 f3_hd = ca.jacobian(f2_hd, x_hd) @ dx_hd_dt_cl
-f4_hd = ca.jacobian(f3_hd, x_hd) @ dx_hd_dt_cl
 
-zero_hd = ca.vcat((f1_hd, f2_hd, f3_hd, f4_hd))
+zero_hd = ca.vcat((f1_hd, f2_hd, f3_hd))
 obj_hd = 0.5 * zero_hd.T @ zero_hd
 hess_hd = ca.jacobian(zero_hd, z_hd)
 
@@ -121,7 +125,7 @@ hess_fun_hd = ca.Function(
     'H', (m, E, z_hd), (hess_hd,), ('m', 'E', 'x'), ('H',)
 )
 lift_fun_hd = ca.Function(
-    'L', (m, E, z_hd), (lift_hd,), ('m', 'E', 'x'), ('L',)
+    'L', (m, E, z_hd), (lift_hd_cl,), ('m', 'E', 'x'), ('L',)
 )
 
 # Get G function in terms of states by pre-calculating u, lam ess
@@ -204,7 +208,7 @@ def find_climb_path(mass, energy, h_guess):
 
 
 def newton_search_x_hd(
-        _m, _E, _h, _gam=None, _lam_h=None, _lam_gam=None, max_iter=100, relax_fac_min=2**-5,
+        _m, _E, _h, _gam=None, _lam_gam=None, max_iter=100, relax_fac_min=2**-5,
         _h_bounds=None, _gam_bounds=None, _lift_bounds=None
 ):
     _success = False
@@ -212,13 +216,12 @@ def newton_search_x_hd(
     # Default to energy state values
     if _gam is None:
         _gam = 0.
-    if _lam_h is None:
-        _lam_h = 0.
     if _lam_gam is None:
         _lam_gam = float(lam_gam_es_fun(_m, _E, _h, _gam))
 
-    _x = np.vstack((_h, _gam, _lam_h, _lam_gam))
+    _x = np.vstack((_h, _gam, _lam_gam))
     _f = float(obj_fun_hd(_m, _E, _x))
+    _lift = float(lift_fun_hd(_m, _E, _x))
 
     # Generous, but feasible, default bounds for the MTC problem
     if _h_bounds is None:
@@ -244,9 +247,10 @@ def newton_search_x_hd(
         _relax_fac = 1.
         _x = _x_last - _relax_fac * np.linalg.solve(_hess, _grad)
         _f = float(obj_fun_hd(_m, _E, _x))
+        _lift = float(lift_fun_hd(_m, _E, _x))
         feasible = _h_bounds[0] < _x[0, 0] < _h_bounds[1] \
             and _gam_bounds[0] < _x[1, 0] < _gam_bounds[1] \
-            and _lift_bounds[0] < lift_fun_hd(_m, _E, _x) < _lift_bounds[1]
+            and _lift_bounds[0] < _lift < _lift_bounds[1]
 
         while not feasible or _f > _f_last or np.any(np.isnan(_x)) or np.any(np.isinf(_x)):
             # Backtracking Line Search
@@ -256,10 +260,11 @@ def newton_search_x_hd(
                 break
 
             _x = _x_last - _relax_fac * np.linalg.solve(_hess, _grad)
-            _f = float(obj_fun_hd(_m, _E, _x[0, 0], _x[1, 0], _x[2, 0]))
+            _f = float(obj_fun_hd(_m, _E, _x))
+            _lift = float(lift_fun_hd(_m, _E, _x))
             feasible = _h_bounds[0] < _x[0, 0] < _h_bounds[1] \
                 and _gam_bounds[0] < _x[1, 0] < _gam_bounds[1] \
-                and _lift_bounds[0] < lift_fun_hd(_m, _E, _x) < _lift_bounds[1]
+                and _lift_bounds[0] < _lift < _lift_bounds[1]
 
         if _f < 1e-8:
             # Success, stop iterations
@@ -272,7 +277,34 @@ def newton_search_x_hd(
             # Step ok, but not yet done.
             _relax_fac = 1.
 
-    return _x.flatten(), _success
+    return _x.flatten(), _lift, _success
+
+
+def newton_seach_multiple_start(_m, _E, _h=None, _gam=None, _lam_gam=None, max_iter=100, relax_fac_min=2**-5,
+    _h_bounds=None, _gam_bounds=None, _lift_bounds=None):
+
+    if _h_bounds is None:
+        _h_bounds = np.array((0., 0.95 * _E / g))
+    else:
+        _h_bounds = _h_bounds.reshape((-1,))
+
+    if _h is None:
+        _h = _h_bounds[0]
+
+    x, lift_val, success = newton_search_x_hd(
+        _m, _E, _h, _gam, _lam_gam, max_iter, relax_fac_min, _h_bounds, _gam_bounds, _lift_bounds
+    )
+
+    if not success:
+        # Try other initial conditions for h
+        h_vals = np.linspace(_h_bounds[0], _h_bounds[1], 100)
+        for _h in h_vals:
+            x, lift_val, success = newton_search_x_hd(
+                _m, _E, _h, _gam, _lam_gam, max_iter, relax_fac_min, _h_bounds, _gam_bounds, _lift_bounds
+            )
+            if success:
+                break
+    return x, lift_val, success
 
 
 if __name__ == '__main__':
