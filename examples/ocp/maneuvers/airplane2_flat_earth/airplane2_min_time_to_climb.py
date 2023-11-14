@@ -101,7 +101,7 @@ ocp.add_constraint('initial', mass - m_0)
 # Terminal state
 ocp.add_constraint('terminal', h - h_f)
 ocp.add_constraint('terminal', v - v_f)
-ocp.add_constraint('terminal', gam - gam_f)
+# ocp.add_constraint('terminal', gam - gam_f)
 
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     adiff_dual = giuseppe.problems.automatic_differentiation.ADiffDual(ocp)

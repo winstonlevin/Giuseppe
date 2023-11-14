@@ -145,7 +145,16 @@ def max_ld_fun_mach(_mach):
     _CL_max_ld = (_CD0 / _CD2) ** 0.5
     _CD_max_ld = _CD0 + CD1 * _CL_max_ld + _CD2 * _CL_max_ld ** 2
     _alpha_max_ld = (_CL_max_ld - CL0) / _CLa
-    _dict = {'alpha': _alpha_max_ld, 'CL': _CL_max_ld, 'CD': _CD_max_ld, 'LD': _CL_max_ld / _CD_max_ld}
+
+    # AE/NOC Feedback Gains
+    _CDuu = 2 * _CD2
+    _K_gam = 2 * (_CD_max_ld/_CDuu)**0.5
+    _zeta = _K_gam / _CLa
+
+    _dict = {
+        'alpha': _alpha_max_ld, 'CL': _CL_max_ld, 'CD': _CD_max_ld, 'LD': _CL_max_ld / _CD_max_ld,
+        'CDuu': _CDuu, 'K_gam': _K_gam, 'zeta': _zeta
+    }
     return _dict
 
 

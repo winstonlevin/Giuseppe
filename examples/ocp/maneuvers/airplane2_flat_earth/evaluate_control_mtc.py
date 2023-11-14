@@ -55,7 +55,7 @@ h_min = 0.
 gam_max = np.inf * 90 * np.pi / 180
 gam_min = -gam_max
 
-limits_dict = {'h_min': h_min, 'v_min': v_min, 'gam_min': gam_min, 'gam_max': gam_max, 'e_max': 0.}
+limits_dict = {'h_max': 0., 'h_min': h_min, 'v_min': v_min, 'gam_min': gam_min, 'gam_max': gam_max, 'e_max': 0.}
 
 # Energy State Dict (for control law)
 h_vals = sol.x[0, :] * k_dict['h_scale']
@@ -100,6 +100,7 @@ ef_vals = g * hf_vals + 0.5 * vf_vals**2
 hf_es_vals = np.empty(ef_vals.shape)
 gamf_es_vals = np.empty(ef_vals.shape)
 liftf_es_vals = np.empty(ef_vals.shape)
+lam_gamf_es_vals = np.empty(ef_vals.shape)
 
 for idx, (m_val, e_val) in enumerate(zip(massf_vals, ef_vals)):
     x, lift_val, success = newton_seach_multiple_start(m_val, e_val, h_guess0, gam_guess0, lam_gam_guess0)
@@ -112,7 +113,11 @@ for idx, (m_val, e_val) in enumerate(zip(massf_vals, ef_vals)):
         lam_gam_guess0 = x[2]
         hf_es_vals[idx] = x[0]
         gamf_es_vals[idx] = x[1]
+        lam_gamf_es_vals[idx] = x[2]
         liftf_es_vals[idx] = lift_val
+
+vf_es_vals = (2*(ef_vals - g * hf_vals))**0.5
+dgamf_es_vals = (liftf_es_vals - massf_vals * g * np.cos(gamf_es_vals))/(massf_vals * vf_es_vals)
 
 GEf = np.array(GE_es_fun(massf_vals[-1], ef_vals[-1], hf_es_vals[-1], gamf_es_vals[-1]))
 Gf = np.array(G_es_fun(massf_vals[-1], ef_vals[-1], hf_es_vals[-1], gamf_es_vals[-1]))
@@ -123,18 +128,18 @@ eig_vec_stablef = eig_vec_Gf[:, idx_stablef[0]]
 
 Vsf_Ego0 = np.hstack((np.real(eig_vec_stablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_stablef[:, 0].reshape(-1, 1))))
 dhf_Ego0 = hf_vals[-1] - hf_es_vals[-1]
-dlam_gamf_Ego0 = 0.  # gamf free
+dlam_gamf_Ego0 = 0. - lam_gamf_es_vals[-1]  # gamf free
 zf_known_Ego0 = np.vstack((dhf_Ego0, dlam_gamf_Ego0))
 Vsf_Ego0_known = Vsf_Ego0[(0, 3), :]  # dhf, dlam_gamf known [gamf free]
 cf = np.linalg.solve(Vsf_Ego0_known, zf_known_Ego0)
-_ego_vals = np.maximum(ef_vals[-1] - ef_vals, 0.)
+_dEf_vals = np.minimum(ef_vals - ef_vals[-1], 0.)
 
 hf_tec_vals = np.empty(ef_vals.shape)
 gamf_tec_vals = np.empty(ef_vals.shape)
 dgamf_tec_vals = np.empty(ef_vals.shape)
 
-for idx, _ego in enumerate(_ego_vals):
-    _rotation_Ego = np.imag(eig_stablef[0]) * _ego
+for idx, _dEf_val in enumerate(_dEf_vals):
+    _rotation_Ego = np.imag(eig_stablef[0]) * _dEf_val
 
     # # Saturate rotation to the value the rotation does not cause z to oscillate (i.e. find the rotation angles where
     # # each element of z = 0 and choose the smallest)
@@ -150,15 +155,69 @@ for idx, _ego in enumerate(_ego_vals):
     _s_dE = np.sin(_rotation_Ego)
     _DCM = np.vstack(((_c_dE, _s_dE), (-_s_dE, _c_dE)))
     Vsf = Vsf_Ego0 @ _DCM
-    zf = np.exp(-np.real(eig_stablef[0]) * _ego) * Vsf @ cf
+    zf = np.exp(np.real(eig_stablef[0]) * _dEf_val) * Vsf @ cf
 
     hf_tec_vals[idx] = zf[0, 0] + hf_es_vals[idx]
     gamf_tec_vals[idx] = zf[1, 0] + gamf_es_vals[idx]
-    dgamf_tec_vals[idx] = float(Gf[1, :] @ zf)  # TODO fix
+    dgamf_tec_vals[idx] = float(Gf[1, :] @ zf) + dgamf_es_vals[idx]
 
 vf_tec_vals = (2 * (ef_vals - g * hf_tec_vals))**0.5
 machf_tec_vals = vf_tec_vals / np.asarray(sped_fun(hf_tec_vals)).flatten()
 liftf_tec_vals = massf_vals * (g * np.cos(gamf_tec_vals) + vf_tec_vals * dgamf_tec_vals)
+
+hf_ec_vals = np.empty(ef_vals.shape)
+gamf_ec_vals = np.empty(ef_vals.shape)
+dgamf_ec_vals = np.empty(ef_vals.shape)
+
+# Full Linearization (include stable and unstable modes, but at present energy rather than Ef)
+for idx, ef_val in enumerate(ef_vals):
+    GEf = np.array(GE_es_fun(massf_vals[idx], ef_val, hf_es_vals[idx], gamf_es_vals[idx]))
+    Gf = np.array(G_es_fun(massf_vals[idx], ef_val, hf_es_vals[idx], gamf_es_vals[idx]))
+
+    eig_GEf, eig_vec_GEf = np.linalg.eig(GEf)
+    idx_stablef = np.where(np.real(eig_GEf) < 0)  # Stable modes to suppress path error
+    idx_unstablef = np.where(np.real(eig_GEf) > 0)  # Unstable modes to drive dy -> dyf
+    eig_stablef = eig_GEf[idx_stablef]
+    eig_unstablef = eig_GEf[idx_unstablef]
+    eig_vec_stablef = eig_vec_GEf[:, idx_stablef[0]]
+    eig_vec_unstablef = eig_vec_GEf[:, idx_unstablef[0]]
+
+    ego = np.maximum(ef_vals[-1] - ef_val, 100.)  # When Ego = 0, matrix inversion becomes ill conditioned
+
+    theta_egos = np.imag(eig_stablef[0]) * ego
+    DCM_egos = np.vstack(((np.cos(theta_egos), np.sin(theta_egos)), (-np.sin(theta_egos), np.cos(theta_egos))))
+    Vs0 = np.hstack((np.real(eig_vec_stablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_stablef[:, 0].reshape(-1, 1))))
+    Vsf = np.exp(np.real(eig_stablef[0]) * ego) * Vs0 @ DCM_egos
+
+    theta_egou = np.imag(eig_unstablef[0]) * ego
+    DCM_egou = np.vstack(((np.cos(theta_egou), np.sin(theta_egou)), (-np.sin(theta_egou), np.cos(theta_egou))))
+    Vu0 = np.hstack((np.real(eig_vec_unstablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_unstablef[:, 0].reshape(-1, 1))))
+    Vuf = np.exp(np.real(eig_unstablef[0]) * ego) * Vu0 @ DCM_egou
+
+    V0 = np.hstack((Vs0, Vu0))
+    Vf = np.hstack((Vsf, Vuf))
+
+    # Calculate free coefficients in order to fix initial/final state
+    dh0 = hf_vals[idx] - hf_es_vals[idx]
+    dgam0 = gamf_vals[idx] - gamf_es_vals[idx]
+    dhf = hf_vals[-1] - hf_es_vals[idx]
+    dlam_gamf = 0.
+
+    idx_fixed0 = (0, 1)  # Fix dh0, dgam0 [because we can't change the initial state :)]
+    idx_fixedf = (0, 3)  # Fix dhf, dlamgamf [i.e. final FPA free -> dlamgamf = 0]
+
+    V_fixed = np.vstack((V0[idx_fixed0, :], Vf[idx_fixedf, :]))
+    z_fixed = np.vstack((dh0, dgam0, dhf, dlam_gamf))
+    coeffs = np.linalg.solve(V_fixed, z_fixed)
+    z0 = V0 @ coeffs
+
+    hf_ec_vals[idx] = z0[0, 0] + hf_es_vals[idx]
+    gamf_ec_vals[idx] = z0[1, 0] + gamf_es_vals[idx]
+    dgamf_ec_vals[idx] = float(Gf[1, :] @ z0) + dgamf_es_vals[idx]
+
+vf_ec_vals = (2 * (ef_vals - g * hf_ec_vals))**0.5
+machf_ec_vals = vf_ec_vals / np.asarray(sped_fun(hf_ec_vals)).flatten()
+liftf_ec_vals = massf_vals * (g * np.cos(gamf_ec_vals) + vf_ec_vals * dgamf_ec_vals)
 
 
 # ---- DYNAMICS & CONTROL LAWS -----------------------------------------------------------------------------------------
@@ -304,7 +363,7 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _drag0 = _qdyn_s_ref * _CD0
 
     _h_es_guess = float(h_es_guess_interp(_e))
-    _gam_es_guess= float(gam_es_guess_interp(_e))
+    _gam_es_guess = float(gam_es_guess_interp(_e))
     _x_es, _lift_es, _success = newton_seach_multiple_start(_mass, _e, _h=_h_es_guess, _gam=_gam_es_guess)
 
     # Propagation of Energy State Estimate
@@ -316,6 +375,15 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
         _h_es = _h_es_guess
         _gam_es = _gam_es_guess
         _dhes_dt = 0.
+
+    # _v_es = _v
+    _v_es = (2*(_e - g * _h_es))**0.5
+    _dgames_dt = (_lift_es - _mass * g * np.cos(_gam_es)) / (_mass * _v_es)
+
+    # # Modify path to include offset for terminal criteria
+    # _hf = k_dict['h_f']
+    # _dhf =
+    # _dlamgamf = 0.
 
     # Calculate displacement from equilibrium state (for feedback)
     # d(dgam0)/dt = G0gam z0
@@ -333,7 +401,7 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _ddgamdt0 = float(_G[1, :] @ _z0)
 
     # Calculate control input in order to achieve d(gam)/dt
-    _dgamdt = _ddgamdt0
+    _dgamdt = _dgames_dt + _ddgamdt0
     # Lift = W cos(gam) + mV d(gam)/dt
     _lift = _mass * (g * np.cos(_gam) + _v * _dgamdt)
 
@@ -416,6 +484,9 @@ def generate_termination_events(_ctrl_law, _p_dict, _k_dict, _limits_dict):
     def min_altitude_event(_t: float, _x: np.array) -> float:
         return _x[0] - _limits_dict['h_min']
 
+    # def max_altitude_event(_t: float, _x: np.array) -> float:
+    #     return _limits_dict['h_max'] - _x[0]
+
     def min_velocity_event(_t: float, _x: np.array) -> float:
         return _x[1] - _limits_dict['v_min']
 
@@ -429,9 +500,8 @@ def generate_termination_events(_ctrl_law, _p_dict, _k_dict, _limits_dict):
         _e = g * _x[0] + 0.5 * _x[1]**2
         return _limits_dict['e_max'] - _e
 
-    events = [min_altitude_event, min_velocity_event,
-              min_fpa_event, max_fpa_event,
-              max_e_event]
+    events = [min_altitude_event, min_velocity_event, min_fpa_event, max_fpa_event, max_e_event]
+    # events = [min_altitude_event, max_altitude_event, min_velocity_event, min_fpa_event, max_fpa_event, max_e_event]
 
     for event in events:
         event.terminal = True
@@ -457,7 +527,8 @@ for idx, sol in enumerate(sols):
         k_dict[key] = val
     for key, val in zip(sol.annotations.parameters, sol.p):
         p_dict[key] = val
-    e_opt = g * x_dict['h_nd'] * k_dict['h_scale'] + 0.5 * (x_dict['v_nd'] * k_dict['v_scale']) ** 2
+    h_opt = x_dict['h_nd'] * k_dict['h_scale']
+    e_opt = g * h_opt + 0.5 * (x_dict['v_nd'] * k_dict['v_scale']) ** 2
     load_opt = sol.u[0, :]
     u_opt = sp.interpolate.PchipInterpolator(sol.t, load_opt)
 
@@ -467,6 +538,7 @@ for idx, sol in enumerate(sols):
     t_span = np.array((t0, np.inf))
     x0 = sol.x[:, 0] * ndmult
     limits_dict['e_max'] = np.max(e_opt)
+    limits_dict['h_max'] = np.max(h_opt)
 
     # States
     h_opt = sol.x[0, :] * k_dict['h_scale']
@@ -591,6 +663,13 @@ for idx, ivp_sol_dict in enumerate(ivp_sols_dict):
     ))
     ydata_tec = list(y_arr_tec)
     xdata_tec = ef_vals
+
+    # y_arr_ec = np.vstack((
+    #     hf_ec_vals, gamf_ec_vals, machf_ec_vals, liftf_ec_vals/(massf_vals * g)
+    # ))
+    # ydata_ec = list(y_arr_ec)
+    # xdata_ec = ef_vals
+
 
     ydata_eval_list = []
     xdata_eval_list = []
