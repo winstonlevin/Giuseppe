@@ -25,7 +25,7 @@ with open('sol_set_mtc_xf.data', 'rb') as f:
     sol = sols[0]
     sol_tec = sols[-1]
     sols = [sol, sol_tec]
-    sol_tec = sol
+    # sol_tec = sol
 
 # Create Dicts
 k_dict = {}
@@ -91,6 +91,7 @@ for idx, (m_val, e_val) in enumerate(zip(mass_vals, e_vals)):
 h_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, h_es_vals)
 gam_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, gam_es_vals)
 lam_gam_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, lam_gam_es_vals)
+lift_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, lift_es_vals)
 v_es_vals = (2 * (e_vals - g * h_es_vals))**0.5
 mach_es_vals = v_es_vals / np.asarray(sped_fun(h_es_vals)).flatten()
 _gain_h_es = 1.
@@ -270,19 +271,23 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _h_es_guess = float(h_es_guess_interp(_e))
     _gam_es_guess = float(gam_es_guess_interp(_e))
     _lam_gam_es_guess = float(lam_gam_es_guess_interp(_e))
-    _x_es, _lift_es, _success = newton_seach_multiple_start(
-        _mass, _e, _h=_h_es_guess, _gam=_gam_es_guess, _lam_gam=_lam_gam_es_guess
-    )
-
-    # Propagation of Energy State Estimate
-    if _success:
-        _h_es = _x_es[0]
-        _gam_es = _x_es[1]
-        _dhes_dt = -_gain_h_es * (_h_es - _h_es_guess)
-    else:
-        _h_es = _h_es_guess
-        _gam_es = _gam_es_guess
-        _dhes_dt = 0.
+    _lift_es = float(lift_es_guess_interp(_e))
+    # _x_es, _lift_es, _success = newton_seach_multiple_start(
+    #     _mass, _e, _h=_h_es_guess, _gam=_gam_es_guess, _lam_gam=_lam_gam_es_guess
+    # )
+    #
+    # # Propagation of Energy State Estimate
+    # if _success:
+    #     _h_es = _x_es[0]
+    #     _gam_es = _x_es[1]
+    #     _dhes_dt = -_gain_h_es * (_h_es - _h_es_guess)
+    # else:
+    #     _h_es = _h_es_guess
+    #     _gam_es = _gam_es_guess
+    #     _dhes_dt = 0.
+    _h_es = _h_es_guess
+    _gam_es = _gam_es_guess
+    _dhes_dt = 0.
 
     # _v_es = _v
     _v_es = (2*(_e - g * _h_es))**0.5
@@ -295,21 +300,25 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _h_esf_guess = float(h_es_guess_interp(_ef))
     _gam_esf_guess = float(gam_es_guess_interp(_ef))
     _lam_gam_esf_guess = float(lam_gam_es_guess_interp(_ef))
-    _x_esf, _lift_esf, _success = newton_seach_multiple_start(
-        _mass, _ef, _h=_h_esf_guess, _gam=_gam_esf_guess, _lam_gam=_lam_gam_esf_guess
-    )
-
-    # Propagation of Terminal Energy State Estimate
-    if _success:
-        _h_esf = _x_esf[0]
-        _gam_esf = _x_esf[1]
-        _lam_gam_esf = _x_esf[2]
-        _dhesf_dt = -_gain_h_es * (_h_esf - _h_esf_guess)
-    else:
-        _h_esf = _h_esf_guess
-        _gam_esf = _gam_esf_guess
-        _lam_gam_esf = _lam_gam_esf_guess
-        _dhesf_dt = 0.
+    # _x_esf, _lift_esf, _success = newton_seach_multiple_start(
+    #     _mass, _ef, _h=_h_esf_guess, _gam=_gam_esf_guess, _lam_gam=_lam_gam_esf_guess
+    # )
+    #
+    # # Propagation of Terminal Energy State Estimate
+    # if _success:
+    #     _h_esf = _x_esf[0]
+    #     _gam_esf = _x_esf[1]
+    #     _lam_gam_esf = _x_esf[2]
+    #     _dhesf_dt = -_gain_h_es * (_h_esf - _h_esf_guess)
+    # else:
+    #     _h_esf = _h_esf_guess
+    #     _gam_esf = _gam_esf_guess
+    #     _lam_gam_esf = _lam_gam_esf_guess
+    #     _dhesf_dt = 0.
+    _h_esf = _h_esf_guess
+    _gam_esf = _gam_esf_guess
+    _lam_gam_esf = _lam_gam_esf_guess
+    _dhesf_dt = 0.
 
     _dhf = _hf - _h_esf
     _dlamgamf = 0. - _lam_gam_esf
@@ -331,7 +340,7 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _c_dE = np.cos(_theta_de)
     _s_dE = np.sin(_theta_de)
     _DCM = np.vstack(((_c_dE, _s_dE), (-_s_dE, _c_dE)))
-    zf = np.exp(np.real(eig_stablef[0]) * _dEf_val) * Vsf_Ego0 @ _DCM @ cf
+    zf = np.exp(np.real(eig_stablef[0]) * _def) * Vsf_Ego0 @ _DCM @ cf
 
     _h_ref = _h_es + zf[0, 0]
     _gam_ref = _gam_es + zf[1, 0]
@@ -487,7 +496,7 @@ for idx, sol in enumerate(sols):
     t0 = sol.t[0]
     tf = sol.t[-1]
 
-    t_span = np.array((t0, np.inf))
+    t_span = np.array((t0, 2 * tf))
     x0 = sol.x[:, 0] * ndmult
     limits_dict['e_max'] = np.max(e_opt)
     limits_dict['h_max'] = np.max(h_opt)
