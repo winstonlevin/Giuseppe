@@ -18,12 +18,14 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 COMPARE_SWEEP = True
 # CTRL_LAWS are: {interp, aenoc, dgamdt}
 CTRL_LAWS = ('dgamdt',)
+# CTRL_LAWS = []
 
 with open('sol_set_mtc_xf.data', 'rb') as f:
     sols = pickle.load(f)
     sol = sols[0]
     sol_tec = sols[-1]
     sols = [sol, sol_tec]
+    sol_tec = sol
 
 # Create Dicts
 k_dict = {}
@@ -66,6 +68,7 @@ e_vals = g * h_vals + 0.5 * v_vals**2
 h_es_vals = np.nan * np.empty(e_vals.shape)
 gam_es_vals = np.nan * np.empty(e_vals.shape)
 lift_es_vals = np.nan * np.empty(e_vals.shape)
+lam_gam_es_vals = np.nan * np.empty(e_vals.shape)
 h_guess0 = h_vals[0]
 gam_guess0 = 0.
 lam_gam_guess0 = None
@@ -82,10 +85,12 @@ for idx, (m_val, e_val) in enumerate(zip(mass_vals, e_vals)):
         lam_gam_guess0 = x[2]
         h_es_vals[idx] = x[0]
         gam_es_vals[idx] = x[1]
+        lam_gam_es_vals[idx] = x[2]
         lift_es_vals[idx] = lift_val
 
 h_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, h_es_vals)
 gam_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, gam_es_vals)
+lam_gam_es_guess_interp = sp.interpolate.PchipInterpolator(e_vals, lam_gam_es_vals)
 v_es_vals = (2 * (e_vals - g * h_es_vals))**0.5
 mach_es_vals = v_es_vals / np.asarray(sped_fun(h_es_vals)).flatten()
 _gain_h_es = 1.
@@ -132,6 +137,21 @@ dlam_gamf_Ego0 = 0. - lam_gamf_es_vals[-1]  # gamf free
 zf_known_Ego0 = np.vstack((dhf_Ego0, dlam_gamf_Ego0))
 Vsf_Ego0_known = Vsf_Ego0[(0, 3), :]  # dhf, dlam_gamf known [gamf free]
 cf = np.linalg.solve(Vsf_Ego0_known, zf_known_Ego0)
+
+# # lam_gamf corresponds to d(gam)/dt|f = 0. Solve iteratively to find that solution rather than relying on linear
+# # approximation of lam_gamf
+# gamf = gamf_es_vals[-1]
+# cf = np.nan * np.empty((2, 1))
+# for idx in range(1000):
+#     gamf_last = gamf
+#     ddgamdtf_last = -g/vf_vals[-1] * np.cos(gamf) - dgamf_es_vals[-1]
+#     cf = np.linalg.solve(np.vstack((Vsf_Ego0[0, :], Gf[1, :] @ Vsf_Ego0)), np.vstack((dhf_Ego0, ddgamdtf_last)))
+#     gamf = gamf_es_vals[-1] + float(Vsf_Ego0[1, :] @ cf)
+#     ddgamdtf_err = (-g / vf_vals[-1] * np.cos(gamf) - dgamf_es_vals[-1]) - float(Gf[1, :] @ Vsf_Ego0 @ cf)
+#
+#     if abs(gamf - gamf_last) < 1e-8 and abs(ddgamdtf_err) < 1e-8:
+#         break
+
 _dEf_vals = np.minimum(ef_vals - ef_vals[-1], 0.)
 
 hf_tec_vals = np.empty(ef_vals.shape)
@@ -165,59 +185,59 @@ vf_tec_vals = (2 * (ef_vals - g * hf_tec_vals))**0.5
 machf_tec_vals = vf_tec_vals / np.asarray(sped_fun(hf_tec_vals)).flatten()
 liftf_tec_vals = massf_vals * (g * np.cos(gamf_tec_vals) + vf_tec_vals * dgamf_tec_vals)
 
-hf_ec_vals = np.empty(ef_vals.shape)
-gamf_ec_vals = np.empty(ef_vals.shape)
-dgamf_ec_vals = np.empty(ef_vals.shape)
-
-# Full Linearization (include stable and unstable modes, but at present energy rather than Ef)
-for idx, ef_val in enumerate(ef_vals):
-    GEf = np.array(GE_es_fun(massf_vals[idx], ef_val, hf_es_vals[idx], gamf_es_vals[idx]))
-    Gf = np.array(G_es_fun(massf_vals[idx], ef_val, hf_es_vals[idx], gamf_es_vals[idx]))
-
-    eig_GEf, eig_vec_GEf = np.linalg.eig(GEf)
-    idx_stablef = np.where(np.real(eig_GEf) < 0)  # Stable modes to suppress path error
-    idx_unstablef = np.where(np.real(eig_GEf) > 0)  # Unstable modes to drive dy -> dyf
-    eig_stablef = eig_GEf[idx_stablef]
-    eig_unstablef = eig_GEf[idx_unstablef]
-    eig_vec_stablef = eig_vec_GEf[:, idx_stablef[0]]
-    eig_vec_unstablef = eig_vec_GEf[:, idx_unstablef[0]]
-
-    ego = np.maximum(ef_vals[-1] - ef_val, 100.)  # When Ego = 0, matrix inversion becomes ill conditioned
-
-    theta_egos = np.imag(eig_stablef[0]) * ego
-    DCM_egos = np.vstack(((np.cos(theta_egos), np.sin(theta_egos)), (-np.sin(theta_egos), np.cos(theta_egos))))
-    Vs0 = np.hstack((np.real(eig_vec_stablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_stablef[:, 0].reshape(-1, 1))))
-    Vsf = np.exp(np.real(eig_stablef[0]) * ego) * Vs0 @ DCM_egos
-
-    theta_egou = np.imag(eig_unstablef[0]) * ego
-    DCM_egou = np.vstack(((np.cos(theta_egou), np.sin(theta_egou)), (-np.sin(theta_egou), np.cos(theta_egou))))
-    Vu0 = np.hstack((np.real(eig_vec_unstablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_unstablef[:, 0].reshape(-1, 1))))
-    Vuf = np.exp(np.real(eig_unstablef[0]) * ego) * Vu0 @ DCM_egou
-
-    V0 = np.hstack((Vs0, Vu0))
-    Vf = np.hstack((Vsf, Vuf))
-
-    # Calculate free coefficients in order to fix initial/final state
-    dh0 = hf_vals[idx] - hf_es_vals[idx]
-    dgam0 = gamf_vals[idx] - gamf_es_vals[idx]
-    dhf = hf_vals[-1] - hf_es_vals[idx]
-    dlam_gamf = 0.
-
-    idx_fixed0 = (0, 1)  # Fix dh0, dgam0 [because we can't change the initial state :)]
-    idx_fixedf = (0, 3)  # Fix dhf, dlamgamf [i.e. final FPA free -> dlamgamf = 0]
-
-    V_fixed = np.vstack((V0[idx_fixed0, :], Vf[idx_fixedf, :]))
-    z_fixed = np.vstack((dh0, dgam0, dhf, dlam_gamf))
-    coeffs = np.linalg.solve(V_fixed, z_fixed)
-    z0 = V0 @ coeffs
-
-    hf_ec_vals[idx] = z0[0, 0] + hf_es_vals[idx]
-    gamf_ec_vals[idx] = z0[1, 0] + gamf_es_vals[idx]
-    dgamf_ec_vals[idx] = float(Gf[1, :] @ z0) + dgamf_es_vals[idx]
-
-vf_ec_vals = (2 * (ef_vals - g * hf_ec_vals))**0.5
-machf_ec_vals = vf_ec_vals / np.asarray(sped_fun(hf_ec_vals)).flatten()
-liftf_ec_vals = massf_vals * (g * np.cos(gamf_ec_vals) + vf_ec_vals * dgamf_ec_vals)
+# hf_ec_vals = np.empty(ef_vals.shape)
+# gamf_ec_vals = np.empty(ef_vals.shape)
+# dgamf_ec_vals = np.empty(ef_vals.shape)
+#
+# # Full Linearization (include stable and unstable modes, but at present energy rather than Ef)
+# for idx, ef_val in enumerate(ef_vals):
+#     GEf = np.array(GE_es_fun(massf_vals[idx], ef_val, hf_es_vals[idx], gamf_es_vals[idx]))
+#     Gf = np.array(G_es_fun(massf_vals[idx], ef_val, hf_es_vals[idx], gamf_es_vals[idx]))
+#
+#     eig_GEf, eig_vec_GEf = np.linalg.eig(GEf)
+#     idx_stablef = np.where(np.real(eig_GEf) < 0)  # Stable modes to suppress path error
+#     idx_unstablef = np.where(np.real(eig_GEf) > 0)  # Unstable modes to drive dy -> dyf
+#     eig_stablef = eig_GEf[idx_stablef]
+#     eig_unstablef = eig_GEf[idx_unstablef]
+#     eig_vec_stablef = eig_vec_GEf[:, idx_stablef[0]]
+#     eig_vec_unstablef = eig_vec_GEf[:, idx_unstablef[0]]
+#
+#     ego = np.maximum(ef_vals[-1] - ef_val, 100.)  # When Ego = 0, matrix inversion becomes ill conditioned
+#
+#     theta_egos = np.imag(eig_stablef[0]) * ego
+#     DCM_egos = np.vstack(((np.cos(theta_egos), np.sin(theta_egos)), (-np.sin(theta_egos), np.cos(theta_egos))))
+#     Vs0 = np.hstack((np.real(eig_vec_stablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_stablef[:, 0].reshape(-1, 1))))
+#     Vsf = np.exp(np.real(eig_stablef[0]) * ego) * Vs0 @ DCM_egos
+#
+#     theta_egou = np.imag(eig_unstablef[0]) * ego
+#     DCM_egou = np.vstack(((np.cos(theta_egou), np.sin(theta_egou)), (-np.sin(theta_egou), np.cos(theta_egou))))
+#     Vu0 = np.hstack((np.real(eig_vec_unstablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_unstablef[:, 0].reshape(-1, 1))))
+#     Vuf = np.exp(np.real(eig_unstablef[0]) * ego) * Vu0 @ DCM_egou
+#
+#     V0 = np.hstack((Vs0, Vu0))
+#     Vf = np.hstack((Vsf, Vuf))
+#
+#     # Calculate free coefficients in order to fix initial/final state
+#     dh0 = hf_vals[idx] - hf_es_vals[idx]
+#     dgam0 = gamf_vals[idx] - gamf_es_vals[idx]
+#     dhf = hf_vals[-1] - hf_es_vals[idx]
+#     dlam_gamf = 0.
+#
+#     idx_fixed0 = (0, 1)  # Fix dh0, dgam0 [because we can't change the initial state :)]
+#     idx_fixedf = (0, 3)  # Fix dhf, dlamgamf [i.e. final FPA free -> dlamgamf = 0]
+#
+#     V_fixed = np.vstack((V0[idx_fixed0, :], Vf[idx_fixedf, :]))
+#     z_fixed = np.vstack((dh0, dgam0, dhf, dlam_gamf))
+#     coeffs = np.linalg.solve(V_fixed, z_fixed)
+#     z0 = V0 @ coeffs
+#
+#     hf_ec_vals[idx] = z0[0, 0] + hf_es_vals[idx]
+#     gamf_ec_vals[idx] = z0[1, 0] + gamf_es_vals[idx]
+#     dgamf_ec_vals[idx] = float(Gf[1, :] @ z0) + dgamf_es_vals[idx]
+#
+# vf_ec_vals = (2 * (ef_vals - g * hf_ec_vals))**0.5
+# machf_ec_vals = vf_ec_vals / np.asarray(sped_fun(hf_ec_vals)).flatten()
+# liftf_ec_vals = massf_vals * (g * np.cos(gamf_ec_vals) + vf_ec_vals * dgamf_ec_vals)
 
 
 # ---- DYNAMICS & CONTROL LAWS -----------------------------------------------------------------------------------------
@@ -231,128 +251,13 @@ def generate_constant_ctrl(_const: float) -> Callable:
     return _const_control
 
 
-def zeroth_order_ae_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> np.array:
-    _h = _x[0]
-    _v = _x[1]
-    _gam = _x[2]
-    _mass = _x[3]
-    _e = g * _h + 0.5 * _v**2
-
-    # if _e > 4.46e6:
-    #     print(_e*1e-6)
-
-    # Solve for neighboring costate value to achieve required terminal conditions
-    # Solutions have form:
-    # s = sig +- j w [Complex eigenvalue]
-    # v = vs +- j vw [Complex eigenvector]
-    # [dx(dE); dlam(dE)] = exp(sig * dE) [vs vw] [cos(w dE) sin(w dE); -sin(w dE) cos(w dE)] [c1; c2]
-    # With known final perturbation (gamf free) dhf = hf_cmd - hf_outer, dlam_gamf = 0
-    _hf = _k_dict['h_f']
-    _vf = _k_dict['v_f']
-    _ef = g * _hf + 0.5 * _vf**2
-    _ego = max(_ef - _e, 0.)
-    _hf_guess = h_es_guess_interp(_ef)
-    _energy_climb_dictf = find_climb_path(_mass, _ef, _hf_guess)
-    eig_Gf, eig_vec_Gf = np.linalg.eig(_energy_climb_dictf['GE'])
-    idx_stablef = np.where(np.real(eig_Gf) > 0)  # Req. stability BACKWARDS in energy -> positive eigenvalues
-    eig_stablef = eig_Gf[idx_stablef]
-    eig_vec_stablef = eig_vec_Gf[:, idx_stablef[0]]
-
-    # Initial Conditions (Ego = 0)
-    Vsf_Ego0 = np.hstack((np.real(eig_vec_stablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_stablef[:, 0].reshape(-1, 1))))
-    dhf_Ego0 = _hf - _energy_climb_dictf['h']
-    dlam_gamf_Ego0 = 0.  # gamf free
-    zf_known_Ego0 = np.vstack((dhf_Ego0, dlam_gamf_Ego0))
-    Vsf_Ego0_known = Vsf_Ego0[(0, 3), :]  # dhf, dlam_gamf known [gamf free]
-    cf = np.linalg.solve(Vsf_Ego0_known, zf_known_Ego0)
-    _rotation_Ego = np.imag(eig_stablef[0]) * _ego
-
-    # Saturate rotation to the value the rotation does not cause z to oscillate (i.e. find the rotation angles where
-    # each element of z = 0 and choose the smallest)
-    for _row in list(Vsf_Ego0):
-        _rotation_Ego_row_max = np.arctan2(
-            (_row[0] * cf[0, 0] + _row[1] * cf[1, 0]), (_row[1] * cf[0, 0] - _row[0] * cf[1, 0])
-        )
-        _rotation_Ego_row_max = _rotation_Ego_row_max % (2 * np.pi)  # Wrap to positive angle
-        if _rotation_Ego > _rotation_Ego_row_max:
-            _rotation_Ego = _rotation_Ego_row_max
-
-    _c_dE = np.cos(_rotation_Ego)
-    _s_dE = np.sin(_rotation_Ego)
-    _DCM = np.vstack(((_c_dE, _s_dE), (-_s_dE, _c_dE)))
-    Vsf = Vsf_Ego0 @ _DCM
-    zf = np.exp(-np.real(eig_stablef[0])*_ego) * Vsf @ cf
-    dhf = zf[0, 0]
-    dgamf = zf[1, 0]
-    dlam_gamf = 0.
-    # dlam_gamf = zf[-1, 0]
-
-    # # Saturate dhf, dgamf based on direction of terminal constraint (i.e. remove oscillations)
-    # _sign_dhf = np.sign(dhf_Ego0)
-    # dhf = _sign_dhf * max(dhf * _sign_dhf, 0.)
-    # dgamf = _sign_dhf * max(dgamf * _sign_dhf, 0.)
-    # dlam_gamf = -_sign_dhf * max(dlam_gamf * -_sign_dhf, 0.)  # sign(lam_gam) opposite to sin(lift)
-
-    # Solve for neighboring costate value to damp out perturbation
-    _h_guess = float(h_es_guess_interp(_e))
-    _energy_climb_dict = find_climb_path(_mass, _e, _h_guess)
-    eig_G, eig_vec_G = np.linalg.eig(_energy_climb_dict['G'])
-    idx_stable = np.where(np.real(eig_G) < 0)
-    eig_vec_stable = eig_vec_G[:, idx_stable[0]]
-    Vs = np.hstack((np.real(eig_vec_stable[:, 0].reshape(-1, 1)), np.imag(eig_vec_stable[:, 0].reshape(-1, 1))))
-
-    Vs_known = Vs[(0, 1), :]  # h0, gam0 fixed
-    Vs_unknown = Vs[(2, 3), :]  # lam_h0, lam_gam0 unknown
-    dh0 = _h - _energy_climb_dict['h']
-    dgam0 = _gam - _energy_climb_dict['gam']
-    # dh0 = _h - (_energy_climb_dict['h'] + dhf)  # Include dhf in offset
-    # dgam0 = _gam - (_energy_climb_dict['gam'] + dgamf)
-    z0_known = np.vstack((dh0, dgam0))
-    z0_unknown = Vs_unknown @ np.linalg.solve(Vs_known, z0_known)
-    dlam_h = z0_unknown[0, 0]
-    dlam_gam = z0_unknown[1, 0]
-
-    # Use the perturbed costate to estimate the optimal control
-    _lam_gam = _energy_climb_dict['lam_gam'] + dlam_gam + dlam_gamf
-    _lam_e = _energy_climb_dict['lam_E']
-    _mach = _v / atm.speed_of_sound(_h)
-    _CD2 = float(CD2_fun(_mach))
-    _rho = atm.density(_h)
-    _lift = _lam_gam/_lam_e * (_rho * s_ref) / (4 * _CD2)
-
-    # Ensure lift results in positive T - D
-    _thrust_max = float(thrust_fun(_mach, _h))
-    _qdyn_s_ref = 0.5 * _rho * _v**2 * s_ref
-    _CD0 = float(CD0_fun(_mach))
-    _drag0 = _qdyn_s_ref * _CD0
-    _lift_mag = abs(_lift)
-    _lift_mag_max = (_qdyn_s_ref/_CD2 * (_thrust_max - _drag0))**0.5
-    if _thrust_max < _drag0:
-        # Choose min. drag value if it is impossible to achieve T > D
-        _lift = 0.
-    elif _lift_mag > _lift_mag_max:
-        # If unconstrained lift causes T < D (loss of energy), constrain it.
-        _lift = np.sign(_lift) * _lift_mag_max
-
-    _load = _lift / (_mass * g)
-
-    _thrust_frac = 1.
-    # # Use max thrust until E = Ef. Then dE/dt = 0
-    # if _e < _ef:
-    #     _thrust_frac = 1.
-    # else:
-    #     _drag = _qdyn_s_ref * _CD0 + _CD2 / _qdyn_s_ref * _lift ** 2
-    #     _thrust_frac = _drag / _thrust_max
-
-    return np.asarray((_load, _thrust_frac))
-
-
 def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> np.array:
     _h = _x[0]
     _v = _x[1]
     _gam = _x[2]
     _mass = _x[3]
     # _h_es_guess = _x[4]
+    # _h_esf_guess = _x[5]
 
     _e = g * _h + 0.5 * _v**2
     _mach = _v / atm.speed_of_sound(_h)
@@ -364,7 +269,10 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
 
     _h_es_guess = float(h_es_guess_interp(_e))
     _gam_es_guess = float(gam_es_guess_interp(_e))
-    _x_es, _lift_es, _success = newton_seach_multiple_start(_mass, _e, _h=_h_es_guess, _gam=_gam_es_guess)
+    _lam_gam_es_guess = float(lam_gam_es_guess_interp(_e))
+    _x_es, _lift_es, _success = newton_seach_multiple_start(
+        _mass, _e, _h=_h_es_guess, _gam=_gam_es_guess, _lam_gam=_lam_gam_es_guess
+    )
 
     # Propagation of Energy State Estimate
     if _success:
@@ -380,15 +288,59 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _v_es = (2*(_e - g * _h_es))**0.5
     _dgames_dt = (_lift_es - _mass * g * np.cos(_gam_es)) / (_mass * _v_es)
 
-    # # Modify path to include offset for terminal criteria
-    # _hf = k_dict['h_f']
-    # _dhf =
-    # _dlamgamf = 0.
+    # Modify path to include offset for terminal criteria --------------------------------------------------------------
+    _hf = k_dict['h_f']
+    _vf = k_dict['v_f']
+    _ef = g * _hf + 0.5 * _vf**2
+    _h_esf_guess = float(h_es_guess_interp(_ef))
+    _gam_esf_guess = float(gam_es_guess_interp(_ef))
+    _lam_gam_esf_guess = float(lam_gam_es_guess_interp(_ef))
+    _x_esf, _lift_esf, _success = newton_seach_multiple_start(
+        _mass, _ef, _h=_h_esf_guess, _gam=_gam_esf_guess, _lam_gam=_lam_gam_esf_guess
+    )
 
-    # Calculate displacement from equilibrium state (for feedback)
+    # Propagation of Terminal Energy State Estimate
+    if _success:
+        _h_esf = _x_esf[0]
+        _gam_esf = _x_esf[1]
+        _lam_gam_esf = _x_esf[2]
+        _dhesf_dt = -_gain_h_es * (_h_esf - _h_esf_guess)
+    else:
+        _h_esf = _h_esf_guess
+        _gam_esf = _gam_esf_guess
+        _lam_gam_esf = _lam_gam_esf_guess
+        _dhesf_dt = 0.
+
+    _dhf = _hf - _h_esf
+    _dlamgamf = 0. - _lam_gam_esf
+    _def = min(_e - _ef, 0.)
+
+    GEf = np.array(GE_es_fun(_mass, _ef, _h_esf, _gam_esf))
+    Gf = np.array(G_es_fun(_mass, _ef, _h_esf, _gam_esf))
+    eig_Gf, eig_vec_Gf = np.linalg.eig(GEf)
+    idx_stablef = np.where(np.real(eig_Gf) > 0)  # Req. stability BACKWARDS in energy -> positive eigenvalues
+    eig_stablef = eig_Gf[idx_stablef]
+    eig_vec_stablef = eig_vec_Gf[:, idx_stablef[0]]
+
+    Vsf_Ego0 = np.hstack((np.real(eig_vec_stablef[:, 0].reshape(-1, 1)), np.imag(eig_vec_stablef[:, 0].reshape(-1, 1))))
+    zf_known_Ego0 = np.vstack((_dhf, _dlamgamf))
+    Vsf_Ego0_known = Vsf_Ego0[(0, 3), :]  # dhf, dlam_gamf known [gamf free]
+    cf = np.linalg.solve(Vsf_Ego0_known, zf_known_Ego0)
+
+    _theta_de = np.imag(eig_stablef[0]) * _def
+    _c_dE = np.cos(_theta_de)
+    _s_dE = np.sin(_theta_de)
+    _DCM = np.vstack(((_c_dE, _s_dE), (-_s_dE, _c_dE)))
+    zf = np.exp(np.real(eig_stablef[0]) * _dEf_val) * Vsf_Ego0 @ _DCM @ cf
+
+    _h_ref = _h_es + zf[0, 0]
+    _gam_ref = _gam_es + zf[1, 0]
+    _dgam_dt_ref = _dgames_dt + float(Gf[1, :] @ zf)
+
+    # Calculate displacement from equilibrium state (for feedback) -----------------------------------------------------
     # d(dgam0)/dt = G0gam z0
     # Second, calculate z0 from h_es, gam_es
-    _dx0 = np.vstack((_h - _h_es, _gam - _gam_es))
+    _dx0 = np.vstack((_h - _h_ref, _gam - _gam_ref))
 
     _G = np.asarray(G_es_fun(_mass, _e, _h_es, _gam_es))
     _eig_G, _eig_vec_G = np.linalg.eig(_G)
@@ -401,7 +353,7 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _ddgamdt0 = float(_G[1, :] @ _z0)
 
     # Calculate control input in order to achieve d(gam)/dt
-    _dgamdt = _dgames_dt + _ddgamdt0
+    _dgamdt = _dgam_dt_ref + _ddgamdt0
     # Lift = W cos(gam) + mV d(gam)/dt
     _lift = _mass * (g * np.cos(_gam) + _v * _dgamdt)
 
