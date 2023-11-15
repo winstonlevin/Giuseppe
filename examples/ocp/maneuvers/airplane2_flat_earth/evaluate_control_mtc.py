@@ -346,6 +346,14 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     _gam_ref = _gam_es + zf[1, 0]
     _dgam_dt_ref = _dgames_dt + float(Gf[1, :] @ zf)
 
+    # TODO - dh/dt and dgam/dt reference are not simultaneously feasible.
+    #
+    # _v_ref = (2 * (_e - g * _h_ref))**0.5
+    # _dh_dt_ref = _v_es * np.sin(_gam_es) + float(Gf[0, :] @ zf)
+    # _v_ref = _dh_dt_ref / np.sin(_gam_ref)
+    # _h_ref = (_e - 0.5 * _v_ref**2)/g
+    # _gam_ref =
+
     # Calculate displacement from equilibrium state (for feedback) -----------------------------------------------------
     # d(dgam0)/dt = G0gam z0
     # Second, calculate z0 from h_es, gam_es
@@ -400,8 +408,6 @@ def generate_ctrl_law(_ctrl_law, _u_interp=None) -> Callable:
             # _load = saturate(_load, load_min, load_max)
             _thrust_frac = 1.
             return np.asarray((_load, _thrust_frac))
-    elif _ctrl_law == 'aenoc':
-        _ctrl_fun = zeroth_order_ae_ctrl_law
     elif _ctrl_law == 'dgamdt':
         _ctrl_fun = climb_estimator_ctrl_law
     else:
@@ -433,10 +439,6 @@ def eom(_t: float, _x: np.array, _u: np.array, _p_dict: dict, _k_dict: dict) -> 
     _dv = (_thrust - _drag) / _mass - g * np.sin(_gam)
     _dgam = _lift / (_mass * _v) - g/_v * np.cos(_gam)
     _dm = -_thrust / Isp
-
-    if hasattr(_dh, '__len__') or hasattr(_dv, '__len__') or hasattr(_dgam, '__len__') or hasattr(_dm, '__len__'):
-        print('Ragged array!')
-        zeroth_order_ae_ctrl_law(_t, _x, _p_dict, _k_dict)
 
     return np.array((_dh, _dv, _dgam, _dm))
 
