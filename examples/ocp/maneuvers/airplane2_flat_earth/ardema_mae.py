@@ -143,6 +143,9 @@ lam_gam_es_fun = ca.Function(
     'lam_gam', (m, E, h, gam), (lam_gam_es,), ('m', 'E', 'h', 'gam'), ('lam_gam',)
 )
 
+# Backstepping Control
+# treat each state (E, h, gam) as if on a separate time scale. Outer solution is the same, however
+
 
 def solve_zero(mass, energy, h_guess):
     _x_val, _, _flag, __ = sp.optimize.fsolve(
@@ -156,8 +159,9 @@ def solve_zero(mass, energy, h_guess):
 
 def find_climb_path(mass, energy, h_guess):
     _h, _flag = solve_zero(mass, energy, h_guess)
+    success = _flag == _f_zero_converged_flag
 
-    if _flag != _f_zero_converged_flag:
+    if not success:
         h_search_vals = np.linspace(0., 2*h_guess, 1000)
         fzero_search_vals = np.empty(h_search_vals.shape)
         for jdx, h_search_val in enumerate(h_search_vals):
@@ -177,6 +181,7 @@ def find_climb_path(mass, energy, h_guess):
                 sol_array = np.array(sol_list)
                 sol_distance = (sol_array - h_guess) ** 2
                 _h = sol_array[np.where(sol_distance == np.min(sol_distance))[0][0]]
+                success = True
 
     _v = (2 * (energy - g * _h))**0.5
     _mach = _v / float(sped_fun(_h))
@@ -202,7 +207,7 @@ def find_climb_path(mass, energy, h_guess):
         'm': mass, 'E': energy, 'h': _h, 'V': _v, 'gam': _gam,
         'lam_E': _lam_E, 'lam_h': _lam_h, 'lam_gam': _lam_gam,
         'L': _lift, 'D': _drag, 'T': _thrust, 'M': _mach, 'qdyn_s_ref': _qdyn_s_ref,
-        'G': _G, 'GE': _GE
+        'G': _G, 'GE': _GE, 'success': success
     }
     return _climb_dict
 

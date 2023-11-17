@@ -401,6 +401,50 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     return np.asarray((_load, _thrust_frac))
 
 
+# def backstepping_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> np.array:
+#     _h = _x[0]
+#     _v = _x[1]
+#     _gam = _x[2]
+#     _mass = _x[3]
+#
+#     _e = g * _h + 0.5 * _v**2
+#     _mach = _v / atm.speed_of_sound(_h)
+#     _CD0 = float(CD0_fun(_mach))
+#     _CD2 = float(CD2_fun(_mach))
+#     _rho = atm.density(_h)
+#     _qdyn_s_ref = 0.5 * _rho * _v ** 2 * s_ref
+#     _drag0 = _qdyn_s_ref * _CD0
+#     _drag2_inv = _qdyn_s_ref / _CD2
+#     _thrust = float(thrust_fun(_mach, _h))
+#     _weight = _mass * g
+#
+#     # Outer Loop (find h* at current E)
+#     _h_es_guess = float(h_es_guess_interp(_e))
+#     _dict = find_climb_path(_mass, _e, _h_es_guess)
+#     _h_es = _dict['h']
+#     _v_es = _dict['V']
+#     _thrust_es = _dict['T']
+#     _drag_es = _dict['D']
+#
+#     # First Inner Loop (find gam* at current h)
+#     _gam_es2 = _drag2_inv/_weight**2 * (_thrust - _drag0 - _v_es/_v * (_thrust_es - _drag_es)) - 1
+#     _gam_es = np.sign(_h_es - _h) * saturate(_gam_es2, 0., 1.)**0.5
+#
+#     # Second Inner Loop (find L* at current gam)
+#     _beta =
+#
+#     if not _dict['success']:
+#         print('Oops! Climb path not found! :/')
+#
+#     _thrust_frac = 1.
+#     _load = _lift / (_mass * g)
+#
+#     if hasattr(_load, '__len__') or hasattr(_thrust_frac, '__len__'):
+#         print('Oops! u wrong shape! :/')
+#
+#     return np.asarray((_load, _thrust_frac))
+
+
 def generate_ctrl_law(_ctrl_law, _u_interp=None) -> Callable:
     if _ctrl_law == 'interp':
         def _ctrl_fun(_t, _x, _p_dict, _k_dict):
