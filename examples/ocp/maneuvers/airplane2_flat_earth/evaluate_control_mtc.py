@@ -17,7 +17,7 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 COMPARE_SWEEP = True
 # CTRL_LAWS are: {interp, aenoc, dgamdt}
-CTRL_LAWS = ('dgamdt',)
+CTRL_LAWS = ('backstep',)
 # CTRL_LAWS = []
 
 with open('sol_set_mtc_xf.data', 'rb') as f:
@@ -401,48 +401,61 @@ def climb_estimator_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: di
     return np.asarray((_load, _thrust_frac))
 
 
-# def backstepping_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> np.array:
-#     _h = _x[0]
-#     _v = _x[1]
-#     _gam = _x[2]
-#     _mass = _x[3]
-#
-#     _e = g * _h + 0.5 * _v**2
-#     _mach = _v / atm.speed_of_sound(_h)
-#     _CD0 = float(CD0_fun(_mach))
-#     _CD2 = float(CD2_fun(_mach))
-#     _rho = atm.density(_h)
-#     _qdyn_s_ref = 0.5 * _rho * _v ** 2 * s_ref
-#     _drag0 = _qdyn_s_ref * _CD0
-#     _drag2_inv = _qdyn_s_ref / _CD2
-#     _thrust = float(thrust_fun(_mach, _h))
-#     _weight = _mass * g
-#
-#     # Outer Loop (find h* at current E)
-#     _h_es_guess = float(h_es_guess_interp(_e))
-#     _dict = find_climb_path(_mass, _e, _h_es_guess)
-#     _h_es = _dict['h']
-#     _v_es = _dict['V']
-#     _thrust_es = _dict['T']
-#     _drag_es = _dict['D']
-#
-#     # First Inner Loop (find gam* at current h)
-#     _gam_es2 = _drag2_inv/_weight**2 * (_thrust - _drag0 - _v_es/_v * (_thrust_es - _drag_es)) - 1
-#     _gam_es = np.sign(_h_es - _h) * saturate(_gam_es2, 0., 1.)**0.5
-#
-#     # Second Inner Loop (find L* at current gam)
-#     _beta =
-#
-#     if not _dict['success']:
-#         print('Oops! Climb path not found! :/')
-#
-#     _thrust_frac = 1.
-#     _load = _lift / (_mass * g)
-#
-#     if hasattr(_load, '__len__') or hasattr(_thrust_frac, '__len__'):
-#         print('Oops! u wrong shape! :/')
-#
-#     return np.asarray((_load, _thrust_frac))
+def backstepping_ctrl_law(_t: float, _x: np.array, _p_dict: dict, _k_dict: dict) -> np.array:
+    _h = _x[0]
+    _v = _x[1]
+    _gam = _x[2]
+    _mass = _x[3]
+
+    _e = g * _h + 0.5 * _v**2
+    _mach = _v / atm.speed_of_sound(_h)
+    _CD0 = float(CD0_fun(_mach))
+    _CD2 = float(CD2_fun(_mach))
+    _rho = atm.density(_h)
+    _qdyn_s_ref = 0.5 * _rho * _v ** 2 * s_ref
+    _drag0 = _qdyn_s_ref * _CD0
+    _drag2_inv = _qdyn_s_ref / _CD2
+    _thrust = float(thrust_fun(_mach, _h))
+    _weight = _mass * g
+
+    # Outer Loop (find h* at current E)
+    _h_es_guess = float(h_es_guess_interp(_e))
+    _dict = find_climb_path(_mass, _e, _h_es_guess)
+    _h_es = _dict['h']
+    _v_es = _dict['V']
+    _thrust_es = _dict['T']
+    _drag_es = _dict['D']
+
+    # First Inner Loop (find gam* at current h)
+    _gam_es2 = _drag2_inv/_weight**2 * (_thrust - _drag0 - _v_es/_v * (_thrust_es - _drag_es)) - 1
+    _gam_es = np.sign(_h_es - _h) * saturate(_gam_es2, 0., 1.)**0.5
+
+    # Second Inner Loop (suboptimal feedback controller for gam)
+    _dh_dt_mag = abs(_v * np.sin(_gam))
+    _dgam_dt_cmd = 10 * _dh_dt_mag * (_gam_es - _gam)
+    _lift = _mass * (g * np.cos(_gam) + _v * _dgam_dt_cmd)
+
+    # Ensure lift results in positive T - D
+    _thrust_max = float(thrust_fun(_mach, _h))
+    _lift_mag = abs(_lift)
+    _lift_mag_max = (_qdyn_s_ref/_CD2 * (_thrust_max - _drag0))**0.5
+    if _thrust_max < _drag0:
+        # Choose min. drag value if it is impossible to achieve T > D
+        _lift = 0.
+    elif _lift_mag > _lift_mag_max:
+        # If unconstrained lift causes T < D (loss of energy), constrain it.
+        _lift = np.sign(_lift) * _lift_mag_max
+
+    if not _dict['success']:
+        print('Oops! Climb path not found! :/')
+
+    _thrust_frac = 1.
+    _load = _lift / (_mass * g)
+
+    if hasattr(_load, '__len__') or hasattr(_thrust_frac, '__len__'):
+        print('Oops! u wrong shape! :/')
+
+    return np.asarray((_load, _thrust_frac))
 
 
 def generate_ctrl_law(_ctrl_law, _u_interp=None) -> Callable:
@@ -454,6 +467,8 @@ def generate_ctrl_law(_ctrl_law, _u_interp=None) -> Callable:
             return np.asarray((_load, _thrust_frac))
     elif _ctrl_law == 'dgamdt':
         _ctrl_fun = climb_estimator_ctrl_law
+    elif _ctrl_law == 'backstep':
+        _ctrl_fun = backstepping_ctrl_law
     else:
         _ctrl_fun = generate_constant_ctrl(0.)
     return _ctrl_fun
