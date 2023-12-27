@@ -221,10 +221,10 @@ class CompAdjoints(Adjoints):
         def compute_control_convexity(independent: float, states: np.ndarray, costates: np.ndarray,
                                       controls: np.ndarray, parameters: np.ndarray, constants: np.ndarray):
             _h_uu = np.asarray(_compute_h_uu(independent, states, costates, controls, parameters, constants))
-            if not np.isnan(_h_uu) and not np.isinf(_h_uu):
-                return np.linalg.eigvals(_h_uu)
-            else:
+            if np.any(np.logical_or(np.isnan(_h_uu), np.isinf(_h_uu))):
                 return np.nan * np.empty((_h_uu.shape[0],))
+            else:
+                return np.linalg.eigvals(_h_uu)
 
         if self.use_jit_compile:
             compute_control_convexity = jit_compile(compute_control_convexity, self.args_numba_signature['dynamic'])
