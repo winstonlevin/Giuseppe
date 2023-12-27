@@ -22,9 +22,9 @@ scorient.add_control('u3')
 Ix = 1
 Iy = 100
 Iz = 100
-scorient.add_constant('Ix', Ix)
-scorient.add_constant('Iy', Iy)
-scorient.add_constant('Iz', Iz)
+scorient.add_constant('Ix', 1)
+scorient.add_constant('Iy', 1)
+scorient.add_constant('Iz', 1)
 
 q1_0 = 0.0
 q2_0 = 0.0
@@ -58,11 +58,13 @@ scorient.add_constant('w3_f', w3_f)
 
 u_min = -1.0
 u_max = 1.0
-scorient.add_constant('eps_u', 5e-1)
+eps_u = 1e-1
+scorient.add_constant('eps_u', eps_u)
 scorient.add_constant('u_min', u_min)
 scorient.add_constant('u_max', u_max)
 
-scorient.set_cost('0', '1', '0')  # Minimum time problem
+scorient.add_constant('cost_off', 1e3)
+scorient.set_cost('0', '1 + cost_off * (u1**2 + u2**2)', '0')  # Minimum time problem
 
 scorient.add_constraint('initial', 't')
 scorient.add_constraint('initial', 'q1 - q1_0')
@@ -98,38 +100,51 @@ scorient.add_inequality_constraint(
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     comp_scorient = giuseppe.problems.symbolic.SymDual(
         scorient, control_method='differential'
-    ).compile(use_jit_compile=True)
+    ).compile(use_jit_compile=False)
     num_solver = giuseppe.numeric_solvers.SciPySolver(comp_scorient, verbose=0, max_nodes=0, node_buffer=10)
 
 if reg_meth in ['trig', 'sin']:
     def ctrl2reg(_alpha):
-        return np.arcsin(2/(alpha_max - alpha_min) * (_alpha - 0.5*(alpha_max + alpha_min)))
+        return np.arcsin(2/(u_max - u_min) * (_alpha - 0.5*(u_max + u_min)))
 elif reg_meth in ['atan', 'arctan']:
     def ctrl2reg(_alpha):
-        return eps_alpha * np.tan(0.5 * (2*_alpha - alpha_max - alpha_min) * np.pi / (alpha_max - alpha_min))
+        return eps_u * np.tan(0.5 * (2*_alpha - u_max - u_min) * np.pi / (u_max - u_min))
 else:
     def ctrl2reg(_alpha):
         return _alpha
 
+t_span = np.linspace(0., 1., 6)
+t_sw = 0.5 * t_span[-1]
+uf = 0.5
+
+
+def ctrl_law(_t, _x, _p, _k):
+    _u3 = 2 * uf * (_t - t_sw)
+    return ctrl2reg(np.array((0., 0., _u3)))
+
+
 guess = giuseppe.guess_generation.auto_propagate_guess(
     comp_scorient,
-    control=ctrl2reg(np.array((0.0, 0.5, 0.5, 0.0))),
-    t_span=1.0)
+    control=ctrl_law,
+    t_span=t_span
+)
 
 with open('guess.data', 'wb') as f:
     pickle.dump(guess, f)
 
 seed_sol = num_solver.solve(guess)
 
+print(seed_sol.converged)
+
 with open('seed_sol.data', 'wb') as f:
     pickle.dump(seed_sol, f)
 
-cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-
-cont.add_linear_series(100, {'q1_f': q1_f, 'q2_f': q2_f, 'q3_f': q3_f, 'q4_f': q4_f})
-cont.add_linear_series(100, {'w1_f': w1_f, 'w2_f': w2_f, 'w3_f': w3_f})
-cont.add_logarithmic_series(200, {'eps_u': 1e-6})
-
-sol_set = cont.run_continuation()
-
-sol_set.save('sol_set.data')
+# cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+#
+# cont.add_linear_series(100, {'q1_f': q1_f, 'q2_f': q2_f, 'q3_f': q3_f, 'q4_f': q4_f})
+# cont.add_linear_series(100, {'w1_f': w1_f, 'w2_f': w2_f, 'w3_f': w3_f})
+# cont.add_logarithmic_series(200, {'eps_u': 1e-6})
+#
+# sol_set = cont.run_continuation()
+#
+# sol_set.save('sol_set.data')
