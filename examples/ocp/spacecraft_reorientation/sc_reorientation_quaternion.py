@@ -58,13 +58,14 @@ scorient.add_constant('w3_f', w3_f)
 
 u_min = -1.0
 u_max = 1.0
-eps_u = 1e-1
+eps_u = 1e-3
 scorient.add_constant('eps_u', eps_u)
 scorient.add_constant('u_min', u_min)
 scorient.add_constant('u_max', u_max)
 
-scorient.add_constant('cost_off', 1e3)
-scorient.set_cost('0', '1 + cost_off * (u1**2 + u2**2)', '0')  # Minimum time problem
+# scorient.add_constant('cost_off', 1e3)
+# scorient.set_cost('0', '1 + cost_off * (u1**2 + u2**2)', '0')  # Minimum time problem
+scorient.set_cost('0', '1', '0')  # Minimum time problem
 
 scorient.add_constraint('initial', 't')
 scorient.add_constraint('initial', 'q1 - q1_0')
@@ -99,7 +100,7 @@ scorient.add_inequality_constraint(
 
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     comp_scorient = giuseppe.problems.symbolic.SymDual(
-        scorient, control_method='differential'
+        scorient, control_method='algebraic'
     ).compile(use_jit_compile=False)
     num_solver = giuseppe.numeric_solvers.SciPySolver(comp_scorient, verbose=0, max_nodes=0, node_buffer=10)
 
@@ -113,7 +114,7 @@ else:
     def ctrl2reg(_alpha):
         return _alpha
 
-t_span = np.linspace(0., 1., 6)
+t_span = np.linspace(0., 0.1, 6)
 t_sw = 0.5 * t_span[-1]
 uf = 0.5
 
@@ -125,8 +126,9 @@ def ctrl_law(_t, _x, _p, _k):
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     comp_scorient,
-    control=ctrl_law,
-    t_span=t_span
+    t_span=t_span,
+    initial_costates=np.array((0., 0., 1., 1., 0., 0., 1.)) + 1e-6,
+    fit_adjoints=False
 )
 
 with open('guess.data', 'wb') as f:

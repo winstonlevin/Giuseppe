@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 PLOTAUX = True
-DATA = 1
+DATA = 0
 
 if DATA == 0:
     with open('guess.data', 'rb') as f:
