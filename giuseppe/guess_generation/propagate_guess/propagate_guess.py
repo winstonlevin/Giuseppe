@@ -6,7 +6,7 @@ from numpy.typing import ArrayLike
 from scipy.integrate import solve_ivp
 
 from giuseppe.data_classes import Solution
-from giuseppe.problems.protocols import BVP, OCP, Dual
+from giuseppe.problems.protocols import BVP, OCP, Dual, AlgebraicControlHandler
 from giuseppe.guess_generation.initialize_guess import initialize_guess, process_static_value, process_dynamic_value
 
 
@@ -318,18 +318,27 @@ def propagate_dual_guess_from_guess(
         initial_costates = guess.lam[:, 0]
 
     if isinstance(control, Callable):
+        def control_wrapped(_t, _x, _lam, _p, _k):
+            return control(_t, _x, _p, _k)
+    elif control is None and isinstance(dual.control_handler, AlgebraicControlHandler):
+        def control_wrapped(_t, _x, _lam, _p, _k):
+            return dual.control_handler.compute_control(_t, _x, _lam, _p, _k)
+    else:
+        control_wrapped = control
+
+    if isinstance(control_wrapped, Callable):
         def _compute_dynamics_wrapped(_t, _y):
             _x, _lam = _y[:num_states], _y[num_states:num_states + num_costates]
-            _u = np.asarray(control(_t, _x, p, k))
+            _u = np.asarray(control_wrapped(_t, _x, _lam, p, k))
             _x_dot = _compute_dynamics(_t, _x, _u, p, k)
             _lam_dot = _compute_costate_dynamics(_t, _x, _lam, _u, p, k)
             return np.concatenate((_x_dot, _lam_dot))
 
     else:
-        if control is None:
-            control = guess.u[:, 0]
+        if control_wrapped is None:
+            control_wrapped = guess.u[:, 0]
 
-        u = process_static_value(control, dual.num_controls)
+        u = process_static_value(control_wrapped, dual.num_controls)
 
         def _compute_dynamics_wrapped(_t, _y):
             _x, _lam = _y[:num_states], _y[num_states:num_states + num_costates]
@@ -354,9 +363,10 @@ def propagate_dual_guess_from_guess(
         guess.x = np.flip(guess.x, axis=1)
         guess.lam = np.flip(guess.lam, axis=1)
 
-    if isinstance(control, Callable):
-        guess.u = np.asarray([control(t_i, x_i, p, k) for t_i, x_i in zip(guess.t, guess.x.T)]).T
+    if isinstance(control_wrapped, Callable):
+        guess.u = np.asarray([control_wrapped(t_i, x_i, lam_i, p, k) for t_i, x_i, lam_i in zip(
+            guess.t, guess.x.T, guess.lam.T)]).T
     else:
-        guess.u = process_dynamic_value(control, (dual.num_controls, len(guess.t)))
+        guess.u = process_dynamic_value(control_wrapped, (dual.num_controls, len(guess.t)))
 
     return guess
