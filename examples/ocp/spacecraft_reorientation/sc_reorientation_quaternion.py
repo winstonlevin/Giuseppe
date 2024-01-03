@@ -100,7 +100,7 @@ scorient.add_inequality_constraint(
 
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     comp_scorient = giuseppe.problems.symbolic.SymDual(
-        scorient, control_method='algebraic'
+        scorient, control_method='differential'
     ).compile(use_jit_compile=False)
     num_solver = giuseppe.numeric_solvers.SciPySolver(comp_scorient, verbose=0, max_nodes=0, node_buffer=10)
 
@@ -126,9 +126,10 @@ def ctrl_law(_t, _x, _p, _k):
 
 guess = giuseppe.guess_generation.auto_propagate_guess(
     comp_scorient,
+    control=np.array((0., 0., np.pi/2)),
     t_span=t_span,
-    initial_costates=np.array((0., 0., 1., 1., 0., 0., 1.)) + 1e-6,
-    fit_adjoints=False
+    initial_costates=np.array((0., 0., 1., 1., 0., 0., 1.)),
+    fit_adjoints=False, use_optimal_control_law=True
 )
 
 with open('guess.data', 'wb') as f:
