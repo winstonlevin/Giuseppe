@@ -34,7 +34,8 @@ def auto_propagate_guess(
         quadrature: str = 'trapezoidal',
         condition_adjoints: bool = False,
         verbose: bool = False,
-        immutable_constants: Optional[Iterable] = None
+        immutable_constants: Optional[Iterable] = None,
+        use_optimal_control_law: bool = False
 ) -> Solution:
 
     """
@@ -78,6 +79,8 @@ def auto_propagate_guess(
     verbose : bool, default=False
     immutable_constants : Optional[Iterable], default=None
         iterator of constant names which projection onto boundary conditions will not change
+    use_optimal_control_law : bool, default=False
+        True -> propagate u using states and costates if no u is supplied. False -> use default constant u
 
     Returns
     -------
@@ -105,7 +108,7 @@ def auto_propagate_guess(
             abs_tol=abs_tol, rel_tol=rel_tol, max_step=max_step, reverse=reverse, default_value=default_value,
             match_constants=match_constants, fit_states=fit_states, fit_adjoints=fit_adjoints,
             condition_adjoints=condition_adjoints, quadrature=quadrature, verbose=verbose,
-            immutable_constants=immutable_constants
+            immutable_constants=immutable_constants, use_optimal_control_law=use_optimal_control_law
         )
     else:
         raise RuntimeError(f'Cannot process problem of class {type(problem)}')
@@ -210,7 +213,8 @@ def auto_propagate_dual_guess(
         quadrature: str = 'simpson',
         condition_adjoints: bool = False,
         verbose: bool = False,
-        immutable_constants: Optional[Iterable] = None
+        immutable_constants: Optional[Iterable] = None,
+        use_optimal_control_law: bool = False
 ) -> Solution:
 
     guess = initialize_guess(dual, default_value=default_value, t_span=t_span, x=initial_states, lam=initial_costates,
@@ -232,7 +236,7 @@ def auto_propagate_dual_guess(
     else:
         guess = propagate_dual_guess_from_guess(
             dual, t_span, guess, control=control, abs_tol=abs_tol, rel_tol=rel_tol, max_step=max_step,
-            reverse=reverse)
+            reverse=reverse, use_optimal_control_law=use_optimal_control_law)
 
     if match_constants:
         if verbose:

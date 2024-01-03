@@ -6,8 +6,9 @@ from numpy.typing import ArrayLike
 from scipy.integrate import solve_ivp
 
 from giuseppe.data_classes import Solution
-from giuseppe.problems.protocols import BVP, OCP, Dual, AlgebraicControlHandler
+from giuseppe.problems.protocols import BVP, OCP, Dual, AlgebraicControlHandler, DifferentialControlHandler
 from giuseppe.guess_generation.initialize_guess import initialize_guess, process_static_value, process_dynamic_value
+from giuseppe.guess_generation.gauss_newton import gauss_newton
 
 
 # DEFAULT_MAX_STEP_FRAC = 4.
@@ -72,6 +73,8 @@ def propagate_guess(
        absolute tolerance for propagation
     rel_tol : float, default=1e-4
        relative tolerance for propagation
+    max_step : int, default=Inf
+        maximum step size for propagation
     default_value : float, default=1
         input_value used if no input_value is given
 
@@ -292,6 +295,7 @@ def propagate_dual_guess_from_guess(
         rel_tol: float = 1e-4,
         max_step: Optional[float] = None,
         reverse: bool = False,
+        use_optimal_control_law: bool = True
 ) -> Solution:
     if isinstance(t_span, (float, int)):
         t_span = np.asarray([0., t_span], dtype=float)
@@ -305,8 +309,8 @@ def propagate_dual_guess_from_guess(
         max_step = np.inf
 
     guess = deepcopy(input_guess)
-    num_states, num_costates, _compute_dynamics, _compute_costate_dynamics = dual.num_states, dual.num_costates,\
-        dual.compute_dynamics, dual.compute_costate_dynamics
+    num_states, num_costates, num_controls, _compute_dynamics, _compute_costate_dynamics = \
+        dual.num_states, dual.num_costates, dual.num_controls, dual.compute_dynamics, dual.compute_costate_dynamics
     p, nu0, nuf, k = guess.p, guess.nu0, guess.nuf, guess.k
 
     if reverse:
@@ -317,14 +321,18 @@ def propagate_dual_guess_from_guess(
         initial_states = guess.x[:, 0]
         initial_costates = guess.lam[:, 0]
 
+    # Unpack control law
+    control_wrapped = control
+    propagate_control = use_optimal_control_law and not isinstance(control, Callable) \
+        and isinstance(dual.control_handler, DifferentialControlHandler)
+
     if isinstance(control, Callable):
         def control_wrapped(_t, _x, _lam, _p, _k):
             return control(_t, _x, _p, _k)
-    elif control is None and isinstance(dual.control_handler, AlgebraicControlHandler):
-        def control_wrapped(_t, _x, _lam, _p, _k):
-            return dual.control_handler.compute_control(_t, _x, _lam, _p, _k)
-    else:
-        control_wrapped = control
+    elif use_optimal_control_law and control is None:
+        if isinstance(dual.control_handler, AlgebraicControlHandler):
+            def control_wrapped(_t, _x, _lam, _p, _k):
+                return dual.control_handler.compute_control(_t, _x, _lam, _p, _k)
 
     if isinstance(control_wrapped, Callable):
         def _compute_dynamics_wrapped(_t, _y):
@@ -334,6 +342,14 @@ def propagate_dual_guess_from_guess(
             _lam_dot = _compute_costate_dynamics(_t, _x, _lam, _u, p, k)
             return np.concatenate((_x_dot, _lam_dot))
 
+    elif propagate_control:
+        def _compute_dynamics_wrapped(_t, _y):
+            _x, _u, _lam = _y[:num_states], _y[num_states:num_states + num_controls], \
+                           _y[num_states + num_controls:num_states + num_controls + num_costates]
+            _x_dot = _compute_dynamics(_t, _x, _u, p, k)
+            _u_dot = dual.control_handler.compute_control_dynamics(_t, _x, _lam, _u, p, k)
+            _lam_dot = _compute_costate_dynamics(_t, _x, _lam, _u, p, k)
+            return np.concatenate((_x_dot, _u_dot, _lam_dot))
     else:
         if control_wrapped is None:
             control_wrapped = guess.u[:, 0]
@@ -351,22 +367,40 @@ def propagate_dual_guess_from_guess(
     else:
         t_eval = None
 
-    ivp_sol: _IVP_SOL = solve_ivp(_compute_dynamics_wrapped, t_span[(0, -1), ],
-                                  np.concatenate((initial_states, initial_costates)),
+    if propagate_control:
+        if control is None:
+            initial_controls = gauss_newton(
+                lambda _u: dual.control_handler.compute_control_boundary_conditions(
+                    t_span[0], initial_states, initial_costates, _u, p, k),
+                guess.u[:, 0], rel_tol=rel_tol, abs_tol=abs_tol
+            )
+        else:
+            initial_controls = control
+        y0 = np.concatenate((initial_states, initial_controls, initial_costates))
+    else:
+        y0 = np.concatenate((initial_states, initial_costates))
+
+    ivp_sol: _IVP_SOL = solve_ivp(_compute_dynamics_wrapped, t_span[(0, -1), ], y0,
                                   atol=abs_tol, rtol=rel_tol, max_step=max_step, t_eval=t_eval)
     guess.t = ivp_sol.t
-    guess.x = ivp_sol.y[:num_states, :]
-    guess.lam = ivp_sol.y[num_states:num_states + num_costates, :]
+    if propagate_control:
+        guess.x = ivp_sol.y[:num_states, :]
+        guess.u = ivp_sol.y[num_states:num_states + num_controls, :]
+        guess.lam = ivp_sol.y[num_states + num_controls:num_states + num_controls + num_costates, :]
+    else:
+        guess.x = ivp_sol.y[:num_states, :]
+        guess.lam = ivp_sol.y[num_states:num_states + num_costates, :]
+
+        if isinstance(control_wrapped, Callable):
+            guess.u = np.asarray([control_wrapped(t_i, x_i, lam_i, p, k) for t_i, x_i, lam_i in zip(
+                guess.t, guess.x.T, guess.lam.T)]).T
+        else:
+            guess.u = process_dynamic_value(control_wrapped, (dual.num_controls, len(guess.t)))
 
     if reverse:
         guess.t = np.flip(guess.t)
         guess.x = np.flip(guess.x, axis=1)
+        guess.u = np.flip(guess.u, axis=1)
         guess.lam = np.flip(guess.lam, axis=1)
-
-    if isinstance(control_wrapped, Callable):
-        guess.u = np.asarray([control_wrapped(t_i, x_i, lam_i, p, k) for t_i, x_i, lam_i in zip(
-            guess.t, guess.x.T, guess.lam.T)]).T
-    else:
-        guess.u = process_dynamic_value(control_wrapped, (dual.num_controls, len(guess.t)))
 
     return guess
