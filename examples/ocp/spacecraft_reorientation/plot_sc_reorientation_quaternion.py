@@ -1,9 +1,12 @@
 import pickle
 import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib as mpl
+
+mpl.rcParams['axes.formatter.useoffset'] = False
 
 PLOTAUX = True
-DATA = 0
+DATA = 1
 
 if DATA == 0:
     with open('guess.data', 'rb') as f:

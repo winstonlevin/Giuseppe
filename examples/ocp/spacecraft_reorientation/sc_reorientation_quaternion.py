@@ -18,13 +18,16 @@ scorient.add_control('u1')
 scorient.add_control('u2')
 scorient.add_control('u3')
 
-# Case 17 of the paper
-Ix = 1
-Iy = 100
-Iz = 100
-scorient.add_constant('Ix', 1)
-scorient.add_constant('Iy', 1)
-scorient.add_constant('Iz', 1)
+Ix17 = 1.  # Case 17 of the paper
+Iy17 = 100.
+Iz17 = 100.
+
+Ix = 1.  # Simple case for initial solution
+Iy = 1.
+Iz = 1.
+scorient.add_constant('Ix', Ix)
+scorient.add_constant('Iy', Iy)
+scorient.add_constant('Iz', Iz)
 
 q1_0 = 0.0
 q2_0 = 0.0
@@ -124,11 +127,35 @@ def ctrl_law(_t, _x, _p, _k):
     return ctrl2reg(np.array((0., 0., _u3)))
 
 
+def optimal_ctrl_law(_lam_w):
+    _u_opt = np.arctan2(-_lam_w * (u_max - u_min)/Iz, eps_u)
+    return _u_opt
+
+
+def set_lam_w3_from_hamiltonian(_t, _x, _lam, _u, _p, _k):
+    _lam_w30 = _lam.copy()
+    _lam_w30[-1] = 0.
+    _ham_w30 = comp_scorient.compute_hamiltonian(_t, _x, _lam_w30, _u, _p, _k)
+    _dw3dt = comp_scorient.compute_dynamics(_t, _x, _u, _p, _k)[-1]
+    _lam_w30[-1] = -_ham_w30 / _dw3dt
+    return _lam_w30
+
+
+initial_states = np.array((q1_0, q2_0, q3_0, q4_0, w1_0, w2_0, w3_0))
+initial_costates = np.array((0., 0., -1., 1., 0., 0., -1.))
+initial_controls = optimal_ctrl_law(initial_costates[4:])
+parameters = np.empty(shape=(0,))
+constants = comp_scorient.default_values
+initial_costates = set_lam_w3_from_hamiltonian(
+    t_span[0], initial_states, initial_costates, initial_controls, parameters, constants
+)
 guess = giuseppe.guess_generation.auto_propagate_guess(
     comp_scorient,
-    control=np.array((0., 0., np.pi/2)),
+    control=initial_controls,
     t_span=t_span,
-    initial_costates=np.array((0., 0., 1., 1., 0., 0., 1.)),
+    initial_states=initial_states,
+    initial_costates=initial_costates,
+    fit_states=False,
     fit_adjoints=False, use_optimal_control_law=True
 )
 
