@@ -141,8 +141,8 @@ def auto_propagate_bvp_guess(
 
     if verbose:
         print(f'Propagating the dynamics in time\n')
-    guess = propagate_bvp_guess_from_guess(bvp, guess,
-        abs_tol=abs_tol, rel_tol=rel_tol, reverse=reverse, max_step=max_step, input_guess=guess)
+    guess = propagate_bvp_guess_from_guess(bvp, t_span, guess,
+                                           abs_tol=abs_tol, rel_tol=rel_tol, reverse=reverse, max_step=max_step)
 
     if match_constants:
         if verbose:

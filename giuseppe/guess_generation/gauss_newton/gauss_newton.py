@@ -63,7 +63,7 @@ def gauss_newton(
     arr = np.asarray(arr)
     step_tol = abs(abs_tol + rel_tol * arr)
     residual = func(arr)
-    residual_tol = abs(abs_tol + rel_tol * residual)
+    residual_tol = abs(abs_tol + rel_tol * abs(residual))
     if np.all(abs(residual) < residual_tol):
         if verbose:
             print(f'Residual tolerance already satisfied, forgoing SLP\n')

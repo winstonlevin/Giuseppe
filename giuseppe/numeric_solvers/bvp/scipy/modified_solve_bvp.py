@@ -463,7 +463,7 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
 
     # Maximum number of backtracking steps, the minimum step is then
     # tau ** n_trial.
-    n_trial = 7  # Changed from 4. Minimum step is 0.007 instead of 0.06
+    n_trial = 4
 
     col_res, y_middle, f, f_middle = col_fun(y, p)
     bc_res = bc(y[:, 0], y[:, -1], p)
@@ -483,12 +483,14 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
                 break
 
             step = LU.solve(res)
-            cost = np.dot(step, step)
+            cost = np.dot(res, res)
+            # cost = np.dot(step, step)
 
         y_step = step[:m * n].reshape((n, m), order='F')
         p_step = step[m * n:]
 
         alpha = 1
+        success = False
         for trial in range(n_trial + 1):
             y_new = y - alpha * y_step
             if B is not None:
@@ -500,15 +502,24 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
             res = np.hstack((col_res.ravel(order='F'), bc_res))
 
             step_new = LU.solve(res)
-            cost_new = np.dot(step_new, step_new)
+            cost_new = np.dot(res, res)
             if cost_new < (1 - 2 * alpha * sigma) * cost and feas(x, y_new, p_new):
+                success = True
                 break
 
             if trial < n_trial:
-                alpha *= tau
+                # Add variable reduction in step based on how much residual increases
+                mult = (1 - 2 * alpha * sigma) * cost / (cost + cost_new)
+                mult = max(mult, EPS**(1/n_trial))  # enforce alpha >= EPS
+                alpha *= mult
+                # alpha *= tau
 
-        y = y_new
-        p = p_new
+        if success:  # Add success flag. If step increases error, then retain old step and try new mesh.
+            y = y_new
+            p = p_new
+        else:
+            # Mesh is not successful, try updating mesh.
+            break
 
         if njev == max_njev:
             break
@@ -1118,6 +1129,38 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
     iteration = 0
     if verbose == 2:
         print_iteration_header()
+
+    # Adjust mesh in order to ensure RMS residuals are acceptable
+    m = x.shape[0]
+    nodes_added = 0
+
+    while True:
+        col_res, y_middle, f, f_middle = collocation_fun(fun_wrapped, y,
+                                                         p, x, h)
+        r_middle = 1.5 * col_res / h
+        sol = create_spline(y, f, x, h)
+        rms_res = estimate_rms_residuals(fun_wrapped, sol, x, h, p,
+                                         r_middle, f_middle)
+
+        insert_1, = np.nonzero((rms_res > tol) & (rms_res < 100 * tol))
+        insert_2, = np.nonzero(rms_res >= 100 * tol)
+        nodes_added = insert_1.shape[0] + 2 * insert_2.shape[0]
+
+        if nodes_added == 0 or m + nodes_added > max_nodes:
+            break
+
+        x = modify_mesh(x, insert_1, insert_2)
+        h = np.diff(x)
+        y = sol(x)
+        m = x.shape[0]
+
+        bc_res = bc_wrapped(y[:, 0], y[:, -1], p)
+        max_rms_res = np.max(rms_res)
+        max_bc_res = np.max(abs(bc_res))
+
+        if verbose == 2:
+            print_iteration_progress(iteration, max_rms_res, max_bc_res, m,
+                                     nodes_added)
 
     while True:
         m = x.shape[0]
