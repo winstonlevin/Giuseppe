@@ -232,7 +232,7 @@ def auto_propagate_dual_guess(
         guess = propagate_ocp_guess_from_guess(
             dual, t_span, guess, control=control, abs_tol=abs_tol, rel_tol=rel_tol, max_step=max_step,
             reverse=reverse)
-
+        guess.lam = process_dynamic_value(guess.lam[:, 0], guess.x.shape)
     else:
         guess = propagate_dual_guess_from_guess(
             dual, t_span, guess, control=control, abs_tol=abs_tol, rel_tol=rel_tol, max_step=max_step,
@@ -245,12 +245,13 @@ def auto_propagate_dual_guess(
         guess = match_constants_to_boundary_conditions(dual, guess, rel_tol=rel_tol, abs_tol=abs_tol, verbose=verbose,
                                                        immutable_constants=immutable_constants)
 
-    if fit_adjoints:
-        if verbose:
+    if verbose:
+        if fit_adjoints:
             print(f'Fitting the costates and adjoint parameters:')
+        else:
+            print(f'Fitting the adjoint parameters:')
 
-        guess.lam = process_dynamic_value(guess.lam[:, 0], guess.x.shape)
-        guess = match_adjoints(dual, guess, quadrature=quadrature, rel_tol=rel_tol, abs_tol=abs_tol,
-                               condition_adjoints=condition_adjoints, verbose=verbose)
+    guess = match_adjoints(dual, guess, quadrature=quadrature, rel_tol=rel_tol, abs_tol=abs_tol,
+                           condition_adjoints=condition_adjoints, verbose=verbose, bc_only=not fit_adjoints)
 
     return guess
