@@ -2,6 +2,7 @@
 # velocities assuming principal moment of inertia. The control law is explicitly derived using UTM.
 # Original source: https://doi.org/10.1515/astro-2019-0011
 import numpy as np
+import pickle
 
 import giuseppe
 
@@ -193,9 +194,10 @@ guess = giuseppe.guess_generation.auto_propagate_guess(
     match_constants=True, immutable_constants=immutable_constants
 )
 
-print(comp_scorient.compute_initial_boundary_conditions(guess.t[0], guess.x[:, 0], guess.p, guess.k))
-print(comp_scorient.compute_terminal_boundary_conditions(guess.t[-1], guess.x[:, -1], guess.p, guess.k))
+with open('guess.data', 'wb') as f:
+    pickle.dump(guess, f)
 
 seed_sol = num_solver.solve(guess)
 
-print(seed_sol.converged)
+with open('seed_sol.data', 'wb') as f:
+    pickle.dump(seed_sol, f)
