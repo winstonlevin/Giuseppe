@@ -14,8 +14,8 @@ scorient.set_independent('t')
 
 # State Dynamics
 I1 = 1.
-I2 = 1.
-I3 = 1.
+I2 = 3.
+I3 = 3.
 
 scorient.add_constant('I1', I1)
 scorient.add_constant('I2', I2)
@@ -209,6 +209,9 @@ idx_q1_f = comp_scorient.annotations.constants.index('q1_f')
 idx_q2_f = comp_scorient.annotations.constants.index('q2_f')
 idx_q3_f = comp_scorient.annotations.constants.index('q3_f')
 idx_q4_f = comp_scorient.annotations.constants.index('q4_f')
+idx_w1_f = comp_scorient.annotations.constants.index('w1_f')
+idx_w2_f = comp_scorient.annotations.constants.index('w2_f')
+idx_w3_f = comp_scorient.annotations.constants.index('w3_f')
 q3_f_seed = seed_sol.k[idx_q3_f]
 sign_q4 = np.sign(q4_0 + q4_f)
 
@@ -225,10 +228,10 @@ def q3_continuation(previous_sol, frac_complete):
     return _constants
 
 
-# Calculate Jacobian Matrix
+# Derive Expressions for Shooting
 dynamics_sym = comp_scorient.source_bvp.dynamics
 states_sym = comp_scorient.source_bvp.states
-time_sym = comp_scorient.source_bvp.independent
+# time_sym = comp_scorient.source_bvp.independent
 # time_states_sym = giuseppe.utils.typing.SymMatrix([time_sym, states_sym])
 # time_state_jac_sym = dynamics_sym.jacobian(time_states_sym)
 state_jac_sym = dynamics_sym.jacobian(states_sym)
@@ -240,20 +243,36 @@ compute_state_jac = giuseppe.utils.compilation.lambdify(
     comp_scorient.sym_args, state_jac_sym, use_jit_compile=comp_scorient.use_jit_compile
 )
 n_x = states_sym.shape[0]
+n_x2 = int(n_x/2)
+zero_1n = np.zeros((1, n_x))
 
-dtf_dtfxf = np.vstack((1., np.zeros((n_x, 1))))
-# TODO - dH/d(t,x), etc.
+hamiltonian_sym = comp_scorient.source_bvp.boundary_conditions.initial[-1, :]
+ham_x_sym = hamiltonian_sym.jacobian(states_sym)
+compute_ham = giuseppe.utils.compilation.lambdify(
+    comp_scorient.sym_args, hamiltonian_sym, use_jit_compile=comp_scorient.use_jit_compile
+)
+compute_ham_x = giuseppe.utils.compilation.lambdify(
+    comp_scorient.sym_args, ham_x_sym, use_jit_compile=comp_scorient.use_jit_compile
+)
 
 
-def eom_state_stm(_t, _x_stm, _p, _k):
+def eom_state_stm(_tau, _x_stm, _p, _k, _t0, _tf):
+    _dt_dtau = _tf - _t0
+    _t = _t0 + _dt_dtau * _tau
     _x = _x_stm[:n_x]
     _stm_flat = _x_stm[n_x:]
-    _stm = _stm_flat.reshape((n_x, n_x))
+    _stm = _stm_flat.reshape((1+n_x, 1+n_x))
 
     _dx_dt = compute_dynamics(_t, _x, _p, _k)
-    _dstm_dt = compute_state_jac(_t, _x, _p, _k) @ _stm
+    _dx_dtau = _dx_dt * _dt_dtau
+    _f_jac = compute_state_jac(_t, _x, _p, _k)
+    _dstm_dt = np.hstack((
+        np.concatenate((np.array((_dt_dtau,)), _dx_dt)).reshape((-1, 1)),  # Jac for t
+        np.vstack((zero_1n, _dt_dtau * _f_jac))
+    )) @ _stm
 
     _dx_stm_dt = np.concatenate((_dx_dt, _dstm_dt.flatten()))
+
     return _dx_stm_dt
 
 
@@ -263,28 +282,72 @@ def shooting_jac(_seed_sol):
     if not _seed_sol.converged:
         _seed_sol = num_solver.solve(_seed_sol)
 
+    # Desired final states
+    _x_f_cmd = _seed_sol.k[((idx_q1_f, idx_q2_f, idx_q3_f, idx_q4_f, idx_w1_f, idx_w2_f, idx_w3_f),)]
+
     # Initial state/STM
     _x0 = _seed_sol.x[:, 0]
-    _stm0 = np.eye(_x0.shape[0])
+    _stm0 = np.eye(1+_x0.shape[0])
     _t0 = _seed_sol.t[0]
     _tf = _seed_sol.t[-1]
     _x_stm0 = np.concatenate((_x0, _stm0.flatten()))
 
     # Solve for terminal state/STM
     ivp_sol = solve_ivp(
-        fun=lambda t, x_stm: eom_state_stm(t, x_stm, seed_sol.p, seed_sol.k),
-        t_span=(_t0, _tf), y0=_x_stm0
+        fun=lambda tau, x_stm: eom_state_stm(tau, x_stm, seed_sol.p, seed_sol.k, _t0, _tf),
+        t_span=(0., 1.), y0=_x_stm0
     )
     _x_stm_f = ivp_sol.y
-    _x_f = _x_stm_f[:n_x, -1]
-    _stm_f = _x_stm_f[n_x:, -1].reshape((n_x, n_x))
+    _x_f = _x_stm_f[1:n_x, -1]
+    _stm_f = _x_stm_f[n_x:, -1].reshape((1+n_x, 1+n_x))
+    _dxf_dtf = _stm_f[1:1+n_x2, 0:1]
+    _dxf_dlam0 = _stm_f[1:1+n_x2, 1+n_x2:]
 
     # Build Jacobians for correcting parameter estimates
-    _dtf_dtfxf = np.vstack((1., np.zeros((n_x, 1))))
+    # Jac for H(0) = 0
+    _jac0 = np.hstack((np.zeros((1, 1)), compute_ham_x(_t0, _x0, seed_sol.p, seed_sol.k)[0:1, n_x2:]))
 
-cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_linear_series(100, {'w3_f': 0.})
-# cont.add_custom_series(100, q3_continuation, 'q3/q4')
+    # Jac for q(tf) = qf, w(tf) = wf
+    _jacf = np.hstack((_dxf_dtf, _dxf_dlam0))
 
-sol_set = cont.run_continuation()
+    # Jac for H(f) = 0
+    _dhamf_dtfx0 = np.hstack((np.zeros((1, 1)), compute_ham_x(_tf, _x_f, seed_sol.p, seed_sol.k)[0:1, :])) @ _stm_f
+    _dhamf_dtf = _dhamf_dtfx0[:, 0:1]
+    _dhamf_dlam0 = _dhamf_dtfx0[:, 1+n_x2:]
+    _jacf_aug = np.hstack((_dhamf_dtf, _dhamf_dlam0))
+
+    _jac = np.vstack((_jac0, _jacf))
+    # _jac = np.vstack((_jac0, _jacf, _jacf_aug))
+
+    # Residual
+    _ham0 = compute_ham(_t0, _x0, seed_sol.p, seed_sol.k)
+    _x_err = _x_f[:n_x2] - _x_f_cmd
+    _hamf = compute_ham(_tf, _x_f, seed_sol.p, seed_sol.k)
+    _res = np.vstack((_ham0, _x_err.reshape((-1, 1))))
+    # _res = np.vstack((_ham0, _x_err.reshape((-1, 1)), _hamf))
+    _pinv_sol = np.linalg.lstsq(_jac, _res, rcond=None)
+    _full_step = _pinv_sol[0].flatten()
+
+    # Back-tracking linsearch
+    _z0 = np.concatenate((np.array((_tf,)), _x0[n_x2:]))
+    _steps_max = 10
+    _alpha = 1.
+
+    for _idx in _steps_max:
+        _z0_new = _z0 - _alpha * _full_step
+        _tf_new = _z0_new[0]
+        _lam0_new = _z0_new[1:]
+        _x0_new = np.concatenate((_x0[:n_x2], _lam0_new))
+
+        _ivp_sol = solve_ivp(
+            fun=lambda _t, _x: compute_dynamics(_t, _x, seed_sol.p, seed_sol.k),
+            t_span=(_t0, _tf_new), y0=_x0_new
+        )
+        _x_f_new = _ivp_sol.y[:, -1]
+
+        _ham0_new = compute_ham(_t0, _x0_new, seed_sol.p, seed_sol.k)
+        _x_err_new = _x_f_new[:n_x2] - _x_f_cmd
+        _hamf_new = compute_ham(_tf, _x_f, seed_sol.p, seed_sol.k)
+        # _res_new = np.vstack((_ham0_new, _x_err_new.reshape((-1, 1))))
+        _res_new = np.vstack((_ham0_new, _x_err_new.reshape((-1, 1)), _hamf_new)).flatten()
 
