@@ -1,10 +1,13 @@
 # Re-orient a space craft using body-fI1ed torques as the control input. Dynamics use quaternions and body-fI1ed angular
 # velocities assuming principal moment of inertia. The control law is explicitly derived using UTM.
 # Original source: https://doi.org/10.1515/astro-2019-0011
+from copy import deepcopy
 import numpy as np
 import pickle
 
 import giuseppe
+
+from scipy.integrate import solve_ivp
 
 scorient = giuseppe.problems.input.StrInputProb()
 scorient.set_independent('t')
@@ -201,3 +204,87 @@ seed_sol = num_solver.solve(guess)
 
 with open('seed_sol.data', 'wb') as f:
     pickle.dump(seed_sol, f)
+
+idx_q1_f = comp_scorient.annotations.constants.index('q1_f')
+idx_q2_f = comp_scorient.annotations.constants.index('q2_f')
+idx_q3_f = comp_scorient.annotations.constants.index('q3_f')
+idx_q4_f = comp_scorient.annotations.constants.index('q4_f')
+q3_f_seed = seed_sol.k[idx_q3_f]
+sign_q4 = np.sign(q4_0 + q4_f)
+
+
+def q3_continuation(previous_sol, frac_complete):
+    _constants = previous_sol.k.copy()
+    _q1_f = _constants[idx_q1_f]
+    _q2_f = _constants[idx_q2_f]
+    _q3_f = q3_f_seed + frac_complete * (q3_f - q3_f_seed)
+    _q4_f = sign_q4 * np.sqrt(1 - _q1_f**2 - _q2_f**2 - _q3_f**2)  # Enforce ||q|| = 1
+
+    _constants[idx_q3_f] = _q3_f
+    _constants[idx_q4_f] = _q4_f
+    return _constants
+
+
+# Calculate Jacobian Matrix
+dynamics_sym = comp_scorient.source_bvp.dynamics
+states_sym = comp_scorient.source_bvp.states
+time_sym = comp_scorient.source_bvp.independent
+# time_states_sym = giuseppe.utils.typing.SymMatrix([time_sym, states_sym])
+# time_state_jac_sym = dynamics_sym.jacobian(time_states_sym)
+state_jac_sym = dynamics_sym.jacobian(states_sym)
+compute_dynamics = comp_scorient.compute_dynamics
+# compute_time_state_jac = giuseppe.utils.compilation.lambdify(
+#     comp_scorient.sym_args, time_state_jac_sym, use_jit_compile=comp_scorient.use_jit_compile
+# )
+compute_state_jac = giuseppe.utils.compilation.lambdify(
+    comp_scorient.sym_args, state_jac_sym, use_jit_compile=comp_scorient.use_jit_compile
+)
+n_x = states_sym.shape[0]
+
+dtf_dtfxf = np.vstack((1., np.zeros((n_x, 1))))
+# TODO - dH/d(t,x), etc.
+
+
+def eom_state_stm(_t, _x_stm, _p, _k):
+    _x = _x_stm[:n_x]
+    _stm_flat = _x_stm[n_x:]
+    _stm = _stm_flat.reshape((n_x, n_x))
+
+    _dx_dt = compute_dynamics(_t, _x, _p, _k)
+    _dstm_dt = compute_state_jac(_t, _x, _p, _k) @ _stm
+
+    _dx_stm_dt = np.concatenate((_dx_dt, _dstm_dt.flatten()))
+    return _dx_stm_dt
+
+
+# Continue boundary conditions using a shooting method
+def shooting_jac(_seed_sol):
+    _seed_sol = deepcopy(_seed_sol)
+    if not _seed_sol.converged:
+        _seed_sol = num_solver.solve(_seed_sol)
+
+    # Initial state/STM
+    _x0 = _seed_sol.x[:, 0]
+    _stm0 = np.eye(_x0.shape[0])
+    _t0 = _seed_sol.t[0]
+    _tf = _seed_sol.t[-1]
+    _x_stm0 = np.concatenate((_x0, _stm0.flatten()))
+
+    # Solve for terminal state/STM
+    ivp_sol = solve_ivp(
+        fun=lambda t, x_stm: eom_state_stm(t, x_stm, seed_sol.p, seed_sol.k),
+        t_span=(_t0, _tf), y0=_x_stm0
+    )
+    _x_stm_f = ivp_sol.y
+    _x_f = _x_stm_f[:n_x, -1]
+    _stm_f = _x_stm_f[n_x:, -1].reshape((n_x, n_x))
+
+    # Build Jacobians for correcting parameter estimates
+    _dtf_dtfxf = np.vstack((1., np.zeros((n_x, 1))))
+
+cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+cont.add_linear_series(100, {'w3_f': 0.})
+# cont.add_custom_series(100, q3_continuation, 'q3/q4')
+
+sol_set = cont.run_continuation()
+
