@@ -1130,39 +1130,39 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
     if verbose == 2:
         print_iteration_header()
 
-    # Adjust mesh in order to ensure RMS residuals are acceptable
-    m = x.shape[0]
-    nodes_added = 0
-    max_rms_res_prev = np.inf
-
-    while True:
-        col_res, y_middle, f, f_middle = collocation_fun(fun_wrapped, y,
-                                                         p, x, h)
-        r_middle = 1.5 * col_res / h
-        sol = create_spline(y, f, x, h)
-        rms_res = estimate_rms_residuals(fun_wrapped, sol, x, h, p,
-                                         r_middle, f_middle)
-        max_rms_res = np.max(rms_res)
-
-        insert_1, = np.nonzero((rms_res > tol) & (rms_res < 100 * tol))
-        insert_2, = np.nonzero(rms_res >= 100 * tol)
-        nodes_added = insert_1.shape[0] + 2 * insert_2.shape[0]
-
-        if nodes_added == 0 or abs(max_rms_res_prev - max_rms_res) < tol or m + nodes_added > max_nodes:
-            break
-
-        max_rms_res_prev = max_rms_res
-        x = modify_mesh(x, insert_1, insert_2)
-        h = np.diff(x)
-        y = sol(x)
-        m = x.shape[0]
-
-        bc_res = bc_wrapped(y[:, 0], y[:, -1], p)
-        max_bc_res = np.max(abs(bc_res))
-
-        if verbose == 2:
-            print_iteration_progress(iteration, max_rms_res, max_bc_res, m,
-                                     nodes_added)
+    # # Adjust mesh in order to ensure RMS residuals are acceptable
+    # m = x.shape[0]
+    # nodes_added = 0
+    # max_rms_res_prev = np.inf
+    #
+    # while True:
+    #     col_res, y_middle, f, f_middle = collocation_fun(fun_wrapped, y,
+    #                                                      p, x, h)
+    #     r_middle = 1.5 * col_res / h
+    #     sol = create_spline(y, f, x, h)
+    #     rms_res = estimate_rms_residuals(fun_wrapped, sol, x, h, p,
+    #                                      r_middle, f_middle)
+    #     max_rms_res = np.max(rms_res)
+    #
+    #     insert_1, = np.nonzero((rms_res > tol) & (rms_res < 100 * tol))
+    #     insert_2, = np.nonzero(rms_res >= 100 * tol)
+    #     nodes_added = insert_1.shape[0] + 2 * insert_2.shape[0]
+    #
+    #     if nodes_added == 0 or abs(max_rms_res_prev - max_rms_res) < tol or m + nodes_added > max_nodes:
+    #         break
+    #
+    #     max_rms_res_prev = max_rms_res
+    #     x = modify_mesh(x, insert_1, insert_2)
+    #     h = np.diff(x)
+    #     y = sol(x)
+    #     m = x.shape[0]
+    #
+    #     bc_res = bc_wrapped(y[:, 0], y[:, -1], p)
+    #     max_bc_res = np.max(abs(bc_res))
+    #
+    #     if verbose == 2:
+    #         print_iteration_progress(iteration, max_rms_res, max_bc_res, m,
+    #                                  nodes_added)
 
     while True:
         m = x.shape[0]

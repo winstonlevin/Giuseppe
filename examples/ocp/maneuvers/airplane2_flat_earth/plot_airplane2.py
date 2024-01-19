@@ -128,6 +128,8 @@ if PLOT_COSTATE:
         ax.set_ylabel(ylabs[idx])
         ax.plot(sol.t, costate * ymult[idx])
 
+    fig_costates.tight_layout()
+
 if PLOT_AUXILIARY:
     if sol.h_u is not None:
         h_u = sol.h_u[0, :]
