@@ -43,22 +43,86 @@ for key, val in zip(sol.annotations.controls, list(sol.u)):
 r2d = 180/np.pi
 v = (2*(k_dict['E'] - k_dict['g'] * x_dict['h']))**0.5
 ham = 1. + lam_dict['h'] * v * np.sin(u_dict['gam']) + lam_dict['x'] * v * np.cos(u_dict['gam'])
-gam_analytic = np.arctan2(-lam_dict['h'], -lam_dict['x'])
+g = k_dict['g']
+vc = (2*k_dict['E'] - 2*k_dict['g'] * k_dict['h0'])**0.5
+x = x_dict['x']
+x_dist = np.abs(x[-1] - x[0])
 
 if PLOT_AUX:
+    # Newton Search for tha : Vc/Vmax = cos(tha) -> Vmax = Vc / cos(tha)
+    tha_giu = np.arccos(vc * np.mean(np.abs(lam_dict['x'])))
+    const = g/vc**2 * x_dist
+    tha_guess0 = np.arctan(const)
+
+    def newton_fun(_tha):
+        _c_tha2 = np.cos(_tha)**2
+        _s_2tha = np.sin(2*_tha)
+        _f = const * _c_tha2 - _tha - 0.5 * _s_2tha
+        _g = 2 * _c_tha2 - const * _s_2tha - 1
+        return _f, _g
+
+    max_iter = 5
+    tol = 1e-6
+    max_reduction = tol ** (1 / max_iter)
+    tha_guess = tha_guess0
+    success = False
+    for _ in range(100):
+        res, grad = newton_fun(tha_guess0)
+        cost = abs(res)
+        sign_res = np.sign(res)
+
+        alp = 1.
+        cost_new = np.inf
+        for __ in range(max_iter):
+            tha_guess = tha_guess0 - alp*res/grad
+            res_new, grad_new = newton_fun(tha_guess)
+            cost_new = abs(res_new)
+            sign_res_new = np.sign(res_new)
+
+            if (cost_new < cost and sign_res == sign_res_new) or cost_new < 0.1 * cost:
+                break
+            else:
+                # Adjust step size to reduce error with <10% overshoot
+                alp *= np.maximum(0.75 * min(np.abs(res/res_new), 1.), max_reduction)
+
+        if cost_new < cost:
+            tha_guess0 = tha_guess
+            if cost_new < tol:
+                success = True
+                break
+        else:
+            break
+
+    # TODO - use tha_guess to calculate info.
+
     lam_h2 = lam_dict['h']**2
     lam_h2_analytic = lam_dict['h'][0]**2 - 1/v[0]**2 + 1/v**2
     r_gam = (lam_dict['h']**2 + lam_dict['x']**2)**0.5
     r_gam_analytic = 1 / v
     v_max_idx = np.argmax(v)
     v_max_analytic = np.abs(1 / np.mean(lam_dict['x']))
-    # v_phase = np.arcsin(lam_)
-    # v_analytic =
+    t_s_analytic = 0.5*(sol.t[0] + sol.t[-1])
+    x_s_analytic = 0.5*(x_dict['x'][-1] + x_dict['x'][0])
+    v_analytic = v_max_analytic * np.cos(k_dict['g']/v_max_analytic * (sol.t - t_s_analytic))
+    x_analytic = x_s_analytic \
+        + 0.5 * v_max_analytic * (sol.t - t_s_analytic) \
+        + v_max_analytic**2/(4*k_dict['g']) * np.sin(2*k_dict['g']/v_max_analytic * (sol.t - t_s_analytic))
+    gam_analytic = np.arctan2(np.sign(sol.t - t_s_analytic) * ((v_max_analytic/v)**2 - 1)**0.5, np.sign(x_dict['x'][-1] - x_dict['x'][0]))
+
+    z_analytic = vc / v_max_analytic
+    res_v_max_analytic = k_dict['g']/vc**2 * np.abs(x_dict['x'][-1] - x_dict['x'][0]) * z_analytic**2 - (
+        np.arccos(z_analytic) + z_analytic*(1-z_analytic**2)**0.5
+    )
+    res_tmp = k_dict['g']/v_max_analytic**2 * np.abs(x_dict['x'][-1] - x_dict['x'][0]) - (
+        np.arccos(v_analytic[0]/v_max_analytic)
+        + v_analytic[0]/v_max_analytic * (1 - (v_analytic[0]/v_max_analytic)**2)**0.5
+    )
 else:
     lam_h2 = None
     lam_h2_analytic = None
     r_gam = None
     r_gam_analytic = None
+    gam_analytic = np.arctan2(-lam_dict['h'], -lam_dict['x'])
 
 # PLOTTING -------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'
@@ -67,7 +131,7 @@ t_label = 'Time [s]'
 ylabs = (r'$h$ [m]', r'$V$ [m/s]', r'$x$ [m]', r'$\gamma$ [deg]')
 ymult = np.array((1., 1., 1., r2d))
 ydata = (x_dict['h'], v, x_dict['x'], u_dict['gam'])
-yaux = (None, None, None, gam_analytic)
+yaux = (None, v_analytic, x_analytic, gam_analytic)
 fig_states = plt.figure()
 axes_states = []
 
