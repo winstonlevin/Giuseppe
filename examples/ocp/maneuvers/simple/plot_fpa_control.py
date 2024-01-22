@@ -52,92 +52,91 @@ if PLOT_AUX:
     # Newton Search for tha : Vc/Vmax = cos(tha) -> Vmax = Vc / cos(tha)
     v_ratio_giu = vc * np.mean(np.abs(lam_dict['x']))
     const = g/vc**2 * x_dist
-    tha_guess0 = np.arctan(const)
 
-    # v_ratio_min = -0.5*const + (0.25*const**2 + 1)**0.5
-    # v_ratio_max = min(1., (np.pi/(2*const))**0.5)
-    # const_min = np.arccos(v_ratio_max) / v_ratio_max**2 + v_ratio_max * (1 - v_ratio_max**2)**0.5
-    # const_max = np.arccos(v_ratio_min) / v_ratio_min**2 + v_ratio_min * (1 - v_ratio_min**2)**0.5
-    #
-    # for idx in range(1000):
-    #     v_ratio_guess = 0.5 * (v_ratio_min + v_ratio_max)
-    #     const_guess = np.arccos(v_ratio_guess) / v_ratio_guess**2 + v_ratio_guess * (1 - v_ratio_guess**2)**0.5
-    #     if const_guess > const:
-    #         # V0/Vmax too low (i.e. req. lower Vmax)
-    #         v_ratio_min = v_ratio_guess
-    #     else:
-    #         # V0/Vmax too high (i.e. req. higher Vmax)
-    #         v_ratio_max = v_ratio_guess
-    #
-    #     if abs(const - const_guess) < 1e-8:
-    #         break
+    def newton_step_fun(_z):
+        # z is ratio of initial to maximum velocity.
+        _acos_z = np.arccos(_z)
+        _z2 = _z**2
+        _sqrt = (1 - _z2)**0.5
+        _full_step = 0.5 * (_z * _acos_z + _z2 * _sqrt - const*_z**3)*_sqrt/(_z + _acos_z*_sqrt)
+        return _full_step
 
-    def newton_fun(_tha):
-        _c_tha2 = np.cos(_tha)**2
-        _s_2tha = np.sin(2*_tha)
-        _f = const * _c_tha2 - _tha - 0.5 * _s_2tha
-        _g = 2 * _c_tha2 - const * _s_2tha - 1
+    def newton_fun(_z):
+        _acos_z = np.arccos(_z)
+        _z2 = _z**2
+        _sqrt = (1 - _z2)**0.5
+        _f = _acos_z/_z2 + _sqrt/_z - const
+        _g = -2 * (_z + _acos_z*_sqrt)/(_z**3 * _sqrt)
         return _f, _g
+
+    def saturate_full_step(_z, _z_min, _z_max, _full_step):
+        if _full_step < 0:
+            # Decreasing z -> ensure z >= z_min
+            _step = -min(-_full_step, _z - _z_min)
+        else:
+            # Increasing z -> ensure z <= z_max
+            _step = max(_full_step, _z_max - _z)
+        return _step
 
     max_iter = 5
     tol = 1e-6
-    max_reduction = tol ** (1 / max_iter)
-    tha_guess = tha_guess0
+    max_reduction = (0.1*tol) ** (1 / max_iter)
     success = False
-    fun_evals = 0
+
+    v_ratio_max = 1. - 0.5 * tol
+    v_ratio_min = 0.5 * tol
+    v_ratio = max(min(v_ratio_max, (np.pi / (2 * const)) ** 0.5), v_ratio_min)
+    full_step = newton_step_fun(v_ratio)
+    full_step = saturate_full_step(v_ratio, v_ratio_min, v_ratio_max, full_step)
+    fun_evals = 1
+    cost = abs(full_step)
+    sign_step = np.sign(full_step)
     for _ in range(100):
-        res, grad = newton_fun(tha_guess0)
-        fun_evals += 1
-        cost = abs(res)
-        sign_res = np.sign(res)
+        if cost < tol:
+            success = True
+            break
 
         alp = 1.
-        cost_new = np.inf
-        for __ in range(max_iter):
-            tha_guess = tha_guess0 - alp*res/grad
-            res_new, grad_new = newton_fun(tha_guess)
+        backtrack_success = False
+        for backtrack_idx in range(max_iter):
+            v_ratio_new = v_ratio + alp*full_step
+            step_new = newton_step_fun(v_ratio_new)
             fun_evals += 1
-            cost_new = abs(res_new)
-            sign_res_new = np.sign(res_new)
+            cost_new = abs(step_new)
+            sign_step_new = np.sign(step_new)
 
-            if (cost_new < cost and sign_res == sign_res_new) or cost_new < 0.1 * cost:
+            if sign_step == sign_step_new or cost_new < 0.1 * cost:
+                v_ratio = v_ratio_new
+                full_step = saturate_full_step(v_ratio, v_ratio_min, v_ratio_max, step_new)
+                cost = cost_new
+                sign_step = sign_step_new
+                backtrack_success = True
                 break
             else:
                 # Adjust step size to reduce error with <10% overshoot
-                alp *= np.maximum(0.75 * min(np.abs(res/res_new), 1.), max_reduction)
+                alp *= 0.5**(1. + backtrack_idx) * min(np.abs(cost/cost_new), 1.)
 
-        if cost_new < cost:
-            tha_guess0 = tha_guess
-            if cost_new < tol:
-                success = True
-                break
-        else:
+        if not backtrack_success:
             break
 
-    # TODO - use tha_guess to calculate info.
-
+    # Numerical values
     lam_h2 = lam_dict['h']**2
-    lam_h2_analytic = lam_dict['h'][0]**2 - 1/v[0]**2 + 1/v**2
-    r_gam = (lam_dict['h']**2 + lam_dict['x']**2)**0.5
-    r_gam_analytic = 1 / v
-    v_max_idx = np.argmax(v)
-    v_max_analytic = np.abs(1 / np.mean(lam_dict['x']))
-    t_s_analytic = 0.5*(sol.t[0] + sol.t[-1])
-    x_s_analytic = 0.5*(x_dict['x'][-1] + x_dict['x'][0])
-    v_analytic = v_max_analytic * np.cos(k_dict['g']/v_max_analytic * (sol.t - t_s_analytic))
-    x_analytic = x_s_analytic \
-        + 0.5 * v_max_analytic * (sol.t - t_s_analytic) \
-        + v_max_analytic**2/(4*k_dict['g']) * np.sin(2*k_dict['g']/v_max_analytic * (sol.t - t_s_analytic))
-    gam_analytic = np.arctan2(np.sign(sol.t - t_s_analytic) * ((v_max_analytic/v)**2 - 1)**0.5, np.sign(x_dict['x'][-1] - x_dict['x'][0]))
+    r_gam = (lam_h2 + lam_dict['x']**2)**0.5
 
-    z_analytic = vc / v_max_analytic
-    res_v_max_analytic = k_dict['g']/vc**2 * np.abs(x_dict['x'][-1] - x_dict['x'][0]) * z_analytic**2 - (
-        np.arccos(z_analytic) + z_analytic*(1-z_analytic**2)**0.5
-    )
-    res_tmp = k_dict['g']/v_max_analytic**2 * np.abs(x_dict['x'][-1] - x_dict['x'][0]) - (
-        np.arccos(v_analytic[0]/v_max_analytic)
-        + v_analytic[0]/v_max_analytic * (1 - (v_analytic[0]/v_max_analytic)**2)**0.5
-    )
+    # Analytic values
+    v_max_analytic = vc / v_ratio
+    t_s_analytic = v_max_analytic/g * np.arccos(v_ratio)
+    tf_analytic = 2 * t_s_analytic
+    t_analytic = sol.t
+    v_analytic = v_max_analytic * np.cos(g/v_max_analytic * (t_analytic - t_s_analytic))
+    lam_h2_analytic = 1/v_analytic**2 - 1/v_max_analytic**2
+    lam_x2_analytic = (v_ratio/vc)**2
+    r_gam_analytic = 1 / v_analytic
+    x_s_analytic = 0. + np.sign(k_dict['xf']) * (0.5 * v_max_analytic * t_s_analytic + v_max_analytic**2/(4*g) * np.sin(2*g/v_max_analytic * t_s_analytic))
+    x_analytic = x_s_analytic \
+        + 0.5 * v_max_analytic * (t_analytic - t_s_analytic) \
+        + v_max_analytic**2/(4*g) * np.sin(2*g/v_max_analytic * (sol.t - t_s_analytic))
+    gam_analytic = np.arctan2(np.sign(t_analytic - t_s_analytic) * np.maximum((v_max_analytic/v)**2 - 1, 0.)**0.5, np.sign(x_analytic[-1] - x_analytic[0]))
 else:
     lam_h2 = None
     lam_h2_analytic = None
