@@ -1189,6 +1189,13 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
             status = 2
             break
 
+        # # Prune mesh
+        # remove_1, = np.nonzero(rms_res < 0.01 * tol)
+        # x = prune_mesh(x, remove_1)
+        # h = np.diff(x)
+        # y = sol(x)
+
+        # Expand mesh
         insert_1, = np.nonzero((rms_res > tol) & (rms_res < 100 * tol))
         insert_2, = np.nonzero(rms_res >= 100 * tol)
         nodes_added = insert_1.shape[0] + 2 * insert_2.shape[0]
