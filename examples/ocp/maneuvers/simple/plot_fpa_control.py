@@ -50,9 +50,27 @@ x_dist = np.abs(x[-1] - x[0])
 
 if PLOT_AUX:
     # Newton Search for tha : Vc/Vmax = cos(tha) -> Vmax = Vc / cos(tha)
-    tha_giu = np.arccos(vc * np.mean(np.abs(lam_dict['x'])))
+    v_ratio_giu = vc * np.mean(np.abs(lam_dict['x']))
     const = g/vc**2 * x_dist
     tha_guess0 = np.arctan(const)
+
+    # v_ratio_min = -0.5*const + (0.25*const**2 + 1)**0.5
+    # v_ratio_max = min(1., (np.pi/(2*const))**0.5)
+    # const_min = np.arccos(v_ratio_max) / v_ratio_max**2 + v_ratio_max * (1 - v_ratio_max**2)**0.5
+    # const_max = np.arccos(v_ratio_min) / v_ratio_min**2 + v_ratio_min * (1 - v_ratio_min**2)**0.5
+    #
+    # for idx in range(1000):
+    #     v_ratio_guess = 0.5 * (v_ratio_min + v_ratio_max)
+    #     const_guess = np.arccos(v_ratio_guess) / v_ratio_guess**2 + v_ratio_guess * (1 - v_ratio_guess**2)**0.5
+    #     if const_guess > const:
+    #         # V0/Vmax too low (i.e. req. lower Vmax)
+    #         v_ratio_min = v_ratio_guess
+    #     else:
+    #         # V0/Vmax too high (i.e. req. higher Vmax)
+    #         v_ratio_max = v_ratio_guess
+    #
+    #     if abs(const - const_guess) < 1e-8:
+    #         break
 
     def newton_fun(_tha):
         _c_tha2 = np.cos(_tha)**2
@@ -66,8 +84,10 @@ if PLOT_AUX:
     max_reduction = tol ** (1 / max_iter)
     tha_guess = tha_guess0
     success = False
+    fun_evals = 0
     for _ in range(100):
         res, grad = newton_fun(tha_guess0)
+        fun_evals += 1
         cost = abs(res)
         sign_res = np.sign(res)
 
@@ -76,6 +96,7 @@ if PLOT_AUX:
         for __ in range(max_iter):
             tha_guess = tha_guess0 - alp*res/grad
             res_new, grad_new = newton_fun(tha_guess)
+            fun_evals += 1
             cost_new = abs(res_new)
             sign_res_new = np.sign(res_new)
 
