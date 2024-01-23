@@ -21,7 +21,7 @@ elif DATA == 1:
 else:
     with open('sol_set_fpa_dyn.data', 'rb') as f:
         sols = pickle.load(f)
-        sol = sols[120]
+        sol = sols[-1]
 
 # Create Dicts
 k_dict = {}
@@ -192,7 +192,7 @@ fig_states.tight_layout()
 
 # PLOT COSTATES
 ylabs = (
-    r'$\lambda_{h}$ [s/m]', r'$\lambda_{x}$ [s/m]', r'$\lambda_{gam}$ [s]',
+    r'$\lambda_{h}$ [s/m]', r'$\lambda_{x}$ [s/m]', r'$\lambda_{\gamma}$ [s]',
     r'$H_u$ [1/rad]', r'$H_{uu}$ [1/rad$^2$]', r'$H$ [-]'
 )
 ymult = np.array((1., 1., 1., 1., 1., 1.))
