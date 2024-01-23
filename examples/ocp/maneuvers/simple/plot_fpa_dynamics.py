@@ -77,7 +77,8 @@ if PLOT_AUX:
         _z2 = _z**2
         _sqrt = (1 - _z2)**0.5
         _full_step = 0.5 * (_z * _acos_z + _z2 * _sqrt - const*_z**3)*_sqrt/(_z + _acos_z*_sqrt)
-        return _full_step
+        _f_pseudo = _acos_z + _sqrt * _z - const * _z ** 2
+        return _full_step, _f_pseudo
 
     def newton_fun(_z):
         _acos_z = np.arccos(_z)
@@ -104,38 +105,45 @@ if PLOT_AUX:
     v_ratio_max = 1. - 0.5 * tol
     v_ratio_min = 0.5 * tol
     v_ratio = max(min(v_ratio_max, (np.pi / (2 * const)) ** 0.5), v_ratio_min)
-    full_step = newton_step_fun(v_ratio)
+    full_step, res = newton_step_fun(v_ratio)
     full_step = saturate_full_step(v_ratio, v_ratio_min, v_ratio_max, full_step)
     fun_evals = 1
-    cost = abs(full_step)
+    cost = abs(res)
     sign_step = np.sign(full_step)
+    alp = 1.
     for _ in range(100):
         if cost < tol:
             success = True
             break
 
-        alp = 1.
         backtrack_success = False
         for backtrack_idx in range(max_iter):
             v_ratio_new = v_ratio + alp*full_step
-            step_new = newton_step_fun(v_ratio_new)
+            step_new, res_new = newton_step_fun(v_ratio_new)
             fun_evals += 1
-            cost_new = abs(step_new)
+            cost_new = abs(res_new)
             sign_step_new = np.sign(step_new)
 
-            if sign_step == sign_step_new or cost_new < 0.1 * cost:
+            if sign_step == sign_step_new or cost_new < 0.15 * cost:
                 v_ratio = v_ratio_new
                 full_step = saturate_full_step(v_ratio, v_ratio_min, v_ratio_max, step_new)
                 cost = cost_new
                 sign_step = sign_step_new
                 backtrack_success = True
+                alp = min(1., 2*alp)  # Increase step size toward original
                 break
             else:
                 # Adjust step size to reduce error with <10% overshoot
-                alp *= 0.5**(1. + backtrack_idx) * min(np.abs(cost/cost_new), 1.)
+                error_adjust = min(max(cost/cost_new, 0.1), 1.)
+                alp *= 0.5 ** (1. + backtrack_idx) * error_adjust
 
         if not backtrack_success:
             break
+
+    if success:
+        print(f'Found V0/Vmax after {fun_evals} iterations.')
+    else:
+        print(f'Failure to find V0/Vmax after {fun_evals} iterations!')
 
     # Numerical values
     lam_h2 = lam_dict['h']**2
