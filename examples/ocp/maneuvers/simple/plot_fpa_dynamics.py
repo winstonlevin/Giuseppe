@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
-DATA = 1
+DATA = 2
 PLOT_AUX = True
 
 # Load data
@@ -21,7 +21,7 @@ elif DATA == 1:
 else:
     with open('sol_set_fpa_dyn.data', 'rb') as f:
         sols = pickle.load(f)
-        sol = sols[45]
+        sol = sols[120]
 
 # Create Dicts
 k_dict = {}
@@ -44,6 +44,8 @@ r2d = 180/np.pi
 
 g = k_dict['g']
 E = k_dict['E']
+u_max = k_dict['u_max']
+u_min = k_dict['u_min']
 eps = k_dict['eps']
 
 h = x_dict['h']
@@ -55,7 +57,11 @@ lam_gam = lam_dict['gam']
 u = u_dict['u']
 
 v = (2*(E - g * x_dict['h']))**0.5
-ham = 1. + 0.5 * eps * u**2 + lam_h * v * np.sin(gam) + lam_x * v * np.cos(gam) + lam_gam * u
+mu_u = 0.5 * (u_min + u_max)
+r_u = 0.5 * (u_max - u_min)
+dgam_dt = mu_u + r_u * np.sin(u)
+ham = 1. + eps * (1 - np.cos(u)) + lam_h * v * np.sin(gam) + lam_x * v * np.cos(gam) + lam_gam * dgam_dt
+
 hc = k_dict['h0']
 vc = (2*(E - g * hc))**0.5
 x_dist = np.abs(x[-1] - x[0])
@@ -147,8 +153,8 @@ if PLOT_AUX:
     x_s_analytic = 0. + np.sign(k_dict['xf']) * (0.5 * v_max_analytic * t_s_analytic + v_max_analytic**2/(4*g) * np.sin(2*g/v_max_analytic * t_s_analytic))
     x_analytic = x_s_analytic \
         + 0.5 * v_max_analytic * (t_analytic - t_s_analytic) \
-        + v_max_analytic**2/(4*g) * np.sin(2*g/v_max_analytic * (sol.t - t_s_analytic))
-    gam_analytic = np.arctan2(np.sign(t_analytic - t_s_analytic) * np.maximum((v_max_analytic/v)**2 - 1, 0.)**0.5, np.sign(x_analytic[-1] - x_analytic[0]))
+        + v_max_analytic**2/(4*g) * np.sin(2*g/v_max_analytic * (t_analytic- t_s_analytic))
+    gam_analytic = np.arctan2(np.sign(t_analytic - t_s_analytic) * np.maximum((v_max_analytic/v_analytic)**2 - 1, 0.)**0.5, np.sign(x_analytic[-1] - x_analytic[0]))
     u_analytic = None
 else:
     lam_h2 = None
@@ -164,10 +170,10 @@ else:
 t_label = 'Time [s]'
 
 # PLOT STATES
-ylabs = (r'$h$ [m]', r'$V$ [m/s]', r'$x$ [m]', r'$\gamma$ [deg]', r'$u$ [deg/s]')
-ymult = np.array((1., 1., 1., r2d, r2d))
-ydata = (h, v, x, gam, u)
-yaux = (None, v_analytic, x_analytic, gam_analytic, u_analytic)
+ylabs = (r'$h$ [m]', r'$V$ [m/s]', r'$x$ [m]', r'$\gamma$ [deg]', r'$u$ [-]', r'$\dot{\gamma}$ [deg/s]')
+ymult = np.array((1., 1., 1., r2d, 1., r2d))
+ydata = (h, v, x, gam, u, dgam_dt)
+yaux = (None, v_analytic, x_analytic, gam_analytic, u_analytic, None)
 fig_states = plt.figure()
 axes_states = []
 

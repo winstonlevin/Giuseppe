@@ -135,8 +135,8 @@ if PLOT_AUX:
     x_s_analytic = 0. + np.sign(k_dict['xf']) * (0.5 * v_max_analytic * t_s_analytic + v_max_analytic**2/(4*g) * np.sin(2*g/v_max_analytic * t_s_analytic))
     x_analytic = x_s_analytic \
         + 0.5 * v_max_analytic * (t_analytic - t_s_analytic) \
-        + v_max_analytic**2/(4*g) * np.sin(2*g/v_max_analytic * (sol.t - t_s_analytic))
-    gam_analytic = np.arctan2(np.sign(t_analytic - t_s_analytic) * np.maximum((v_max_analytic/v)**2 - 1, 0.)**0.5, np.sign(x_analytic[-1] - x_analytic[0]))
+        + v_max_analytic**2/(4*g) * np.sin(2*g/v_max_analytic * (t_analytic - t_s_analytic))
+    gam_analytic = np.arctan2(np.sign(t_analytic - t_s_analytic) * np.maximum((v_max_analytic/v_analytic)**2 - 1, 0.)**0.5, np.sign(x_analytic[-1] - x_analytic[0]))
 else:
     lam_h2 = None
     lam_h2_analytic = None

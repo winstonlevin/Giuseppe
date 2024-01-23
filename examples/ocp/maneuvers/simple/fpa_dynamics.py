@@ -10,7 +10,7 @@ input.set_independent('t')
 
 input.add_state('h', 'V * sin(gam)')
 input.add_state('x', 'V * cos(gam)')
-input.add_state('gam', 'u')
+input.add_state('gam', 'mu_u + r_u * sin(u)')
 
 input.add_control('u')
 
@@ -19,6 +19,13 @@ g = 9.8
 input.add_expression('V', '(2*(E - g*h))**0.5')
 input.add_constant('E', E0)
 input.add_constant('g', g)
+
+u_max = 1.
+u_min = -1.
+input.add_constant('u_max', u_max)
+input.add_constant('u_min', u_min)
+input.add_expression('r_u', '0.5 * (u_max - u_min)')
+input.add_expression('mu_u', '0.5 * (u_min + u_max)')
 
 # Boundary conditions
 h0 = 0
@@ -37,15 +44,15 @@ input.add_constant('xf', xf)
 input.add_constant('hf', hf)
 
 # Set Cost
-input.set_cost('0', '1 + 0.5*eps*u**2', '0')  # Minimum time
-eps = 1e-2
+input.set_cost('0', '1 + eps * (1 - cos(u))', '0')  # Minimum time
+eps = 1.
 input.add_constant('eps', eps)
 
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     comp = giuseppe.problems.symbolic.SymDual(
         input, control_method='algebraic'
     ).compile(use_jit_compile=True)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(comp, verbose=0, max_nodes=1000, node_buffer=10)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(comp, verbose=2, max_nodes=1000, node_buffer=10)
 
 # Generate convergent solution
 guess = giuseppe.guess_generation.auto_propagate_guess(
@@ -65,6 +72,7 @@ with open('seed_sol_fpa_dyn.data', 'wb') as f:
 
 # Continuations
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
+cont.add_logarithmic_series(100, {'eps': 1e-1})
 cont.add_logarithmic_series(100, {'xf': 1e8})
 sol_set = cont.run_continuation()
 sol_set.save('sol_set_fpa_dyn.data')
