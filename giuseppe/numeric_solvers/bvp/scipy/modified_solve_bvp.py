@@ -640,7 +640,34 @@ def create_spline(y, yp, x, h):
     return PPoly(c, x, extrapolate=True, axis=1)
 
 
-def modify_mesh(x, insert_1, insert_2):
+# def prune_mesh(x, remove_1):
+#     """Remove nodes from mesh.
+#
+#     Parameters
+#     ----------
+#     x : ndarray, shape (m,)
+#         Mesh nodes.
+#     remove_1 : ndarray
+#         Indices of consolodation: replace neighboring nodes with midpoint
+#         (indicies of intermediate residuals -> excludes start and end points)
+#
+#     Returns
+#     -------
+#     x_new : ndarray
+#         New mesh nodes.
+#     """
+#     # Because np.insert implementation apparently varies with a version of
+#     # NumPy, we use a simple and reliable approach with sorting.
+#     mask = np.ones(x.size, dtype=bool)
+#     mask[remove_1 + 1] = False
+#     mask[remove_1 + 2] = False
+#     return np.sort(np.hstack((
+#         x[mask],
+#         0.5 * (x[remove_1+1] + x[remove_1 + 2]),
+#     )))
+
+
+def modify_mesh(x, insert_1, insert_2, remove_1):
     """Insert nodes into a mesh.
 
     Nodes removal logic is not established, its impact on the solver is
@@ -655,6 +682,9 @@ def modify_mesh(x, insert_1, insert_2):
     insert_2 : ndarray
         Intervals to each insert 2 new nodes, such that divide an interval
         into 3 equal parts.
+    remove_1 : ndarray
+        Intervals to each remove 2 neighboring nodes and replace with 1 at midpoint
+        (indices are for intermediate nodes, so increment to get initial x index)
 
     Returns
     -------
@@ -667,8 +697,13 @@ def modify_mesh(x, insert_1, insert_2):
     """
     # Because np.insert implementation apparently varies with a version of
     # NumPy, we use a simple and reliable approach with sorting.
+    mask = np.ones(x.size, dtype=bool)
+    mask[remove_1 + 1] = False
+    mask[remove_1 + 2] = False
+
     return np.sort(np.hstack((
-        x,
+        x[mask],
+        0.5 * (x[remove_1+1] + x[remove_1 + 2]),
         0.5 * (x[insert_1] + x[insert_1 + 1]),
         (2 * x[insert_2] + x[insert_2 + 1]) / 3,
         (x[insert_2] + 2 * x[insert_2 + 1]) / 3
@@ -1130,40 +1165,6 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
     if verbose == 2:
         print_iteration_header()
 
-    # # Adjust mesh in order to ensure RMS residuals are acceptable
-    # m = x.shape[0]
-    # nodes_added = 0
-    # max_rms_res_prev = np.inf
-    #
-    # while True:
-    #     col_res, y_middle, f, f_middle = collocation_fun(fun_wrapped, y,
-    #                                                      p, x, h)
-    #     r_middle = 1.5 * col_res / h
-    #     sol = create_spline(y, f, x, h)
-    #     rms_res = estimate_rms_residuals(fun_wrapped, sol, x, h, p,
-    #                                      r_middle, f_middle)
-    #     max_rms_res = np.max(rms_res)
-    #
-    #     insert_1, = np.nonzero((rms_res > tol) & (rms_res < 100 * tol))
-    #     insert_2, = np.nonzero(rms_res >= 100 * tol)
-    #     nodes_added = insert_1.shape[0] + 2 * insert_2.shape[0]
-    #
-    #     if nodes_added == 0 or abs(max_rms_res_prev - max_rms_res) < tol or m + nodes_added > max_nodes:
-    #         break
-    #
-    #     max_rms_res_prev = max_rms_res
-    #     x = modify_mesh(x, insert_1, insert_2)
-    #     h = np.diff(x)
-    #     y = sol(x)
-    #     m = x.shape[0]
-    #
-    #     bc_res = bc_wrapped(y[:, 0], y[:, -1], p)
-    #     max_bc_res = np.max(abs(bc_res))
-    #
-    #     if verbose == 2:
-    #         print_iteration_progress(iteration, max_rms_res, max_bc_res, m,
-    #                                  nodes_added)
-
     while True:
         m = x.shape[0]
 
@@ -1189,18 +1190,22 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
             status = 2
             break
 
-        # # Prune mesh
-        # remove_1, = np.nonzero(rms_res < 0.01 * tol)
-        # x = prune_mesh(x, remove_1)
-        # h = np.diff(x)
-        # y = sol(x)
-
-        # Expand mesh
+        # Prune/Expand mesh TODO - no guaranted mesh will satisfy RMS res after removing nodes
+        remove_1, = np.nonzero(rms_res[1:-2] < 0.01 * tol)
         insert_1, = np.nonzero((rms_res > tol) & (rms_res < 100 * tol))
         insert_2, = np.nonzero(rms_res >= 100 * tol)
-        nodes_added = insert_1.shape[0] + 2 * insert_2.shape[0]
 
-        if m + nodes_added > max_nodes:
+        if np.any(insert_1) or np.any(insert_2) or np.any(remove_1):
+            x = modify_mesh(x, insert_1, insert_2, remove_1)
+            h = np.diff(x)
+            y = sol(x)
+            m_new = x.shape[0]
+            nodes_added = m_new - m
+        else:
+            m_new = m
+            nodes_added = 0
+
+        if m_new > max_nodes:
             status = 1
             if verbose == 2:
                 nodes_added = "({})".format(nodes_added)
@@ -1212,11 +1217,7 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
             print_iteration_progress(iteration, max_rms_res, max_bc_res, m,
                                      nodes_added)
 
-        if nodes_added > 0:
-            x = modify_mesh(x, insert_1, insert_2)
-            h = np.diff(x)
-            y = sol(x)
-        elif max_bc_res <= bc_tol:
+        if nodes_added < 1 and max_bc_res <= bc_tol:
             status = 0
             break
         elif iteration >= max_iteration:
