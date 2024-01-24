@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 DATA = 2
-PLOT_AUX = True
+PLOT_AUX = False
 
 # Load data
 if DATA == 0:
@@ -21,7 +21,7 @@ elif DATA == 1:
 else:
     with open('sol_set.data', 'rb') as f:
         sols = pickle.load(f)
-        sol = sols[-1]
+        sol = sols[20]
 
 # Create Dicts
 k_dict = {}
@@ -142,7 +142,9 @@ else:
     lam_h2_analytic = None
     r_gam = None
     r_gam_analytic = None
-    gam_analytic = np.arctan2(-lam_dict['h'], -lam_dict['x'])
+    gam_analytic = None
+    v_analytic = None
+    x_analytic = None
 
 # PLOTTING -------------------------------------------------------------------------------------------------------------
 t_label = 'Time [s]'

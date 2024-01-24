@@ -21,7 +21,7 @@ elif DATA == 1:
 else:
     with open('sol_set_fpa_dyn.data', 'rb') as f:
         sols = pickle.load(f)
-        sol = sols[-1]
+        sol = sols[120]
 
 # Create Dicts
 k_dict = {}

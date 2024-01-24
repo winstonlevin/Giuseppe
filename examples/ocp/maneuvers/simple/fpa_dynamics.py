@@ -72,7 +72,7 @@ with open('seed_sol_fpa_dyn.data', 'wb') as f:
 
 # Continuations
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
-cont.add_logarithmic_series(100, {'eps': 1e-1})
+cont.add_logarithmic_series(100, {'eps': 2e-2})
 cont.add_logarithmic_series(100, {'xf': 1e8})
 sol_set = cont.run_continuation()
 sol_set.save('sol_set_fpa_dyn.data')
