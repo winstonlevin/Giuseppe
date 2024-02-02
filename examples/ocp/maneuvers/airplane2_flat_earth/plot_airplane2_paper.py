@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib as mpl
 
 from airplane2_aero_atm import mu, re, g0, mass, s_ref, CL0, CLa_fun, CD0_fun, CD1, CD2_fun, max_ld_fun,\
-    sped_fun, dens_fun
+    sped_fun, dens_fun, max_ld_fun_mach, dens_deriv_fun, lut_data
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 col = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -16,8 +16,9 @@ with open('sol_set_range_sweep.data', 'rb') as f:
 
 # Process Data
 r2d = 180 / np.pi
+weight = mass * g0
 
-# Create Dicts
+# Create Dicts from solutions ------------------------------------------------------------------------------------------
 sol_dicts = []
 for idx, sol in enumerate(sols):
     sol_dicts.append({})
@@ -41,7 +42,6 @@ for idx, sol in enumerate(sols):
     v = sol_dict['v']
     gam = sol_dict['gam']
 
-    weight = mass * g0
     sol_dict['weight'] = weight
 
     mach = v / np.asarray(sped_fun(h)).flatten()
@@ -75,6 +75,61 @@ for idx, sol in enumerate(sols):
     sol_dict['drag'] = drag
 
     sol_dict['dgam_dt'] = lift / (mass * v) - g0/v * np.cos(gam)
+    sol_dict['E'] = 0.5 * v**2 + g0 * h
+
+# Calculate "equilibrium glide" ----------------------------------------------------------------------------------------
+h_vals = np.sort(sol_dicts[-1]['h'])
+CL_ld_max = np.max(sol_dicts[-1]['CL'])
+CL_ld_min = np.min(sol_dicts[-1]['CL'])
+
+
+def binary_search(_x_min, _x_max, _f, _f_val_target, max_iter: int = 1000, tol: float = 1e-3):
+    increasing = _f(_x_max) > _f(_x_min)
+    if increasing:
+        def _f_wrapped(_x):
+            return _f(_x)
+    else:
+        _f_val_target = -_f_val_target
+
+        def _f_wrapped(_x):
+            return -_f(_x)
+
+    for _ in range(max_iter):
+        # Binary search
+        _x_guess = 0.5 * (_x_min + _x_max)
+        _f_val = _f_wrapped(_x_guess)
+        if _f_val < _f_val_target:
+            # x too low, try higher
+            _x_min = _x_guess
+        else:
+            # x too high, try lower
+            _x_max = _x_guess
+        if _x_max - _x_min < tol:
+            break
+
+    _x_guess = 0.5 * (_x_min + _x_max)
+    return _x_guess
+
+
+rho_vals = np.asarray(dens_fun(h_vals)).flatten()
+a_vals = np.asarray(sped_fun(h_vals)).flatten()
+v_vals = np.empty(h_vals.shape)
+
+for idx, rho_val in enumerate(rho_vals):
+    v_min = (2 * weight / (rho_val * s_ref * 1.1 * CL_ld_max)) ** 0.5
+    v_max = (2 * weight / (rho_val * s_ref * 0.9 * CL_ld_min))**0.5
+    v_vals[idx] = binary_search(
+        v_min, v_max,
+        lambda _v: 0.5 * rho_val * _v**2 * s_ref * float(max_ld_fun_mach(_v/a_vals[idx])['CL']) / weight - 1, 0.
+    )
+
+e_vals = 0.5 * v_vals**2 + g0 * h_vals
+mach_vals = v_vals / a_vals
+max_ld_vals_dict = max_ld_fun_mach(mach_vals)
+beta_vals = - dens_deriv_fun(h_vals) / rho_vals
+gam_ss_vals = -np.arcsin(
+    (max_ld_vals_dict['LD'] * (1 + beta_vals * v_vals**2 / (2*g0)))**-1
+)
 
 # PLOTTING -------------------------------------------------------------------------------------------------------------
 t_label = 'Time'
@@ -187,5 +242,54 @@ for idx in range(n_sols):
 
     fig_states.savefig('fig_h_gam_' + str(idx + 1) + '.svg')
 
+# Plot equilibrium glide -----------------------------------------------------------------------------------------------
+fig_he = plt.figure()
+ax_he = fig_he.add_subplot(111)
+ax_he.grid()
+ax_he.set_xlabel(r'$E$', size=20)
+ax_he.set_ylabel(r'$h$', size=20)
+ax_he.set_xticklabels([])
+ax_he.set_yticklabels([])
+ax_he.plot(e_vals, h_vals, 'k--', linewidth=4)
+fig_he.tight_layout()
+fig_he.savefig('fig_he.svg')
+
+# Plot steady-state FPA ------------------------------------------------------------------------------------------------
+e_min = 1.8e6
+fig_gam_ss = plt.figure()
+ax_gam_ss = fig_gam_ss.add_subplot(111)
+ax_gam_ss.grid()
+ax_gam_ss.set_xlabel(r'$E$', size=20)
+ax_gam_ss.set_ylabel(r'$\gamma$', size=20)
+ax_gam_ss.set_xticklabels([])
+ax_gam_ss.set_yticklabels([])
+for sol_dict in sol_dicts:
+    e_idcs, = np.nonzero(sol_dict['E'] > e_min)
+    ax_gam_ss.plot(sol_dict['E'][e_idcs], sol_dict['gam'][e_idcs])
+e_idcs, = np.nonzero(e_vals > e_min)
+ax_gam_ss.plot(e_vals[e_idcs], gam_ss_vals[e_idcs], 'k--', linewidth=2, label=r'$\gamma_{\mathrm{ss}}$')
+ax_gam_ss.legend(fontsize=20)
+fig_gam_ss.tight_layout()
+fig_gam_ss.savefig('fig_gam_ss.svg')
+
+# Plot aerodynamic model
+mach_vals_plot = np.linspace(lut_data['M'][0], lut_data['M'][-1], 100)
+ld_data_vals_plot = max_ld_fun_mach(mach_vals_plot)
+
+fig_aerodynamics = plt.figure()
+
+ax_ld = fig_aerodynamics.add_subplot(211)
+ax_ld.grid()
+ax_ld.set_ylabel(r'Max $L/D$')
+ax_ld.plot(mach_vals_plot, ld_data_vals_plot['LD'], linewidth=2)
+
+ax_cl = fig_aerodynamics.add_subplot(212)
+ax_cl.grid()
+ax_cl.set_xlabel(r'Mach')
+ax_cl.set_ylabel(r'$C_L^*$')
+ax_cl.plot(mach_vals_plot, ld_data_vals_plot['CL'], linewidth=2)
+
+fig_aerodynamics.tight_layout()
+fig_aerodynamics.savefig('fig_aero_model.svg')
 
 plt.show()

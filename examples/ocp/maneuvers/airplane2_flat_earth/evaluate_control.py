@@ -355,8 +355,8 @@ for idx, ivp_sol_dict in enumerate(ivp_sols_dict):
 
     fig.tight_layout()
     fig.savefig(
-        fig_name + '.eps',
-        format='eps',
+        fig_name + '.svg',
+        format='svg',
         bbox_inches='tight'
     )
 
