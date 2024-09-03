@@ -24,7 +24,7 @@ class SciPySolver:
 
     def __init__(self, prob: Union[BVP, Dual], use_jit_compile: bool = True, perform_vectorize: bool = True,
                  tol: float = 0.001, bc_tol: float = 0.001, max_nodes: int = 1000, node_buffer: int = 20,
-                 verbose: Union[bool, int] = False):
+                 verbose: Union[bool, int] = False, embed_continuation: bool = False):
         """
         Initialize SciPySolver
 
@@ -40,6 +40,8 @@ class SciPySolver:
             sets `max_nodes` kwarg for `scipy.integrate.solve_bvp`
         verbose : bool, default=False
             sets `verbose` kwarg for `scipy.integrate.solve_bvp`
+        embed_continuation : bool, default=False
+            embed a continuation into the BVP residual in order to modify the constants
         """
 
         self.tol: float = tol
@@ -47,6 +49,7 @@ class SciPySolver:
         self.max_nodes: int = max_nodes
         self.node_buffer: int = node_buffer
         self.verbose: Union[bool, int] = verbose
+        self.embed_continuation: bool = embed_continuation
 
         if prob.prob_class == 'dual':
             prob = convert_dual_to_bvp(prob, perform_vectorize=perform_vectorize)
@@ -56,7 +59,7 @@ class SciPySolver:
     def solve(self, guess: Solution, constants: Optional[np.ndarray] = None,
               tol: Optional[float] = None, bc_tol: Optional[float] = None,
               max_nodes: Optional[int] = None, node_buffer: Optional[int] = None,
-              verbose: Optional[Union[bool, int]] = None
+              verbose: Optional[Union[bool, int]] = None, embed_continuation: Optional[bool] = None,
         ) -> Solution:
         """
         Solve BVP (or dualized OCP) with instance of ScipySolveBVP
@@ -77,6 +80,8 @@ class SciPySolver:
             override solver default node buffer
         verbose : bool or int, optional
             override solver default verbosity
+        embed_continuation : bool, optional
+            embed a continuation into the BVP residual in order to modify the constants
         Returns
         -------
         solution : Solution
@@ -101,16 +106,49 @@ class SciPySolver:
             bc_tol = self.bc_tol
         if verbose is None:
             verbose = self.verbose
+        if embed_continuation is None:
+            embed_continuation = self.embed_continuation
 
         max_nodes = max(max_nodes, len(tau_guess) + node_buffer)
 
+        if embed_continuation:
+            # Add the continuation parameter as the final free constant with a constraint to be 1.
+            # 0 corresponds to the constant values in the guess (assumed convergent), 1 corresponds to the constant
+            # values passed separately into this function.
+            constants0 = guess.k
+
+            def _dynamics(_tau, _x, _p):
+                # Remove continuation parameter (as expected in the compute_dynamics function)
+                _constants = constants0 + _p[-1] * (constants - constants0)
+                return self.prob.compute_dynamics(_tau, _x, _p[:-1], _constants)
+
+            def _boundary_conditions(_x0, _xf, _p):
+                # Add the equality constraint for the continuation parameter to be 1
+                _constants = constants0 + _p[-1] * (constants - constants0)
+                return np.append(self.prob.compute_boundary_conditions(_x0, _xf, _p[:-1], _constants), _p[-1] - 1.)
+
+            _p_guess = np.append(p_guess, 0.)
+        else:
+            # Enforce the value of constants passed separately into this function
+            def _dynamics(_tau, _x, _p):
+                return self.prob.compute_dynamics(_tau, _x, _p, constants)
+
+            def _boundary_conditions(_x0, _xf, _p):
+                return self.prob.compute_boundary_conditions(_x0, _xf, _p, constants)
+
+            _p_guess = p_guess
+
         try:
             sol: _scipy_bvp_sol = solve_bvp(
-                    lambda tau, x, p: self.prob.compute_dynamics(tau, x, p, constants),
-                    lambda x0, xf, p: self.prob.compute_boundary_conditions(x0, xf, p, constants),
-                    tau_guess, x_guess, p_guess,
+                    _dynamics, _boundary_conditions,
+                    tau_guess, x_guess, _p_guess,
                     tol=tol, bc_tol=bc_tol, max_nodes=max_nodes, verbose=verbose
             )
+
+            if embed_continuation:
+                # Remove free parameter from solution, as expected in the post processor
+                sol.p = sol.p[:-1]
+
         except RuntimeError as error:
             warn(error.args[0])
             sol: _scipy_bvp_sol = self._form_solution_when_solver_throws_exception(tau_guess, x_guess, p_guess)

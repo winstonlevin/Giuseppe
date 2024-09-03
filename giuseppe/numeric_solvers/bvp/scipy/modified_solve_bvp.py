@@ -459,7 +459,8 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
     sigma = 0.2
 
     # Step size decrease factor for backtracking.
-    tau = 0.5
+    tau = 0.1
+    # tau = 0.5
 
     # Maximum number of backtracking steps, the minimum step is then
     # tau ** n_trial.
@@ -508,11 +509,11 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
                 break
 
             if trial < n_trial:
-                # Add variable reduction in step based on how much residual increases
-                mult = (1 - 2 * alpha * sigma) * cost / (cost + cost_new)
-                mult = max(mult, EPS**(1/n_trial))  # enforce alpha >= EPS
-                alpha *= mult
-                # alpha *= tau
+                # # Add variable reduction in step based on how much residual increases
+                # mult = (1 - 2 * alpha * sigma) * cost / (cost + cost_new)
+                # mult = max(mult, EPS**(1/n_trial))  # enforce alpha >= EPS
+                # alpha *= mult
+                alpha *= tau
 
         if success:  # Add success flag. If step increases error, then retain old step and try new mesh.
             y = y_new
