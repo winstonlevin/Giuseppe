@@ -452,19 +452,17 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     # Maximum allowed number of Jacobian evaluation and factorization, in
     # other words, the maximum number of full Newton iterations. A small value
     # is recommended in the literature.
-    max_njev = 4
+    max_njev = max_iter
+    # max_njev = 4
 
     # Minimum relative improvement of the criterion function to accept the
     # step (Armijo constant).
     sigma = 0.2
 
-    # Step size decrease factor for backtracking.
-    tau = 0.1
-    # tau = 0.5
-
-    # Maximum number of backtracking steps, the minimum step is then
-    # tau ** n_trial.
+    # Step size decrease parameters backtracking.
     n_trial = 4
+    red_max = 0.1  # Maximum reduction factor in each step (0.1 -> do not skip orders of magnitude)
+    req_acc = 0.8  # Target accuracy of model
 
     col_res, y_middle, f, f_middle = col_fun(y, p)
     bc_res = bc(y[:, 0], y[:, -1], p)
@@ -473,6 +471,7 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     njev = 0
     singular = False
     recompute_jac = True
+    alpha_new = 1.
     for iteration in range(max_iter):
         if recompute_jac:
             J = jac(y, p, y_middle, f, f_middle, bc_res)
@@ -484,15 +483,14 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
                 break
 
             step = LU.solve(res)
-            cost = np.dot(res, res)
-            # cost = np.dot(step, step)
+            cost = np.dot(step, step)
 
         y_step = step[:m * n].reshape((n, m), order='F')
         p_step = step[m * n:]
 
-        alpha = 1
         success = False
         for trial in range(n_trial + 1):
+            alpha = alpha_new
             y_new = y - alpha * y_step
             if B is not None:
                 y_new[:, 0] = np.dot(B, y_new[:, 0])
@@ -500,25 +498,36 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
 
             col_res, y_middle, f, f_middle = col_fun(y_new, p_new)
             bc_res = bc(y_new[:, 0], y_new[:, -1], p_new)
-            res = np.hstack((col_res.ravel(order='F'), bc_res))
+            res_new = np.hstack((col_res.ravel(order='F'), bc_res))
 
-            step_new = LU.solve(res)
-            cost_new = np.dot(res, res)
+            step_new = LU.solve(res_new)
+            cost_new = np.dot(step_new, step_new)
+
+            # Compare "expected" step (if Jac approx is perfect) with "true" step (since Jac approx is not perfect)
+            # to modify the gain on the step. The "expected" new step is:
+            # step_new = step_old - alpha * step_old
+            # hence the expected reduction in cost is:
+            # cost - cost_new_predicted = [1 - (1 - alpha)**2] cost = alpha(2 - alpha) cost
+            accuracy = (cost - cost_new) / (alpha*(2 - alpha)*cost)
+            alpha_new = min(max(min(2., accuracy) / req_acc * alpha, red_max * alpha), 1.)
+
             if cost_new < (1 - 2 * alpha * sigma) * cost and feas(x, y_new, p_new):
                 success = True
                 break
 
-            if trial < n_trial:
-                # # Add variable reduction in step based on how much residual increases
-                # mult = (1 - 2 * alpha * sigma) * cost / (cost + cost_new)
-                # mult = max(mult, EPS**(1/n_trial))  # enforce alpha >= EPS
-                # alpha *= mult
-                alpha *= tau
+            #
+            # if trial < n_trial:
+            #     # Add variable reduction in step based on how much residual increases
+            #     mult = (1 - 2 * alpha * sigma) * cost / (cost + cost_new)
+            #     mult = max(mult, max_red_backtrack)  # enforce alpha >= EPS
+            #     alpha *= mult
+            #     # alpha *= tau
 
-        if success:  # Add success flag. If step increases error, then retain old step and try new mesh.
+        if success:  # Add success flag. If step with fresh jac increases error, then retain old step and try new mesh.
             y = y_new
             p = p_new
-        else:
+            res = res_new
+        elif recompute_jac:
             # Mesh is not successful, try updating mesh.
             break
 
@@ -537,6 +546,8 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             recompute_jac = False
         else:
             recompute_jac = True
+
+        alpha = alpha_new
 
     return y, p, singular
 
@@ -1291,7 +1302,7 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
             status = 2
             break
 
-        # Prune/Expand mesh TODO - no guaranted mesh will satisfy RMS res after removing nodes
+        # Prune/Expand mesh TODO - no guarantee mesh will satisfy RMS res after removing nodes
         remove_1, = np.nonzero(rms_res[1:-2] < 0.01 * tol)
         insert_1, = np.nonzero((rms_res > tol) & (rms_res < 100 * tol))
         insert_2, = np.nonzero(rms_res >= 100 * tol)
