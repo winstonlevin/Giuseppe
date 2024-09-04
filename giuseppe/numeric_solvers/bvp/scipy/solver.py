@@ -25,7 +25,7 @@ class SciPySolver:
     def __init__(self, prob: Union[BVP, Dual], use_jit_compile: bool = True, perform_vectorize: bool = True,
                  tol: float = 0.001, bc_tol: float = 0.001, max_nodes: int = 1000, node_buffer: int = 20,
                  verbose: Union[bool, int] = False, embed_continuation: bool = False,
-                 max_mesh_iter: int = 10, max_newton_iter: int = 8):
+                 max_mesh_iter: int = 10, max_newton_iter: int = 8, method: str = 'newton'):
         """
         Initialize SciPySolver
 
@@ -47,6 +47,8 @@ class SciPySolver:
             number of mesh iterations in BVP solver
         max_newton_iter : int, optional
             number of residual-solving iterations in BVP solver
+        method: str, optional
+            method used in BVP solver
         """
 
         self.tol: float = tol
@@ -57,6 +59,7 @@ class SciPySolver:
         self.embed_continuation: bool = embed_continuation
         self.max_mesh_iter: int = max_mesh_iter
         self.max_newton_iter: int = max_newton_iter
+        self.method: str = method
 
         if prob.prob_class == 'dual':
             prob = convert_dual_to_bvp(prob, perform_vectorize=perform_vectorize)
@@ -67,7 +70,7 @@ class SciPySolver:
               tol: Optional[float] = None, bc_tol: Optional[float] = None,
               max_nodes: Optional[int] = None, node_buffer: Optional[int] = None,
               verbose: Optional[Union[bool, int]] = None, embed_continuation: Optional[bool] = None,
-              max_mesh_iter: Optional[int] = None, max_newton_iter: Optional[int] = None
+              max_mesh_iter: Optional[int] = None, max_newton_iter: Optional[int] = None, method: Optional[str] = None
         ) -> Solution:
         """
         Solve BVP (or dualized OCP) with instance of ScipySolveBVP
@@ -94,6 +97,8 @@ class SciPySolver:
             number of mesh iterations in BVP solver
         max_newton_iter : int, optional
             number of residual-solving iterations in BVP solver
+        method: str, optional
+            method used in BVP solver
         Returns
         -------
         solution : Solution
@@ -124,6 +129,8 @@ class SciPySolver:
             max_mesh_iter = self.max_mesh_iter
         if max_newton_iter is None:
             max_newton_iter = self.max_newton_iter
+        if method is None:
+            method = self.method
 
         max_nodes = max(max_nodes, len(tau_guess) + node_buffer)
 
@@ -159,7 +166,7 @@ class SciPySolver:
                     _dynamics, _boundary_conditions,
                     tau_guess, x_guess, _p_guess,
                     tol=tol, bc_tol=bc_tol, max_nodes=max_nodes, verbose=verbose,
-                    max_mesh_iter=max_mesh_iter, max_newton_iter=max_newton_iter,
+                    max_mesh_iter=max_mesh_iter, max_newton_iter=max_newton_iter, method=method
             )
 
             if embed_continuation:

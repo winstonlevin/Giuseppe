@@ -33,6 +33,7 @@ from numpy.linalg import pinv
 from scipy.sparse import coo_matrix, csc_matrix
 from scipy.sparse.linalg import splu
 from scipy.optimize import OptimizeResult
+from scipy.optimize import root
 
 
 EPS = np.finfo(float).eps
@@ -540,6 +541,92 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     return y, p, singular
 
 
+def solve_root(n, m, h, col_fun, bc, jac, x, y, p, bvp_tol, method='hybr', max_iter: int = 8):
+    """Solve the nonlinear collocation system by SciPy's ``root`` methods
+
+    Parameters
+    ----------
+    n : int
+        Number of equations in the ODE system.
+    m : int
+        Number of nodes in the mesh.
+    h : ndarray, shape (m-1,)
+        Mesh intervals.
+    col_fun : callable
+        Function computing collocation residuals.
+    bc : callable
+        Function computing boundary condition residuals.
+    jac : callable
+        Function computing the Jacobian of the whole system (including
+        collocation and boundary condition residuals). It is supposed to
+        return csc_matrix.
+    x : ndarray, shape (m,)
+        Mesh nodes.
+    y : ndarray, shape (n, m)
+        Initial guess for the function values at the mesh nodes.
+    p : ndarray, shape (k,)
+        Initial guess for the unknown parameters.
+    bvp_tol : float
+        Tolerance to which we want to solve a BVP.
+    method : str, optional
+        Method used for the ``root`` function. Default is ``hybr``.
+    max_iter : int, optional
+        Maximum number of iterations, considering that some of them can be
+        performed with the fixed Jacobian. In theory, such iterations are cheap,
+        but it's not that simple in Python. Default is 8.
+
+    Returns
+    -------
+    y : ndarray, shape (n, m)
+        Final iterate for the function values at the mesh nodes.
+    p : ndarray, shape (k,)
+        Final iterate for the unknown parameters.
+    singular : bool
+        True, if the LU decomposition failed because Jacobian turned out
+        to be singular.
+
+    References
+    ----------
+    .. [1]  U. Ascher, R. Mattheij and R. Russell "Numerical Solution of
+       Boundary Value Problems for Ordinary Differential Equations"
+    """
+    # We know that the solution residuals at the middle points of the mesh
+    # are connected with collocation residuals  r_middle = 1.5 * col_res / h.
+    # As our BVP solver tries to decrease relative residuals below a certain
+    # tolerance, it seems reasonable to terminated Newton iterations by
+    # comparison of r_middle / (1 + np.abs(f_middle)) with a certain threshold,
+    # which we choose to be 1.5 orders lower than the BVP tolerance. We rewrite
+    # the condition as col_res < tol_r * (1 + np.abs(f_middle)), then tol_r
+    # should be computed as follows:
+    def concat_res_fun(z):
+        y = z[:m * n].reshape((n, m), order='F')
+        p = z[m * n:]
+
+        col_res, y_middle, f, f_middle = col_fun(y, p)
+        bc_res = bc(y[:, 0], y[:, -1], p)
+
+        res = np.hstack((col_res.ravel(order='F'), bc_res))
+        J = jac(y, p, y_middle, f, f_middle, bc_res).todense()
+
+        return res, J
+
+    if method in ['hybr', 'df-sane']:
+        options = {'maxfev': max_iter}
+    else:
+        options = {'maxiter': max_iter}
+
+    z0 = np.hstack((y.ravel(order='F'), p))
+    sol = root(concat_res_fun, z0, method=method, jac=True, tol=bvp_tol, options=options)
+
+    z = sol.x
+    y = z[:m * n].reshape((n, m), order='F')
+    p = z[m * n:]
+
+    singular = np.abs(np.linalg.eigvals(sol.fjac)).min() < EPS**0.5
+
+    return y, p, singular
+
+
 def print_iteration_header():
     print("{:^15}{:^15}{:^15}{:^15}{:^15}".format(
         "Iteration", "Max residual", "Max BC residual", "Total nodes",
@@ -796,7 +883,8 @@ def wrap_functions(fun, bc, fun_jac, bc_jac, fun_feas, k, a, S, D, dtype):
 
 
 def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas=None,
-              tol=1e-3, max_nodes=1000, verbose=0, bc_tol=None, max_mesh_iter: int = 10, max_newton_iter: int = 8):
+              tol=1e-3, max_nodes=1000, verbose=0, bc_tol=None, max_mesh_iter: int = 10, max_newton_iter: int = 8,
+              method: str = 'newton'):
     """Solve a boundary value problem for a system of ODEs.
 
     This function numerically solves a first order system of ODEs subject to
@@ -917,6 +1005,8 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
         Maximum number of iterations, considering that some of them can be
         performed with the fixed Jacobian. In theory, such iterations are cheap,
         but it's not that simple in Python. Default is 8.
+    method : str, optional
+        Method used to reduce residual. Default is ``newton``
 
     Returns
     -------
@@ -1168,13 +1258,21 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
     if verbose == 2:
         print_iteration_header()
 
+    if method == 'newton':
+        def solver(_x, _y, _p):
+            return solve_newton(
+                n, m, h, col_fun, bc_wrapped, jac_sys, fun_feas_wrapped, _x, _y, _p, B, tol, bc_tol, max_newton_iter
+            )
+    else:
+        def solver(_x, _y, _p):
+            return solve_root(n, m, h, col_fun, bc_wrapped, jac_sys, _x, _y, _p, tol, method, max_newton_iter)
+
     while True:
         m = x.shape[0]
 
         col_fun, jac_sys = prepare_sys(n, m, k, fun_wrapped, bc_wrapped,
                                        fun_jac_wrapped, bc_jac_wrapped, x, h)
-        y, p, singular = solve_newton(n, m, h, col_fun, bc_wrapped, jac_sys, fun_feas_wrapped,
-                                      x, y, p, B, tol, bc_tol, max_newton_iter)
+        y, p, singular = solver(x, y, p)
         iteration += 1
 
         col_res, y_middle, f, f_middle = collocation_fun(fun_wrapped, y,
