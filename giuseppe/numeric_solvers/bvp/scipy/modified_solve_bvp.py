@@ -370,7 +370,7 @@ def prepare_sys(n, m, k, fun, bc, fun_jac, bc_jac, x, h):
     return col_fun, sys_jac
 
 
-def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
+def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, max_iter: int = 8):
     """Solve the nonlinear collocation system by a Newton method.
 
     This is a simple Newton method with a backtracking line search. As
@@ -418,6 +418,10 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
         Tolerance to which we want to solve a BVP.
     bc_tol : float
         Tolerance to which we want to satisfy the boundary conditions.
+    max_iter : int, optional
+        Maximum number of iterations, considering that some of them can be
+        performed with the fixed Jacobian. In theory, such iterations are cheap,
+        but it's not that simple in Python. Default is 8.
 
     Returns
     -------
@@ -448,11 +452,6 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol):
     # other words, the maximum number of full Newton iterations. A small value
     # is recommended in the literature.
     max_njev = 4
-
-    # Maximum number of iterations, considering that some of them can be
-    # performed with the fixed Jacobian. In theory, such iterations are cheap,
-    # but it's not that simple in Python.
-    max_iter = 8
 
     # Minimum relative improvement of the criterion function to accept the
     # step (Armijo constant).
@@ -797,7 +796,7 @@ def wrap_functions(fun, bc, fun_jac, bc_jac, fun_feas, k, a, S, D, dtype):
 
 
 def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas=None,
-              tol=1e-3, max_nodes=1000, verbose=0, bc_tol=None):
+              tol=1e-3, max_nodes=1000, verbose=0, bc_tol=None, max_mesh_iter: int = 10, max_newton_iter: int = 8):
     """Solve a boundary value problem for a system of ODEs.
 
     This function numerically solves a first order system of ODEs subject to
@@ -910,8 +909,14 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
     bc_tol : float, optional
         Desired absolute tolerance for the boundary condition residuals: `bc`
         value should satisfy ``abs(bc) < bc_tol`` component-wise.
-        Equals to `tol` by default. Up to 10 iterations are allowed to achieve this
+        Equals to `tol` by default. Up to ``max_iteration`` iterations are allowed to achieve this
         tolerance.
+    max_mesh_iter : int, optional
+        Maximum number of Newton search + mesh modification steps. Default is 10.
+    max_newton_iter : int, optional
+        Maximum number of iterations, considering that some of them can be
+        performed with the fixed Jacobian. In theory, such iterations are cheap,
+        but it's not that simple in Python. Default is 8.
 
     Returns
     -------
@@ -1145,9 +1150,6 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
     if bc_tol is None:
         bc_tol = tol
 
-    # Maximum number of iterations
-    max_iteration = 10
-
     fun_wrapped, bc_wrapped, fun_jac_wrapped, bc_jac_wrapped, fun_feas_wrapped = wrap_functions(
         fun, bc, fun_jac, bc_jac, fun_feas, k, a, S, D, dtype)
 
@@ -1172,7 +1174,7 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
         col_fun, jac_sys = prepare_sys(n, m, k, fun_wrapped, bc_wrapped,
                                        fun_jac_wrapped, bc_jac_wrapped, x, h)
         y, p, singular = solve_newton(n, m, h, col_fun, bc_wrapped, jac_sys, fun_feas_wrapped,
-                                      x, y, p, B, tol, bc_tol)
+                                      x, y, p, B, tol, bc_tol, max_newton_iter)
         iteration += 1
 
         col_res, y_middle, f, f_middle = collocation_fun(fun_wrapped, y,
@@ -1221,7 +1223,7 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
         if nodes_added < 1 and max_bc_res <= bc_tol:
             status = 0
             break
-        elif iteration >= max_iteration:
+        elif iteration >= max_mesh_iter:
             status = 3
             break
 

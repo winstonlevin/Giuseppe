@@ -24,7 +24,8 @@ class SciPySolver:
 
     def __init__(self, prob: Union[BVP, Dual], use_jit_compile: bool = True, perform_vectorize: bool = True,
                  tol: float = 0.001, bc_tol: float = 0.001, max_nodes: int = 1000, node_buffer: int = 20,
-                 verbose: Union[bool, int] = False, embed_continuation: bool = False):
+                 verbose: Union[bool, int] = False, embed_continuation: bool = False,
+                 max_mesh_iter: int = 10, max_newton_iter: int = 8):
         """
         Initialize SciPySolver
 
@@ -42,6 +43,10 @@ class SciPySolver:
             sets `verbose` kwarg for `scipy.integrate.solve_bvp`
         embed_continuation : bool, default=False
             embed a continuation into the BVP residual in order to modify the constants
+        max_mesh_iter : int, optional
+            number of mesh iterations in BVP solver
+        max_newton_iter : int, optional
+            number of residual-solving iterations in BVP solver
         """
 
         self.tol: float = tol
@@ -50,6 +55,8 @@ class SciPySolver:
         self.node_buffer: int = node_buffer
         self.verbose: Union[bool, int] = verbose
         self.embed_continuation: bool = embed_continuation
+        self.max_mesh_iter: int = max_mesh_iter
+        self.max_newton_iter: int = max_newton_iter
 
         if prob.prob_class == 'dual':
             prob = convert_dual_to_bvp(prob, perform_vectorize=perform_vectorize)
@@ -60,6 +67,7 @@ class SciPySolver:
               tol: Optional[float] = None, bc_tol: Optional[float] = None,
               max_nodes: Optional[int] = None, node_buffer: Optional[int] = None,
               verbose: Optional[Union[bool, int]] = None, embed_continuation: Optional[bool] = None,
+              max_mesh_iter: Optional[int] = None, max_newton_iter: Optional[int] = None
         ) -> Solution:
         """
         Solve BVP (or dualized OCP) with instance of ScipySolveBVP
@@ -82,6 +90,10 @@ class SciPySolver:
             override solver default verbosity
         embed_continuation : bool, optional
             embed a continuation into the BVP residual in order to modify the constants
+        max_mesh_iter : int, optional
+            number of mesh iterations in BVP solver
+        max_newton_iter : int, optional
+            number of residual-solving iterations in BVP solver
         Returns
         -------
         solution : Solution
@@ -108,6 +120,10 @@ class SciPySolver:
             verbose = self.verbose
         if embed_continuation is None:
             embed_continuation = self.embed_continuation
+        if max_mesh_iter is None:
+            max_mesh_iter = self.max_mesh_iter
+        if max_newton_iter is None:
+            max_newton_iter = self.max_newton_iter
 
         max_nodes = max(max_nodes, len(tau_guess) + node_buffer)
 
@@ -142,7 +158,8 @@ class SciPySolver:
             sol: _scipy_bvp_sol = solve_bvp(
                     _dynamics, _boundary_conditions,
                     tau_guess, x_guess, _p_guess,
-                    tol=tol, bc_tol=bc_tol, max_nodes=max_nodes, verbose=verbose
+                    tol=tol, bc_tol=bc_tol, max_nodes=max_nodes, verbose=verbose,
+                    max_mesh_iter=max_mesh_iter, max_newton_iter=max_newton_iter,
             )
 
             if embed_continuation:
