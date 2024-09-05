@@ -458,7 +458,8 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     # Step size decrease parameters backtracking.
     n_trial = 4
     red_max = 0.1  # Maximum reduction factor in each step (0.1 -> do not skip orders of magnitude)
-    acc_min = 0.7  # Minimum accuracy to accept step
+    acc_min_non_pd = 0.7  # Minimum accuracy to accept step
+    acc_min_pd = 0.05  # Minimum accuracy to accept positive definite step
     acc_max = 2.  # Saturate value of accuracy
     acc_tar = 0.95  # Target accuracy of model
     alpha_max = 4.  # Maximum extrapolation region
@@ -471,12 +472,14 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     njev = 0
     singular = False
     recompute_jac = True
-    alpha = 1.
+    abs_alpha = 1.
     cost_prev = np.Inf
+    done = False
     for iteration in range(max_iter):
         if (np.all(np.abs(col_res) < tol_r * (1 + np.abs(f_middle))) and
                 np.all(np.abs(bc_res) < bc_tol)):
             # Success!
+            done = True
             break
 
         if recompute_jac:
@@ -491,42 +494,85 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             step = LU.solve(res)
             cost = np.dot(step, step)
 
-        y_step = step[:m * n].reshape((n, m), order='F')
-        p_step = step[m * n:]
+            # If res.T @ J @ res < 0 -> infinitesimal step increases cost. Try backward step.
+            sign_alpha = np.sign(res.dot(J.dot(res)))
+            # use_grad = np.dot(step, res) < 0
+            # if use_grad:
+            #     # Jacobian is NOT posive definite -> Newton's method invalid, use gradient descent
+            #     scale_jac = (J.dot(J).diagonal()).sum()**0.5
+            #     scale_res = (res**2).sum()**0.5
+            #     step = ((res/scale_res) @ LU.L) @ (LU.U/scale_jac)
 
+            y_step = step[:m * n].reshape((n, m), order='F')
+            p_step = step[m * n:]
+
+        alpha = abs_alpha * sign_alpha
         y_new = y - alpha * y_step
         p_new = p - alpha * p_step
 
         col_res, y_middle, f, f_middle = col_fun(y_new, p_new)
         bc_res = bc(y_new[:, 0], y_new[:, -1], p_new)
-        res_new = np.hstack((col_res.ravel(order='F'), bc_res))
-        step_new = LU.solve(res_new)
-        cost_new = np.dot(step_new, step_new)
+        res = np.hstack((col_res.ravel(order='F'), bc_res))
+
+        # if use_grad:
+        #     res_unscaled = res/scale_res
+        #     step = (res_unscaled @ LU.L) @ (LU.U/scale_jac)
+        #     cost_new = np.dot(res_unscaled, res_unscaled)
+        # else:
+        #     step = LU.solve(res)
+        #     cost_new = np.dot(step, step)  # Cost assuming a constant Jacobian
+        step = LU.solve(res)  # Not actually "step", just used to scale new residual for cost
+
+        # Cost assuming a constant Jacobian
+        cost_new = np.dot(step, step)
+
+        # # Cost assuming a Boyden-updated Jacobian
+        # mod_term = LU.solve(step)
+        # den = np.dot(step, mod_term)
+        # num = np.dot(step, res)
+        # if abs(den) > bvp_tol:
+        #     step_broyden = (1 + 2*num/den) * step
+        # else:
+        #     step_broyden = step
+        # cost_new = np.dot(step_broyden, step_broyden)
+
 
         # Compare "expected" step (if Jac approx is perfect) with "true" step (since Jac approx is not perfect)
         # to modify the gain on the step. The "expected" new step is:
         # step_new = step_old - alpha * step_old
         # hence the expected reduction in cost is:
         # cost - cost_new_predicted = [1 - (1 - alpha)**2] cost = alpha(2 - alpha) cost
-        accuracy = min((cost - cost_new) / (alpha * (2 - alpha) * cost), acc_max)
-        alpha = min(max(accuracy / acc_tar * alpha, red_max * alpha), alpha_max)
+        if sign_alpha < 0:
+            accuracy = -max(1 / (alpha * (2 - alpha)) * (1 - cost_new/cost), -acc_max)
+        else:
+            accuracy = min(1 / (alpha * (2 - alpha)) * (1 - cost_new/cost), acc_max)
 
+        if np.isnan(accuracy) or np.isinf(accuracy):
+            # Protect against large steps resulting in out-of-range outputs
+            abs_alpha = red_max * abs_alpha
+        else:
+            abs_alpha = min(max(accuracy / acc_tar * abs_alpha, red_max * abs_alpha), alpha_max)
+
+        # If res.T @ jac_inv @ res < 0 -> jacobian is not positive definite -> require stricter step size reduction
+        acc_min = acc_min_non_pd if np.dot(res, step) < 0 else acc_min_pd
         if accuracy > acc_min:
             # Accept step
             y = y_new
             p = p_new
-            res = res_new
             recompute_jac = True
             cost_prev = cost
         else:
             # Reject step -> no need to recompute jac
             recompute_jac = False
 
-        if alpha < alpha_min or cost > cost_prev or njev == max_njev:
+        if abs_alpha < alpha_min or cost > cost_prev:
             # Mesh is not successful, try updating mesh.
+            done = True
+            break
+        elif njev == max_njev:
             break
 
-    return y, p, singular
+    return y, p, singular, done
 
 
 def solve_root(n, m, h, col_fun, bc, jac, x, y, p, bvp_tol, method='hybr', max_iter: int = 8):
@@ -611,8 +657,9 @@ def solve_root(n, m, h, col_fun, bc, jac, x, y, p, bvp_tol, method='hybr', max_i
     p = z[m * n:]
 
     singular = np.abs(np.linalg.eigvals(sol.fjac)).min() < EPS**0.5
+    done = sol.nfev < max_iter
 
-    return y, p, singular
+    return y, p, singular, done
 
 
 def print_iteration_header():
@@ -1260,7 +1307,7 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
 
         col_fun, jac_sys = prepare_sys(n, m, k, fun_wrapped, bc_wrapped,
                                        fun_jac_wrapped, bc_jac_wrapped, x, h)
-        y, p, singular = solver(x, y, p)
+        y, p, singular, done_newton = solver(x, y, p)
         iteration += 1
 
         col_res, y_middle, f, f_middle = collocation_fun(fun_wrapped, y,
@@ -1279,12 +1326,20 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
             status = 2
             break
 
-        # Prune/Expand mesh TODO - no guarantee mesh will satisfy RMS res after removing nodes
+        # Prune/Expand mesh
         remove_1, = np.nonzero(rms_res[1:-2] < 0.01 * tol)
         insert_1, = np.nonzero((rms_res > tol) & (rms_res < 100 * tol))
         insert_2, = np.nonzero(rms_res >= 100 * tol)
+        done_mesh = not (np.any(insert_1) or np.any(insert_2))
+        success = done_mesh and max_bc_res <= bc_tol
 
-        if np.any(insert_1) or np.any(insert_2) or np.any(remove_1):
+        if success:
+            status = 0
+            if verbose == 2:
+                print_iteration_progress(iteration, max_rms_res, max_bc_res, m, 0)
+            break
+
+        if (not done_mesh) or np.any(remove_1):
             x = modify_mesh(x, insert_1, insert_2, remove_1)
             h = np.diff(x)
             y = sol(x)
@@ -1298,18 +1353,16 @@ def solve_bvp(fun, bc, x, y, p=None, S=None, fun_jac=None, bc_jac=None, fun_feas
             status = 1
             if verbose == 2:
                 nodes_added = "({})".format(nodes_added)
-                print_iteration_progress(iteration, max_rms_res, max_bc_res,
-                                         m, nodes_added)
+                print_iteration_progress(iteration, max_rms_res, max_bc_res, m, nodes_added)
             break
 
         if verbose == 2:
-            print_iteration_progress(iteration, max_rms_res, max_bc_res, m,
-                                     nodes_added)
+            print_iteration_progress(iteration, max_rms_res, max_bc_res, m, nodes_added)
 
         if nodes_added < 1 and max_bc_res <= bc_tol:
             status = 0
             break
-        elif iteration >= max_mesh_iter:
+        elif iteration >= max_mesh_iter or (done_newton and done_mesh):
             status = 3
             break
 
