@@ -472,9 +472,11 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     njev = 0
     singular = False
     recompute_jac = True
-    abs_alpha = 1.
+    lam = bvp_tol
     cost_prev = np.Inf
     done = False
+    scales = np.empty_like(res)
+    scales[:] = bvp_tol
     for iteration in range(max_iter):
         if (np.all(np.abs(col_res) < tol_r * (1 + np.abs(f_middle))) and
                 np.all(np.abs(bc_res) < bc_tol)):
@@ -486,27 +488,20 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             J = jac(y, p, y_middle, f, f_middle, bc_res)
             njev += 1
             try:
-                LU = splu(J)
+                scales = np.maximum(scales, (J.sign() * J).sum(axis=1).flatten())
+                LU = splu(J.dot(J) + np.diag(lam * scales))
             except RuntimeError:
                 singular = True
                 break
 
-            step = LU.solve(res)
+            step = LU.solve(J.dot(res))
             cost = np.dot(step, step)
-
-            # If res.T @ J @ res < 0 -> infinitesimal step increases cost. Try backward step.
-            sign_alpha = np.sign(res.dot(J.dot(res)))
-            # use_grad = np.dot(step, res) < 0
-            # if use_grad:
-            #     # Jacobian is NOT posive definite -> Newton's method invalid, use gradient descent
-            #     scale_jac = (J.dot(J).diagonal()).sum()**0.5
-            #     scale_res = (res**2).sum()**0.5
-            #     step = ((res/scale_res) @ LU.L) @ (LU.U/scale_jac)
+            pred = LU.solve(J.dot(J.T.dot(step)))
+            alpha = 1.
 
             y_step = step[:m * n].reshape((n, m), order='F')
             p_step = step[m * n:]
 
-        alpha = abs_alpha * sign_alpha
         y_new = y - alpha * y_step
         p_new = p - alpha * p_step
 
@@ -514,38 +509,13 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
         bc_res = bc(y_new[:, 0], y_new[:, -1], p_new)
         res = np.hstack((col_res.ravel(order='F'), bc_res))
 
-        # if use_grad:
-        #     res_unscaled = res/scale_res
-        #     step = (res_unscaled @ LU.L) @ (LU.U/scale_jac)
-        #     cost_new = np.dot(res_unscaled, res_unscaled)
-        # else:
-        #     step = LU.solve(res)
-        #     cost_new = np.dot(step, step)  # Cost assuming a constant Jacobian
-        step = LU.solve(res)  # Not actually "step", just used to scale new residual for cost
+        step_new = LU.solve(J.dot(res))  # Not actually "step", just used to scale new residual for cost
+        pstep_new = step + alpha * pred  # TODO - debug/implement LM technique with trust region to adjust lam
 
         # Cost assuming a constant Jacobian
-        cost_new = np.dot(step, step)
-
-        # # Cost assuming a Boyden-updated Jacobian
-        # mod_term = LU.solve(step)
-        # den = np.dot(step, mod_term)
-        # num = np.dot(step, res)
-        # if abs(den) > bvp_tol:
-        #     step_broyden = (1 + 2*num/den) * step
-        # else:
-        #     step_broyden = step
-        # cost_new = np.dot(step_broyden, step_broyden)
-
-
-        # Compare "expected" step (if Jac approx is perfect) with "true" step (since Jac approx is not perfect)
-        # to modify the gain on the step. The "expected" new step is:
-        # step_new = step_old - alpha * step_old
-        # hence the expected reduction in cost is:
-        # cost - cost_new_predicted = [1 - (1 - alpha)**2] cost = alpha(2 - alpha) cost
-        if sign_alpha < 0:
-            accuracy = -max(1 / (alpha * (2 - alpha)) * (1 - cost_new/cost), -acc_max)
-        else:
-            accuracy = min(1 / (alpha * (2 - alpha)) * (1 - cost_new/cost), acc_max)
+        cost_new = np.dot(step_new, step_new)
+        pcost_new = np.dot(pstep_new, pstep_new)
+        accuracy = min(1 / (alpha * (2 - alpha)) * (1 - cost_new/cost), acc_max)
 
         if np.isnan(accuracy) or np.isinf(accuracy):
             # Protect against large steps resulting in out-of-range outputs
