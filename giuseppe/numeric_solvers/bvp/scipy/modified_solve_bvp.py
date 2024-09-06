@@ -458,7 +458,7 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     # Step size decrease parameters backtracking.
     red_max = 0.1  # Maximum reduction factor in each step (0.1 -> do not skip orders of magnitude)
     acc_min = 0.1  # Minimum accuracy to accept positive definite step
-    acc_min_bfgs = 0.7  # Minimum accuracy to approximate next Jacobian instead of re-calculating
+    acc_min_approx = 0.7  # Minimum accuracy to approximate next Jacobian instead of re-calculating
     acc_max = 2.  # Saturate value of accuracy
     acc_tar = 0.95  # Target accuracy of model
     alpha_min = EPS**0.5
@@ -472,10 +472,8 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     eye_n = sparse_eye(res.shape[0])
 
     njev = 0
-    nbfgs = 0
     singular = False
     recompute_jac = True
-    approx_jac = False
     done = False
     scales = np.empty_like(res)
     scales[:] = bvp_tol
@@ -489,49 +487,22 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             break
 
         if recompute_jac:
-            # if approx_jac:
-            #     try:
-            #         # Broyden Jacobian estimate
-            #
-            #         J += csc_matrix((df - J.T.dot(dz))/np.dot(dz, dz)).T @ csc_matrix(dz)
-            #         pos_def = np.dot(res - res_old, step)
-            #         if abs(pos_def) > bvp_tol:
-            #             dJ = (csc_matrix(step).T @ csc_matrix(res - res_old)).multiply(1/pos_def)
-            #             J = ((eye_n - dJ) @ J @ (eye_n - dJ) + dJ).tocsc()
-            #             alpha_gain = red_max  # Trust the updated Jac less than the original jac
-            #         else:
-            #             raise RuntimeError('Jacobian is not sufficiently definite for BFGS update!')
-            #         nbfgs += 1
-            #
-            #         # TODO - when debug complete, replace J with scaled J
-            #         J_s = sparse_diags(scales_inv).dot(J).tocsc()
-            #         LU = splu(J_s)
-            #     except RuntimeError:
-            #         approx_jac = False
+            J = jac(y, p, y_middle, f, f_middle, bc_res)
+            scales = np.maximum(scales, np.asarray((J.sign().multiply(J)).sum(axis=0)).flatten())
+            scales_inv = 1 / scales
+            n_approx = 0
+            njev += 1
 
-            # Keep jac constant, not update scheme (I don't want to work through sparsity, original source keeps
-            # constant unless not enough progress is being made
-            if not approx_jac:
-                # Full re-initialization of Jacobian
-                J = jac(y, p, y_middle, f, f_middle, bc_res)
-                alpha_gain = 1.
-                scales = np.maximum(scales, np.asarray((J.sign().multiply(J)).sum(axis=0)).flatten())
-                scales_inv = 1 / scales
-                approx_jac = True  # Unless the step fails, try a reduced-order Jac update
-                nbfgs = 0
-                njev += 1
-
-                # TODO - when debug complete, replace J with scaled J
-                J_s = sparse_diags(scales_inv).dot(J).tocsc()
-                try:
-                    LU = splu(J_s)
-                except RuntimeError:
-                    singular = True
-                    break
+            # TODO - when debug complete, replace J with scaled J
+            J_s = sparse_diags(scales_inv).dot(J).tocsc()
+            try:
+                LU = splu(J_s)
+            except RuntimeError:
+                singular = True
+                break
 
             # Newton/Gradient step (same direction for obj = ||J^-1 F||^2)
             res_s = scales_inv * res
-            # res_old = res  # TODO - delete line
             step = LU.solve(res_s)
             cost = np.dot(step, step)
 
@@ -539,14 +510,14 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             p_step = step[m * n:]
 
         # Compute new predicted step
-        y_new = y - (alpha_gain*alpha) * y_step
-        p_new = p - (alpha_gain*alpha) * p_step
+        y_new = y - alpha * y_step
+        p_new = p - alpha * p_step
 
-        col_res_new, y_middle_new, f_new, f_middle_new = col_fun(y_new, p_new)
-        bc_res_new = bc(y_new[:, 0], y_new[:, -1], p_new)
-        res_new = np.hstack((col_res_new.ravel(order='F'), bc_res_new))
-        res_s_new = res_new * scales_inv
-        step_new = LU.solve(res_s_new)
+        col_res, y_middle, f, f_middle = col_fun(y_new, p_new)
+        bc_res = bc(y_new[:, 0], y_new[:, -1], p_new)
+        res = np.hstack((col_res.ravel(order='F'), bc_res))
+        res_s = res * scales_inv
+        step_new = LU.solve(res_s)
         cost_new = np.dot(step_new, step_new)
 
         # Compare "expected" step (if Jac approx is perfect) with "true" step (since Jac approx is not perfect)
@@ -558,21 +529,20 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
 
         if accuracy > acc_min:
             # Accept step
-            # dz = -(alpha_gain*alpha) * y_step
-            # df = res_new - res
             y = y_new
             p = p_new
-            col_res, y_middle, f, f_middle = col_res_new, y_middle_new, f_new, f_middle_new
-            bc_res = bc_res_new
-            res = res_new
-            recompute_jac = True
-            approx_jac &= accuracy > acc_min_bfgs
+            recompute_jac = accuracy > acc_min_approx
+            if not recompute_jac:
+                # New step with constant Jacobian
+                n_approx += 1
+                cost = cost_new
+                y_step = step_new[:m * n].reshape((n, m), order='F')
+                p_step = step_new[m * n:]
         else:
             # Reject step -> no need to recompute jac
-            recompute_jac = nbfgs > 0  # If we are using approx jac, recompute jac rather than performing line search
-            approx_jac = False  # Since alpha < 1 the Jac is not accurate enough for a full step
+            recompute_jac = n_approx > 0  # If we are using approx jac, recompute jac rather than performing line search
 
-        if not approx_jac:
+        if n_approx == 0:
             # Update line-search parameter
             if np.isnan(accuracy) or np.isinf(accuracy):
                 # Protect against large steps resulting in out-of-range outputs
