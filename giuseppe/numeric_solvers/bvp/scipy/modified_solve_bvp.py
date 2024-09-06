@@ -456,26 +456,31 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     # max_njev = 4
 
     # Step size decrease parameters backtracking.
-    n_trial = 4
     red_max = 0.1  # Maximum reduction factor in each step (0.1 -> do not skip orders of magnitude)
     acc_min = 0.1  # Minimum accuracy to accept positive definite step
+    acc_min_bfgs = 0.7  # Minimum accuracy to approximate next Jacobian instead of re-calculating
     acc_max = 2.  # Saturate value of accuracy
     acc_tar = 0.95  # Target accuracy of model
-    trust_region_max = 1/bvp_tol
-    trust_region_min = EPS
-    trust_region = 1/bvp_tol  # Initialize with large trust region -> closer to Newton's method
+    alpha_min = EPS**0.5
 
+    # Iterative damped Newton search --------------------------------------------------------------------------------- #
     col_res, y_middle, f, f_middle = col_fun(y, p)
     bc_res = bc(y[:, 0], y[:, -1], p)
     res = np.hstack((col_res.ravel(order='F'), bc_res))
+    dz = np.zeros_like(res)
+    df = dz
+    eye_n = sparse_eye(res.shape[0])
 
     njev = 0
+    nbfgs = 0
     singular = False
     recompute_jac = True
-    cost_prev = np.Inf
+    approx_jac = False
     done = False
     scales = np.empty_like(res)
     scales[:] = bvp_tol
+    scales_inv = 1 / scales
+    alpha = 1.
     for iteration in range(max_iter):
         if (np.all(np.abs(col_res) < tol_r * (1 + np.abs(f_middle))) and
                 np.all(np.abs(bc_res) < bc_tol)):
@@ -484,91 +489,106 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             break
 
         if recompute_jac:
-            J = jac(y, p, y_middle, f, f_middle, bc_res)
-            njev += 1
+            # if approx_jac:
+            #     try:
+            #         # Broyden Jacobian estimate
+            #
+            #         J += csc_matrix((df - J.T.dot(dz))/np.dot(dz, dz)).T @ csc_matrix(dz)
+            #         pos_def = np.dot(res - res_old, step)
+            #         if abs(pos_def) > bvp_tol:
+            #             dJ = (csc_matrix(step).T @ csc_matrix(res - res_old)).multiply(1/pos_def)
+            #             J = ((eye_n - dJ) @ J @ (eye_n - dJ) + dJ).tocsc()
+            #             alpha_gain = red_max  # Trust the updated Jac less than the original jac
+            #         else:
+            #             raise RuntimeError('Jacobian is not sufficiently definite for BFGS update!')
+            #         nbfgs += 1
+            #
+            #         # TODO - when debug complete, replace J with scaled J
+            #         J_s = sparse_diags(scales_inv).dot(J).tocsc()
+            #         LU = splu(J_s)
+            #     except RuntimeError:
+            #         approx_jac = False
 
-            scales = np.maximum(scales, np.asarray((J.sign().multiply(J)).sum(axis=0)).flatten())
-            scales_inv = 1 / scales
+            # Keep jac constant, not update scheme (I don't want to work through sparsity, original source keeps
+            # constant unless not enough progress is being made
+            if not approx_jac:
+                # Full re-initialization of Jacobian
+                J = jac(y, p, y_middle, f, f_middle, bc_res)
+                alpha_gain = 1.
+                scales = np.maximum(scales, np.asarray((J.sign().multiply(J)).sum(axis=0)).flatten())
+                scales_inv = 1 / scales
+                approx_jac = True  # Unless the step fails, try a reduced-order Jac update
+                nbfgs = 0
+                njev += 1
 
-            # TODO - when debug complete, replace J with scaled J
-            J_s = J.multiply(scales_inv).tocsc()
-            hess = J_s.T @ J_s
+                # TODO - when debug complete, replace J with scaled J
+                J_s = sparse_diags(scales_inv).dot(J).tocsc()
+                try:
+                    LU = splu(J_s)
+                except RuntimeError:
+                    singular = True
+                    break
+
+            # Newton/Gradient step (same direction for obj = ||J^-1 F||^2)
             res_s = scales_inv * res
-            cost = np.dot(res_s, res_s)
+            # res_old = res  # TODO - delete line
+            step = LU.solve(res_s)
+            cost = np.dot(step, step)
 
-            try:
-                LU = splu(J_s)
-            except RuntimeError:
-                singular = True
-                break
+            y_step = step[:m * n].reshape((n, m), order='F')
+            p_step = step[m * n:]
 
-            # Newton and Gradient steps
-            step_newton = LU.solve(res_s)
-            step_gradient = res_s @ J_s
-            num = (step_gradient * step_gradient).sum()
-            den = hess.dot(res_s).dot(res_s)
-            if abs(den) > EPS:
-                cauchy_point = num / den
-            elif num > EPS:
-                cauchy_point = 1.
-            step_gradient *= cauchy_point
+        # Compute new predicted step
+        y_new = y - (alpha_gain*alpha) * y_step
+        p_new = p - (alpha_gain*alpha) * p_step
 
-            norm_newton = np.linalg.norm(step_newton)
-            norm_gradient = num**0.5 * cauchy_point
+        col_res_new, y_middle_new, f_new, f_middle_new = col_fun(y_new, p_new)
+        bc_res_new = bc(y_new[:, 0], y_new[:, -1], p_new)
+        res_new = np.hstack((col_res_new.ravel(order='F'), bc_res_new))
+        res_s_new = res_new * scales_inv
+        step_new = LU.solve(res_s_new)
+        cost_new = np.dot(step_new, step_new)
 
-        if norm_newton < trust_region:
-            # Newton inside -> use Newton
-            step = step_newton
-        elif norm_gradient > trust_region:
-            # Both outside -> use gradient only
-            step = trust_region/norm_gradient * step_gradient
-        else:
-            # Dogleg step (with triangle inequality -> norm of step is <= trust region)
-            frac_newton = (trust_region - norm_gradient)/(norm_newton - norm_gradient)
-            step = frac_newton * step_newton + (1 - frac_newton) * step_gradient
-
-        y_step = step[:m * n].reshape((n, m), order='F')
-        p_step = step[m * n:]
-
-        # Model reduction in cost
-        dcost_model = ((J_s @ step) * res_s).sum() - ((hess @ step) * step).sum()
-
-        # Actual reduction in cost
-        y_new = y - y_step
-        p_new = p - p_step
-
-        col_res, y_middle, f, f_middle = col_fun(y_new, p_new)
-        bc_res = bc(y_new[:, 0], y_new[:, -1], p_new)
-        res = np.hstack((col_res.ravel(order='F'), bc_res))
-        res_s_new = res * scales_inv
-        cost_new = np.dot(res_s_new, res_s_new)
-        dcost = cost - cost_new
-
-        # Modify trust region indirectly through lambda
-        accuracy = min(acc_max, dcost / dcost_model)
-        if np.isnan(accuracy) or np.isinf(accuracy):
-            # Protect against large steps resulting in out-of-range outputs
-            trust_region *= red_max
-        else:
-            trust_region *= max(accuracy / acc_tar, red_max)
-
-        if trust_region > trust_region_max:
-            trust_region = trust_region_max
+        # Compare "expected" step (if Jac approx is perfect) with "true" step (since Jac approx is not perfect)
+        # to modify the gain on the step. The "expected" new step is:
+        # step_new = step_old - alpha * step_old
+        # hence the expected reduction in cost is:
+        # cost - cost_new_predicted = [1 - (1 - alpha)**2] cost = alpha(2 - alpha) cost
+        accuracy = min(1 / (alpha * (2 - alpha)) * (1 - cost_new/cost), acc_max)
 
         if accuracy > acc_min:
             # Accept step
+            # dz = -(alpha_gain*alpha) * y_step
+            # df = res_new - res
             y = y_new
             p = p_new
+            col_res, y_middle, f, f_middle = col_res_new, y_middle_new, f_new, f_middle_new
+            bc_res = bc_res_new
+            res = res_new
             recompute_jac = True
-            cost_prev = cost
+            approx_jac &= accuracy > acc_min_bfgs
         else:
             # Reject step -> no need to recompute jac
-            recompute_jac = False
+            recompute_jac = nbfgs > 0  # If we are using approx jac, recompute jac rather than performing line search
+            approx_jac = False  # Since alpha < 1 the Jac is not accurate enough for a full step
 
-        if trust_region < trust_region_min or cost > cost_prev:
-            # Mesh is not successful, try updating mesh.
-            done = True
-            break
+        if not approx_jac:
+            # Update line-search parameter
+            if np.isnan(accuracy) or np.isinf(accuracy):
+                # Protect against large steps resulting in out-of-range outputs
+                alpha *= red_max
+            else:
+                alpha *= max(accuracy / acc_tar, red_max)
+
+            if alpha > 1.:
+                # Saturate increasing confidence in prediction
+                alpha = 1.
+
+            if alpha < alpha_min:
+                # Mesh is not successful, try updating mesh.
+                done = True
+                break
+
         elif njev == max_njev:
             break
 
