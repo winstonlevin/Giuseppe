@@ -461,9 +461,9 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     acc_min = 0.1  # Minimum accuracy to accept positive definite step
     acc_max = 2.  # Saturate value of accuracy
     acc_tar = 0.95  # Target accuracy of model
-    alpha_max = 1.  # Maximum extrapolation region
-    alpha_min = min(max(bvp_tol**2, EPS), 1E-8)  # If alpha goes below this, step size is too small -> give up
-    lam_max = 1/alpha_min
+    trust_region_max = 1/bvp_tol
+    trust_region_min = EPS
+    trust_region = 1/bvp_tol  # Initialize with large trust region -> closer to Newton's method
 
     col_res, y_middle, f, f_middle = col_fun(y, p)
     bc_res = bc(y[:, 0], y[:, -1], p)
@@ -472,7 +472,6 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     njev = 0
     singular = False
     recompute_jac = True
-    lam = bvp_tol
     cost_prev = np.Inf
     done = False
     scales = np.empty_like(res)
@@ -488,28 +487,51 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             J = jac(y, p, y_middle, f, f_middle, bc_res)
             njev += 1
 
-            scales = np.maximum(scales, np.asarray((J.sign().multiply(J)).sum(axis=1)).flatten() ** 0.5)
+            scales = np.maximum(scales, np.asarray((J.sign().multiply(J)).sum(axis=0)).flatten())
             scales_inv = 1 / scales
 
             # TODO - when debug complete, replace J with scaled J
-            J_s = J.multiply(sparse_diags(scales_inv))
+            J_s = J.multiply(scales_inv).tocsc()
+            hess = J_s.T @ J_s
             res_s = scales_inv * res
-            hess = J_s.dot(J_s)
+            cost = np.dot(res_s, res_s)
 
-        try:
-            LU = splu(hess + sparse_eye(res.shape[0]).multiply(lam))
-        except RuntimeError:
-            singular = True
-            break
+            try:
+                LU = splu(J_s)
+            except RuntimeError:
+                singular = True
+                break
 
-        step = LU.solve(J_s.dot(res_s))
-        cost = np.dot(res_s, res_s)
+            # Newton and Gradient steps
+            step_newton = LU.solve(res_s)
+            step_gradient = res_s @ J_s
+            num = (step_gradient * step_gradient).sum()
+            den = hess.dot(res_s).dot(res_s)
+            if abs(den) > EPS:
+                cauchy_point = num / den
+            elif num > EPS:
+                cauchy_point = 1.
+            step_gradient *= cauchy_point
+
+            norm_newton = np.linalg.norm(step_newton)
+            norm_gradient = num**0.5 * cauchy_point
+
+        if norm_newton < trust_region:
+            # Newton inside -> use Newton
+            step = step_newton
+        elif norm_gradient > trust_region:
+            # Both outside -> use gradient only
+            step = trust_region/norm_gradient * step_gradient
+        else:
+            # Dogleg step (with triangle inequality -> norm of step is <= trust region)
+            frac_newton = (trust_region - norm_gradient)/(norm_newton - norm_gradient)
+            step = frac_newton * step_newton + (1 - frac_newton) * step_gradient
 
         y_step = step[:m * n].reshape((n, m), order='F')
         p_step = step[m * n:]
 
         # Model reduction in cost
-        dcost_model = J_s.T.dot(step).dot(res_s) + hess.dot(step).dot(step)
+        dcost_model = ((J_s @ step) * res_s).sum() - ((hess @ step) * step).sum()
 
         # Actual reduction in cost
         y_new = y - y_step
@@ -526,10 +548,12 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
         accuracy = min(acc_max, dcost / dcost_model)
         if np.isnan(accuracy) or np.isinf(accuracy):
             # Protect against large steps resulting in out-of-range outputs
-            alpha = red_max
+            trust_region *= red_max
         else:
-            alpha = min(max(accuracy / acc_tar, red_max), alpha_max)
-        lam /= alpha
+            trust_region *= max(accuracy / acc_tar, red_max)
+
+        if trust_region > trust_region_max:
+            trust_region = trust_region_max
 
         if accuracy > acc_min:
             # Accept step
@@ -541,7 +565,7 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             # Reject step -> no need to recompute jac
             recompute_jac = False
 
-        if lam > lam_max or cost > cost_prev:
+        if trust_region < trust_region_min or cost > cost_prev:
             # Mesh is not successful, try updating mesh.
             done = True
             break
