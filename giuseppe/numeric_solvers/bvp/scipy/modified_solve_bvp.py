@@ -30,7 +30,7 @@ from warnings import warn
 import numpy as np
 from numpy.linalg import pinv
 
-from scipy.sparse import coo_matrix, csc_matrix
+from scipy.sparse import coo_matrix, csc_matrix, diags as sparse_diags, eye as sparse_eye
 from scipy.sparse.linalg import splu
 from scipy.optimize import OptimizeResult
 from scipy.optimize import root
@@ -458,12 +458,12 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     # Step size decrease parameters backtracking.
     n_trial = 4
     red_max = 0.1  # Maximum reduction factor in each step (0.1 -> do not skip orders of magnitude)
-    acc_min_non_pd = 0.7  # Minimum accuracy to accept step
-    acc_min_pd = 0.05  # Minimum accuracy to accept positive definite step
+    acc_min = 0.1  # Minimum accuracy to accept positive definite step
     acc_max = 2.  # Saturate value of accuracy
     acc_tar = 0.95  # Target accuracy of model
-    alpha_max = 4.  # Maximum extrapolation region
+    alpha_max = 1.  # Maximum extrapolation region
     alpha_min = min(max(bvp_tol**2, EPS), 1E-8)  # If alpha goes below this, step size is too small -> give up
+    lam_max = 1/alpha_min
 
     col_res, y_middle, f, f_middle = col_fun(y, p)
     bc_res = bc(y[:, 0], y[:, -1], p)
@@ -487,44 +487,50 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
         if recompute_jac:
             J = jac(y, p, y_middle, f, f_middle, bc_res)
             njev += 1
-            try:
-                scales = np.maximum(scales, (J.sign() * J).sum(axis=1).flatten())
-                LU = splu(J.dot(J) + np.diag(lam * scales))
-            except RuntimeError:
-                singular = True
-                break
 
-            step = LU.solve(J.dot(res))
-            cost = np.dot(step, step)
-            pred = LU.solve(J.dot(J.T.dot(step)))
-            alpha = 1.
+            scales = np.maximum(scales, np.asarray((J.sign().multiply(J)).sum(axis=1)).flatten() ** 0.5)
+            scales_inv = 1 / scales
 
-            y_step = step[:m * n].reshape((n, m), order='F')
-            p_step = step[m * n:]
+            # TODO - when debug complete, replace J with scaled J
+            J_s = J.multiply(sparse_diags(scales_inv))
+            res_s = scales_inv * res
+            hess = J_s.dot(J_s)
 
-        y_new = y - alpha * y_step
-        p_new = p - alpha * p_step
+        try:
+            LU = splu(hess + sparse_eye(res.shape[0]).multiply(lam))
+        except RuntimeError:
+            singular = True
+            break
+
+        step = LU.solve(J_s.dot(res_s))
+        cost = np.dot(res_s, res_s)
+
+        y_step = step[:m * n].reshape((n, m), order='F')
+        p_step = step[m * n:]
+
+        # Model reduction in cost
+        dcost_model = J_s.T.dot(step).dot(res_s) + hess.dot(step).dot(step)
+
+        # Actual reduction in cost
+        y_new = y - y_step
+        p_new = p - p_step
 
         col_res, y_middle, f, f_middle = col_fun(y_new, p_new)
         bc_res = bc(y_new[:, 0], y_new[:, -1], p_new)
         res = np.hstack((col_res.ravel(order='F'), bc_res))
+        res_s_new = res * scales_inv
+        cost_new = np.dot(res_s_new, res_s_new)
+        dcost = cost - cost_new
 
-        step_new = LU.solve(J.dot(res))  # Not actually "step", just used to scale new residual for cost
-        pstep_new = step + alpha * pred  # TODO - debug/implement LM technique with trust region to adjust lam
-
-        # Cost assuming a constant Jacobian
-        cost_new = np.dot(step_new, step_new)
-        pcost_new = np.dot(pstep_new, pstep_new)
-        accuracy = min(1 / (alpha * (2 - alpha)) * (1 - cost_new/cost), acc_max)
-
+        # Modify trust region indirectly through lambda
+        accuracy = min(acc_max, dcost / dcost_model)
         if np.isnan(accuracy) or np.isinf(accuracy):
             # Protect against large steps resulting in out-of-range outputs
-            abs_alpha = red_max * abs_alpha
+            alpha = red_max
         else:
-            abs_alpha = min(max(accuracy / acc_tar * abs_alpha, red_max * abs_alpha), alpha_max)
+            alpha = min(max(accuracy / acc_tar, red_max), alpha_max)
+        lam /= alpha
 
-        # If res.T @ jac_inv @ res < 0 -> jacobian is not positive definite -> require stricter step size reduction
-        acc_min = acc_min_non_pd if np.dot(res, step) < 0 else acc_min_pd
         if accuracy > acc_min:
             # Accept step
             y = y_new
@@ -535,7 +541,7 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             # Reject step -> no need to recompute jac
             recompute_jac = False
 
-        if abs_alpha < alpha_min or cost > cost_prev:
+        if lam > lam_max or cost > cost_prev:
             # Mesh is not successful, try updating mesh.
             done = True
             break
