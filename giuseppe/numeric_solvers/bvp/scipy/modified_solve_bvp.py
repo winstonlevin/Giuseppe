@@ -456,27 +456,29 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
     # max_njev = 4
 
     # Step size decrease parameters backtracking.
-    red_max = 0.1  # Maximum reduction factor in each step (0.1 -> do not skip orders of magnitude)
-    acc_min = 0.1  # Minimum accuracy to accept positive definite step
-    acc_min_approx = 0.7  # Minimum accuracy to approximate next Jacobian instead of re-calculating
-    acc_max = 2.  # Saturate value of accuracy
+    fac_min = 0.1  # Maximum reduction factor in each step (0.1 -> do not skip orders of magnitude)
+    fac_max = 2.  # Maximum increase factor in each step (2 -> only permit alpha to double at each step)
+    dacc_max = 0.2  # Maximum deviation from target accuracy to accept step
+    dacc_max_approx = 0.1  # Maximum deviation from target accuracy to approximate Jacobian
+    dacc_max_incr = 0.1  # Maximum deviation from target accuracy to increase step size
     acc_tar = 0.95  # Target accuracy of model
-    alpha_min = EPS**0.5
+    alpha_min = 1E-6
+
+    # Scaling parameters
+    scales_min = bvp_tol
+    scales_max = 1/alpha_min
 
     # Iterative damped Newton search --------------------------------------------------------------------------------- #
     col_res, y_middle, f, f_middle = col_fun(y, p)
     bc_res = bc(y[:, 0], y[:, -1], p)
     res = np.hstack((col_res.ravel(order='F'), bc_res))
-    dz = np.zeros_like(res)
-    df = dz
-    eye_n = sparse_eye(res.shape[0])
 
     njev = 0
     singular = False
     recompute_jac = True
     done = False
     scales = np.empty_like(res)
-    scales[:] = bvp_tol
+    scales[:] = scales_min
     scales_inv = 1 / scales
     alpha = 1.
     for iteration in range(max_iter):
@@ -488,7 +490,9 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
 
         if recompute_jac:
             J = jac(y, p, y_middle, f, f_middle, bc_res)
-            scales = np.maximum(scales, np.asarray((J.sign().multiply(J)).sum(axis=0)).flatten())
+            scales = np.minimum(np.maximum(
+                scales, np.asarray((J.sign().multiply(J)).sum(axis=1)).flatten()
+            ), scales_max)
             scales_inv = 1 / scales
             n_approx = 0
             njev += 1
@@ -525,13 +529,14 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
         # step_new = step_old - alpha * step_old
         # hence the expected reduction in cost is:
         # cost - cost_new_predicted = [1 - (1 - alpha)**2] cost = alpha(2 - alpha) cost
-        accuracy = min(1 / (alpha * (2 - alpha)) * (1 - cost_new/cost), acc_max)
+        accuracy = (1 - cost_new/cost) / (alpha * (2 - alpha))
+        dacc = abs(accuracy - acc_tar)
 
-        if accuracy > acc_min:
+        if dacc < dacc_max:
             # Accept step
             y = y_new
             p = p_new
-            recompute_jac = accuracy > acc_min_approx
+            recompute_jac = dacc > dacc_max_approx
             if not recompute_jac:
                 # New step with constant Jacobian
                 n_approx += 1
@@ -539,26 +544,29 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
                 y_step = step_new[:m * n].reshape((n, m), order='F')
                 p_step = step_new[m * n:]
         else:
-            # Reject step -> no need to recompute jac
-            recompute_jac = n_approx > 0  # If we are using approx jac, recompute jac rather than performing line search
+            # Reject step:
+            # If we are using approx jac, recompute jac rather than performing line search
+            # Otherwise, perform line search to adjust step
+            recompute_jac = n_approx > 0
 
-        if n_approx == 0:
-            # Update line-search parameter
-            if np.isnan(accuracy) or np.isinf(accuracy):
-                # Protect against large steps resulting in out-of-range outputs
-                alpha *= red_max
-            else:
-                alpha *= max(accuracy / acc_tar, red_max)
+        # Update line-search parameter
+        if np.isnan(accuracy) or np.isinf(accuracy):
+            # Protect against large steps resulting in out-of-range outputs
+            alpha *= fac_min
+        elif dacc < dacc_max_incr:
+            # Good approximation -> increase step size
+            alpha *= 1. + (fac_max - 1.) * (dacc_max_incr - dacc) / dacc_max_incr
+        else:
+            # Bad approximation -> decrease step size
+            alpha *= max(fac_min, 1. + (fac_min - 1.) * (dacc - dacc_max_incr) / (dacc_max - dacc_max_incr))
 
-            if alpha > 1.:
-                # Saturate increasing confidence in prediction
-                alpha = 1.
-
-            if alpha < alpha_min:
-                # Mesh is not successful, try updating mesh.
-                done = True
-                break
-
+        if alpha > 1.:
+            # Saturate increasing confidence in prediction
+            alpha = 1.
+        elif alpha < alpha_min:
+            # Mesh is not successful, try updating mesh.
+            done = True
+            break
         elif njev == max_njev:
             break
 
