@@ -80,8 +80,10 @@ ocp.add_constraint('terminal', 'gamma - gamma_f')
 
 with Timer('Setup Time: '):
     comp_dual = SymDual(ocp, control_method='differential').compile(use_jit_compile=True)
-    solver_embed = SciPySolver(comp_dual, embed_continuation=True, verbose=2, max_newton_iter=40, max_mesh_iter=10)
-    solver_nonembed = SciPySolver(comp_dual, embed_continuation=False, verbose=2, max_newton_iter=8, max_mesh_iter=10)
+    solver_embed = SciPySolver(comp_dual, embed_continuation=True, verbose=2, max_newton_iter=10_000, max_mesh_iter=10)
+    solver_nonembed = SciPySolver(
+        comp_dual, embed_continuation=False, verbose=2, max_newton_iter=10_000, max_mesh_iter=10
+    )
     guess = auto_propagate_guess(comp_dual, control=(15/180*3.14159, 0), t_span=100)
 
 cont = ContinuationHandler(solver_embed, guess)
