@@ -457,12 +457,12 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
 
     # Step size decrease parameters backtracking.
     fac_min = 0.1  # Maximum reduction factor in each step (0.1 -> do not skip orders of magnitude)
-    fac_max = 2.  # Maximum increase factor in each step (2 -> only permit alpha to double at each step)
+    fac_max = 5.  # Maximum increase factor in each step (2 -> only permit alpha to double at each step)
     dacc_max = 0.2  # Maximum deviation from target accuracy to accept step
-    dacc_max_approx = 0.1  # Maximum deviation from target accuracy to approximate Jacobian
+    dacc_max_approx = 0.00  # Maximum deviation from target accuracy to approximate Jacobian
     dacc_max_incr = 0.1  # Maximum deviation from target accuracy to increase step size
     acc_tar = 0.95  # Target accuracy of model
-    alpha_min = 1E-6
+    alpha_min = EPS**0.5
 
     # Scaling parameters
     scales_min = bvp_tol
@@ -536,6 +536,7 @@ def solve_newton(n, m, h, col_fun, bc, jac, feas, x, y, p, B, bvp_tol, bc_tol, m
             # Accept step
             y = y_new
             p = p_new
+            # recompute_jac = True
             recompute_jac = dacc > dacc_max_approx
             if not recompute_jac:
                 # New step with constant Jacobian
