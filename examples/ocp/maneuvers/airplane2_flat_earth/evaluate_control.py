@@ -16,6 +16,7 @@ col = plt.rcParams['axes.prop_cycle'].by_key()['color']
 COMPARE_SWEEP = True
 # AOA_LAWS are: {weight, max_ld, approx_costate, energy_climb, lam_h0, interp, 0}
 AOA_LAWS = ('fpa_feedback', 'max_ld')
+line_styles = ('--', ':')
 PLOT_PAPER = True
 
 if COMPARE_SWEEP:
@@ -344,19 +345,19 @@ for idx, ivp_sol_dict in enumerate(ivp_sols_dict):
         ax.set_ylabel(ylabs[plt_idx])
         ax.invert_xaxis()
 
-        ax.plot(xdata_opt * xmult, ydata_opt[plt_idx] * ymult[plt_idx], color=col[0], label=f'Optimal')
+        ax.plot(xdata_opt * xmult, ydata_opt[plt_idx] * ymult[plt_idx], color='k', label=f'Optimal')
 
         for eval_idx, x in enumerate(xdata_eval_list):
             if ydata_eval_list[eval_idx][plt_idx] is not None:
                 ax.plot(
-                    x * xmult, ydata_eval_list[eval_idx][plt_idx] * ymult[plt_idx],
-                    color=col[1+eval_idx], label=AOA_LAWS[eval_idx]
+                    x * xmult, ydata_eval_list[eval_idx][plt_idx] * ymult[plt_idx], linestyle=line_styles[eval_idx],
+                    color='k', label=AOA_LAWS[eval_idx]
                 )
 
     fig.tight_layout()
     fig.savefig(
-        fig_name + '.svg',
-        format='svg',
+        fig_name + '.eps',
+        format='eps',
         bbox_inches='tight'
     )
 
