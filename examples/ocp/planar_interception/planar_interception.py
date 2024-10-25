@@ -10,13 +10,27 @@ intercept = giuseppe.problems.input.StrInputProb()
 
 intercept.set_independent('t')
 
-intercept.add_expression('current', 'c*y')
-
 intercept.add_state('x', 'v*cos(psi)')
 intercept.add_state('y', 'v*sin(psi)')
-intercept.add_state('psi', 'u')
+intercept.add_state('psi', 'u_sat')
 
+# The Saturation function comes from the formula:
+# Sat(x | xL, xU) = 0.5*(xL + xU + |x - xL| - |x - xU|)
+#
+# Which is equivalent to:
+#
+#                   { xL  if x < xL
+# Sat(x | xL, xU) = { xU  if x > xU
+#                   { x   otherwise
+#
+# The derivative of this function is undefined at x = xL or x = xU, so the "smooth" saturation function is:
+#
+# |y| ~= (y**2 + eps**2)**0.5
+#
+# Whose derivatives are well-defined everywhere.
 intercept.add_control('u')
+intercept.add_constant('eps_u', 1E-3)
+intercept.add_expression('u_sat', '0.5*(( (u+1)**2 + eps_u**2 )**0.5 - ( (u-1)**2 + eps_u**2 )**0.5)')
 
 intercept.add_constant('v', 1)
 
