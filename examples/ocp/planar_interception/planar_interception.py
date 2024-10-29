@@ -28,7 +28,7 @@ intercept.add_constant('psi_f', -0.5*np.pi)
 
 intercept.add_constant('k', 1.)
 intercept.add_constant('eps_u', 1E-1)
-intercept.set_cost('0', 'k + 0.5*sin(u)**2 - eps_u*cos(u)', '0')
+intercept.set_cost('0', '1 + 0.5*k*sin(u)**2 - eps_u*cos(u)', '0')
 
 intercept.add_constraint('initial', 't')
 intercept.add_constraint('initial', 'x - x_0')
@@ -41,7 +41,7 @@ intercept.add_constraint('terminal', 'psi - psi_f')
 
 with giuseppe.utils.Timer(prefix='Compilation Time:'):
     comp_dual = giuseppe.problems.symbolic.SymDual(intercept, control_method='differential').compile(use_jit_compile=False)
-    num_solver = giuseppe.numeric_solvers.SciPySolver(comp_dual, verbose=2, max_nodes=300, node_buffer=10)
+    num_solver = giuseppe.numeric_solvers.SciPySolver(comp_dual, verbose=2, max_nodes=500, node_buffer=10)
 
 guess = giuseppe.guess_generation.auto_propagate_guess(comp_dual, control=0., t_span=1.0)
 seed_sol = num_solver.solve(guess)
@@ -49,7 +49,7 @@ seed_sol = num_solver.solve(guess)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(1, {'x_f': 6., 'y_f': 0.})
 cont.add_linear_series(1, {'psi_0': 0.5*np.pi, 'psi_f': -0.5*np.pi})
-cont.add_logarithmic_series(5, {'eps_u': 1E-6})
+cont.add_logarithmic_series(10, {'eps_u': 1E-6, 'k': 1E-6})
 sol_set = cont.run_continuation()
 
 sol_set.save('sol_set.data')
