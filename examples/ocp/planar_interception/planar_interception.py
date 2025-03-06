@@ -57,7 +57,8 @@ sol_set_k1 = cont_k1.run_continuation()
 sol_set_k1.save('sol_set.data')
 
 cont_klow = giuseppe.continuation.ContinuationHandler(num_solver, sol_set[-1])
-cont_klow.add_logarithmic_series(10, {'eps_u': 1E-6, 'k': 1E-3})
+cont_klow.add_logarithmic_series(10, {'k': 1E-1})
+cont_klow.add_logarithmic_series(10, {'eps_u': 1E-6})
 sol_set_klow = cont_klow.run_continuation()
 sol_set_klow.save('sol_set_klow.data')
 

@@ -27,6 +27,7 @@ lam_ref = (None, None, lam_psi_ref)
 # Reference solution in terms of elliptic integrals ------------------------------------------------------------------ #
 # Adapted from: https://doi.org/10.2514/3.21541
 sin_u = np.sin(sol.u[0, :])
+cos_u = np.cos(sol.u[0, :])
 
 k = sol.k[sol.annotations.constants.index('k')]
 lam_r = (lam_x**2 + lam_y**2)**0.5  # Polar form of costates
@@ -89,12 +90,12 @@ def straight_fun(_t, _x0, _y0, _psi0):
 c_t = -((1. + lam_r) / (2 * k)) ** 0.5
 m = 2. * lam_r / (1. + lam_r)
 
-t_elliptic = np.nan * np.empty_like(sol.t)
-u_elliptic = np.nan * np.empty_like(sol.u)
-x_elliptic = np.nan * np.empty_like(sol.x)
+t_elliptic = np.nan * np.zeros_like(sol.t)
+u_elliptic = np.nan * np.zeros_like(sol.u)
+x_elliptic = np.nan * np.zeros_like(sol.x)
 
 eps_u = sol.k[sol.annotations.constants.index('eps_u')]
-eps_straight = eps_u**2
+eps_straight = 1E-6
 idx0_straight = np.argmax(abs(sin_u[idx0_unsat:idxf_unsat]) < eps_straight)
 straight_active = abs(sin_u[idx0_unsat + idx0_straight]) < eps_straight
 
