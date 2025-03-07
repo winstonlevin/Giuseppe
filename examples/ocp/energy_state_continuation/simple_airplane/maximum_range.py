@@ -5,7 +5,7 @@ import math
 import numpy as np
 from scipy import optimize, interpolate
 import matplotlib
-from matplotlib import pyplot as plt
+import casadi as ca
 
 import giuseppe
 
@@ -24,6 +24,7 @@ ocp.set_independent('t')
 # https://doi/org/10.2514/6.1968-877)
 weight = 42_000  # lb
 g = 32.2  # gravitational acceleration [ft/s2]
+mass = weight / g
 ocp.add_constant('W', weight)
 ocp.add_constant('g', g)
 ocp.add_expression('m', 'W/g')  # Mass [slug]
@@ -64,11 +65,14 @@ ocp.set_cost('0', '-V * cos(gam)', '0')
 
 # Boundary conditions (initial)
 ocp.add_constraint('initial', 't')
-ocp.add_constant('hE0', 80_000.)
+hE0 = 80_000.
+ocp.add_constant('hE0', hE0)
 ocp.add_constraint('initial', 'hE - hE0')
-ocp.add_constant('h0', 70_000.)
+h0 = 70_000.
+ocp.add_constant('h0', h0)
 ocp.add_constraint('initial', 'h - h0')
-ocp.add_constant('gam0', 0.)
+gam0 = 0.
+ocp.add_constant('gam0', gam0)
 ocp.add_constraint('initial', 'gam - gam0')
 
 # (terminal)
@@ -175,8 +179,8 @@ def outer_time_residual(_dt, _hE0, _hE1):
 dt_vector = np.diff(sol_outer.t)
 dt0 = 0.
 dt1 = np.diff(sol_outer.t[:2])
-for idx, (hE0, hE1) in enumerate(zip(sol_outer.x[0, :-1], sol_outer.x[0, 1:])):
-    sol_root = optimize.root_scalar(lambda _dt: outer_time_residual(_dt, hE0, hE1), x0=dt0, x1=dt1)
+for idx, (hEi0, hEi1) in enumerate(zip(sol_outer.x[0, :-1], sol_outer.x[0, 1:])):
+    sol_root = optimize.root_scalar(lambda _dt: outer_time_residual(_dt, hEi0, hEi1), x0=dt0, x1=dt1)
     dt_vector[idx] = sol_root.root
 
 sol_outer.t = np.concatenate(((0.,), np.cumsum(dt_vector)))
@@ -187,4 +191,69 @@ with open('sol_outer.data', 'wb') as f:
 # -------------------------------------------------------------------------------------------------------------------- #
 # CONTINUATION SOLUTION FROM OUTER TO FULL FIDELITY                                                                    #
 # -------------------------------------------------------------------------------------------------------------------- #
-# TODO
+hE_sym = ca.SX.sym('hE')
+h_sym = ca.SX.sym('h')
+gam_sym = ca.SX.sym('gam')
+CL_sym = ca.SX.sym('CL')
+CD_sym = CD0 + eta/CLa * CL_sym**2
+
+v2_sym = 2*g*(hE_sym - h_sym)
+v_sym = ca.sqrt(v2_sym)
+
+rho_sym = rho0 * ca.exp(-h_sym/h_ref)
+qdyn_sym = 0.5 * rho_sym * v2_sym
+wing_load_sym = qdyn_sym * Sref
+lift_sym = wing_load_sym * CL_sym
+drag_sym = wing_load_sym * CD_sym
+
+x_sym = ca.vcat((hE_sym, h_sym, gam_sym))
+tf_sym = ca.SX.sym('tf')
+f_sym = ca.vcat((
+    -v_sym * drag_sym / weight,
+    v_sym * ca.sin(gam_sym),
+    lift_sym / (mass * v_sym) - g/v_sym * ca.cos(gam_sym)
+))
+f_fun_ca = ca.Function('f', (x_sym, CL_sym), (f_sym,))
+path_cost_sym = v_sym * ca.cos(gam_sym)
+
+lam_sym = ca.vcat([ca.SX.sym('lam_' + _x_sym.name()) for _x_sym in ca.vertsplit(x_sym)])
+ham_sym = path_cost_sym + ca.dot(f_sym, lam_sym)
+f_lam_sym = -ca.jacobian(ham_sym, x_sym).T
+f_lam_fun_ca = ca.Function('flam', (x_sym, lam_sym, CL_sym), (f_lam_sym,))
+
+# Discretized states / costates
+tau_mesh = sol_outer.t / sol_outer.t[-1]
+dtau_mesh = np.diff(tau_mesh)
+x_mesh = ca.SX.sym('X', x_sym.shape[0], sol.t.shape[0])
+u_mesh = ca.SX.sym('U', (1, sol.t.shape[0]))
+f_mesh = f_fun_ca(x_mesh, u_mesh)
+lam_mesh = ca.SX.sym('Lam', x_mesh.shape)
+f_lam_mesh = f_lam_fun_ca(x_mesh, lam_mesh, u_mesh)
+f_u_mesh = ca.SX.zeros(u_mesh.shape)  # TODO
+y_mesh = ca.vcat((x_mesh, lam_mesh, u_mesh))
+fp_mesh = ca.vcat((f_mesh, f_lam_mesh, f_u_mesh)) * tf_sym
+
+# Continuation parameter
+s_sym = ca.SX.sym('s')  # 0 -> outer solution, 1 -> full dynamics
+
+# Initial boundary conditions
+bc0 = ca.vcat((
+    x_mesh[0, 0] - hE0,
+    s_sym * (x_mesh[1, 0] - h0) + (1 - s_sym) * f_sym[1],
+    s_sym * (x_mesh[2, 0] - gam0) + (1 - s_sym) * f_sym[2]
+))
+
+# Terminal boundary conditions
+bcf = ca.vcat((
+    x_mesh[0, -1] - hEf,
+    s_sym * lam_sym[1] + (1 - s_sym) * f_lam_sym[1],
+    s_sym * lam_sym[2] + (1 - s_sym) * f_lam_sym[2]
+))
+
+# continuation condition
+bcs = s_sym - 1
+
+# Dynamic residual
+tau_middle = tau_mesh[:-1] + 0.5*dtau_mesh
+y_middle = 0.5 * (y_mesh[:, :-1] + y_mesh[:, 1:]) - dtau_mesh/8 * (fp_mesh[:, 1:] - fp_mesh[:, :-1])  # TODO - fix broadcast of dtau_mesh
+# col_res = TODO
