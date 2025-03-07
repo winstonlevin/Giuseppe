@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import math
 import numpy as np
-from scipy import optimize
+from scipy import optimize, interpolate
 import matplotlib
 from matplotlib import pyplot as plt
 
@@ -126,6 +126,7 @@ def outer_residual(_v, _hE):
 
 
 sol_outer = deepcopy(sol)
+v_values = np.empty_like(sol_outer.x[1, :])
 
 # At first index, use "true" solution as initial guess
 idx = 0
@@ -133,6 +134,7 @@ v0 = 990.
 v1 = 1000.
 hE = sol_outer.x[0, idx]
 sol_root = optimize.root_scalar(lambda _v: outer_residual(_v, hE), x0=v0, x1=v1)
+v_values[idx] = sol_root.root
 sol_outer.x[:, idx], sol_outer.u[0, idx], sol_outer.lam[:, idx] = \
     outer_indirect_control(sol_root.root, sol_outer.x[0, idx])
 v0 = sol_root.root - 10.
@@ -141,10 +143,48 @@ v1 = sol_root.root + 10.
 for idx, hE in enumerate(sol_outer.x[0, 1:], start=1):
     # Cycle through energy height values, using full fidelity values as initial guess
     sol_root = optimize.root_scalar(lambda _v: outer_residual(_v, hE), x0=v0, x1=v1)
+    v_values[idx] = sol_root.root
     sol_outer.x[:, idx], sol_outer.u[0, idx], sol_outer.lam[:, idx] = \
         outer_indirect_control(sol_root.root, sol_outer.x[0, idx])
     v0 = sol_root.root - 10.
     v1 = sol_root.root + 10.
 
+
+# Adjust time so that E dissipates optimally
+v_interp = interpolate.PchipInterpolator(sol_outer.x[0, ::-1], v_values[::-1])
+
+
+def outer_energy_dynamics(_hE):
+    _v = v_interp(_hE)
+    _h = _hE - _v * _v / (2 * g)  # Algebraic conversion from (E, V) -> h
+    _Qdyn = 0.5 * rho0 * math.exp(-_h/h_ref) * _v*_v
+    _u = weight / (_Qdyn * Sref)  # enforces d(gam)/dt = 0
+    _cd = CD0 + eta/CLa * _u*_u
+    _drag = _Qdyn * Sref * _cd
+    return -_v*_drag / weight
+
+
+def outer_time_residual(_dt, _hE0, _hE1):
+    _f0 = outer_energy_dynamics(_hE0)
+    _f1 = outer_energy_dynamics(_hE1)
+    _hE_middle = 0.5 * (_hE0 + _hE1) - _dt/8 * (_f1 - _f0)
+    _f_middle = outer_energy_dynamics(_hE_middle)
+    return _hE1 - _hE0 - _dt/6 * (_f0 + 4*_f_middle + _f1)
+
+
+dt_vector = np.diff(sol_outer.t)
+dt0 = 0.
+dt1 = np.diff(sol_outer.t[:2])
+for idx, (hE0, hE1) in enumerate(zip(sol_outer.x[0, :-1], sol_outer.x[0, 1:])):
+    sol_root = optimize.root_scalar(lambda _dt: outer_time_residual(_dt, hE0, hE1), x0=dt0, x1=dt1)
+    dt_vector[idx] = sol_root.root
+
+sol_outer.t = np.concatenate(((0.,), np.cumsum(dt_vector)))
+
 with open('sol_outer.data', 'wb') as f:
     pickle.dump(sol_outer, f)
+
+# -------------------------------------------------------------------------------------------------------------------- #
+# CONTINUATION SOLUTION FROM OUTER TO FULL FIDELITY                                                                    #
+# -------------------------------------------------------------------------------------------------------------------- #
+# TODO
