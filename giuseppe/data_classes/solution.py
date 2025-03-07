@@ -36,6 +36,26 @@ class Solution:
 
     annotations: Optional[Annotations] = None
 
+    def find(self, key: str):
+        if key in self.annotations.independent:
+            return self.t
+        elif key in self.annotations.states:
+            return self.x[self.annotations.states.index(key)]
+        elif key in self.annotations.costates:
+            return self.lam[self.annotations.costates.index(key)]
+        elif key in self.annotations.controls:
+            return self.u[self.annotations.controls.index(key)]
+        elif key in self.annotations.parameters:
+            return self.p[self.annotations.parameters.index(key)]
+        elif key in self.annotations.constants:
+            return self.k[self.annotations.constants.index(key)]
+        elif key in self.annotations.initial_adjoints:
+            return self.nu0[self.annotations.initial_adjoints.index(key)]
+        elif key in self.annotations.terminal_adjoints:
+            return self.nuf[self.annotations.terminal_adjoints.index(key)]
+        else:
+            raise ValueError(f'{key} is not a valid key!')
+
     def as_dict(self, arr_to_list: bool = False):
         sol_dict = {
             't': self.t, 'x': self.x, 'p': self.p, 'k': self.k, 'u': self.u,
