@@ -222,8 +222,15 @@ ham_sym = path_cost_sym + ca.dot(f_sym, lam_sym)
 hu_sym = ca.jacobian(ham_sym, CL_sym)
 f_lam_sym = -ca.jacobian(ham_sym, x_sym).T
 f_lam_fun_ca = ca.Function('flam', (x_sym, lam_sym, CL_sym), (f_lam_sym,))
+
+# Index reduction to obtain control dynamics
+huu_sym = ca.jacobian(hu_sym, CL_sym)
+hux_sym = ca.jacobian(hu_sym, x_sym)
+fu_sym = ca.jacobian(f_sym, CL_sym)
+f_u_sym = -(hux_sym@f_sym + ca.dot(fu_sym, f_lam_sym))/huu_sym
+
 y_sym = ca.vcat((x_sym, lam_sym, CL_sym))
-fy_sym = ca.vcat((f_sym, f_lam_sym, 0.))  # TODO
+fy_sym = ca.vcat((f_sym, f_lam_sym, f_u_sym))
 fy_fun_ca = ca.Function('fy', (y_sym,), (fy_sym,))
 hu_fun_ca = ca.Function('Hu', (y_sym,), (hu_sym,))
 h_fun_ca = ca.Function('H', (y_sym,), (ham_sym,))
@@ -318,10 +325,11 @@ z0 = np.concatenate((
 acc_min = 0.95
 max_iter = 1_000
 alpha_min = 1E-5
+alpha_max = 0.1
 
 z = z0.copy()
 res = res_fun(z).full()
-alpha = 1
+alpha = alpha_max
 recompute_jac = True
 singular = False
 for iteration in range(max_iter):
@@ -354,8 +362,8 @@ for iteration in range(max_iter):
             print(f'Accept alpha={alpha}')
             accept = True
             alpha *= 8
-            if alpha > 1:
-                alpha = 1
+            if alpha > alpha_max:
+                alpha = alpha_max
             break
         else:
             print(f'Reject alpha={alpha}')
