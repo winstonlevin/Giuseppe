@@ -192,9 +192,32 @@ with open('sol_outer.data', 'wb') as f:
 # -------------------------------------------------------------------------------------------------------------------- #
 # CONTINUATION SOLUTION FROM OUTER TO FULL FIDELITY                                                                    #
 # -------------------------------------------------------------------------------------------------------------------- #
+# TODO - use sol_outer and implement continuation
+sol0 = sol
+
+# Interpolations of (x, lam, u) in order to
+f0 = np.vstack([comp_dual.compute_dynamics(
+    sol0.t[idx], sol0.x[:, idx], sol0.u[:, idx], sol0.p, sol0.k
+) for idx in range(len(sol0.t))]).T
+flam0 = np.vstack([comp_dual.compute_costate_dynamics(
+    sol0.t[idx], sol0.x[:, idx], sol0.lam[:, idx], sol0.u[:, idx], sol0.p, sol0.k
+) for idx in range(len(sol0.t))]).T
+fu0 = np.vstack([comp_dual.control_handler.compute_control_dynamics(
+    sol0.t[idx], sol0.x[:, idx], sol0.lam[:, idx], sol0.u[:, idx], sol0.p, sol0.k
+) for idx in range(len(sol0.t))]).T
+x_interp = interpolate.BPoly.from_derivatives(
+    sol0.t, np.concatenate((sol0.x[:, None, :], f0[:, None, :]), axis=1).transpose((2, 1, 0))
+)
+lam_interp = interpolate.BPoly.from_derivatives(
+    sol0.t, np.concatenate((sol0.lam[:, None, :], flam0[:, None, :]), axis=1).transpose((2, 1, 0))
+)
+u_interp = interpolate.BPoly.from_derivatives(
+    sol0.t, np.concatenate((sol0.u[:, None, :], fu0[:, None, :]), axis=1).transpose((2, 1, 0))
+)
+
 # Hard-coded mesh [for phases]
 p_order = 4  # Number of collocation points
-t_phase_vals = np.array((0., 50., 100., 150., 200., 600., 650., sol.t[-1]))
+t_phase_vals = np.array((0., 50., 100., 150., 200., 600., 650., sol0.t[-1]))
 taug_vals = 2*t_phase_vals / t_phase_vals[-1] - 1
 
 # Local mesh info for each polynomial of order ``p_order''
@@ -209,9 +232,11 @@ for num_idx, tau_num in enumerate(taul_vals):
     lagrange_polynomials[idces_poly_i] *= (tau_sym - tau_num) / (taul_vals[idces_poly_i] - tau_num)
 
 dl_dtau = ca.jacobian(lagrange_polynomials, tau_sym).T
-diff_mat = ca.vcat([
+diff_mat = ca.DM(ca.vcat([
     ca.substitute(dl_dtau, tau_sym, _xi) for _xi in taul_vals[1:]
-])
+])).full()
+diff_mat_T = diff_mat.T
+int_vec = (w_vals[None, :] @ diff_mat)[0, 1:]  # xf = x0 + dot([f1, f2, ..., fN], I)
 
 # Global tau values
 phases = []
@@ -220,9 +245,10 @@ for idx in range(taug_vals.shape[0] - 1):
     phase_dict['taug_vals'] = \
         0.5*(taug_vals[idx] + taug_vals[idx+1]) \
         + 0.5*(taug_vals[idx+1] - taug_vals[idx]) * taul_vals
+    phase_dict['t_vals'] = t_phase_vals[-1]/2 * (phase_dict['taug_vals'] + 1.)
     phases.append(phase_dict)
 
-# Build Necessary Conditions for Optimality
+# Build Necessary Conditions for Optimality -------------------------------------------------------------------------- #
 hE_sym = ca.SX.sym('hE')
 h_sym = ca.SX.sym('h')
 gam_sym = ca.SX.sym('gam')
@@ -239,174 +265,234 @@ lift_sym = wing_load_sym * CL_sym
 drag_sym = wing_load_sym * CD_sym
 
 x_sym = ca.vcat((hE_sym, h_sym, gam_sym))
+u_sym = CL_sym
 tf_sym = ca.SX.sym('tf')
 f_sym = ca.vcat((
     -v_sym * drag_sym / weight,
     v_sym * ca.sin(gam_sym),
     lift_sym / (mass * v_sym) - g/v_sym * ca.cos(gam_sym)
 ))
-f_fun_ca = ca.Function('f', (x_sym, CL_sym), (f_sym,))
+f_fun_ca = ca.Function('f', (x_sym, u_sym), (f_sym,), ('x', 'u'), ('f',))
 path_cost_sym = -v_sym * ca.cos(gam_sym)  # -dx/dt -> maximum range
 
 lam_sym = ca.vcat([ca.SX.sym('lam_' + _x_sym.name()) for _x_sym in ca.vertsplit(x_sym)])
 ham_sym = path_cost_sym + ca.dot(f_sym, lam_sym)
-hu_sym = ca.jacobian(ham_sym, CL_sym)
+h_fun_ca = ca.Function('H', (x_sym, lam_sym, u_sym), (ham_sym,), ('x', 'lam', 'u'), ('H',))
+hu_sym = ca.jacobian(ham_sym, u_sym)
+hu_fun_ca = ca.Function('Hu', (x_sym, lam_sym, u_sym), (hu_sym,), ('x', 'lam', 'u'), ('Hu',))
 f_lam_sym = -ca.jacobian(ham_sym, x_sym).T
-f_lam_fun_ca = ca.Function('flam', (x_sym, lam_sym, CL_sym), (f_lam_sym,))
+f_lam_fun_ca = ca.Function('flam', (x_sym, lam_sym, u_sym), (f_lam_sym,), ('x', 'lam', 'u'), ('flam',))
 
-# Problem definition:
-# (1)
+# --- Problem definition / derivation -------------------------------------------------------------------------------- #
+# Find:
+#
+# (1) X   (N+2, n)
+# (2) Lam (N+2, n)
+# (3) U   (N+2, m)
+# (4) tf  (1)
+#
+# Such that:
+#
+# (1) BC0(X0, Lam0, u0)      = 0 [n+m   Conditions for X0, Lam0    ]
+# (2) DX - F(X, U)           = 0 [Nxn   Conditions for Lam         ]
+# (3) DLam - Flam(X, Lam, U) = 0 [Nxn   Conditions for X           ]
+# (4) Hu                     = 0 [Nxm   Conditions for U           ]
+# (5) BCF(Xf, Lamf, tf, uf)  = 0 [n+m+1 Conditions for Xf, Lamf, tf]
+nx = x_sym.shape[0]
+nlam = nx
+nu = u_sym.shape[0]
 
-# # Discretized states / costates
-# tau_mesh = sol_outer.t / sol_outer.t[-1]
-# dtau_mesh = np.diff(tau_mesh)
-# x_mesh = ca.SX.sym('X', x_sym.shape[0], sol.t.shape[0])
-# lam_mesh = ca.SX.sym('Lam', x_mesh.shape)
-# u_mesh = ca.SX.sym('U', (1, sol.t.shape[0]))
-# y_mesh = ca.vcat((x_mesh, lam_mesh, u_mesh))
-# fy_mesh = fy_fun_ca(y_mesh)
-# f_x_mesh = fy_mesh[:x_sym.shape[0], :]
-# f_lam_mesh = fy_mesh[x_sym.shape[0]:2*x_sym.shape[0], :]
-# fyp_mesh = fy_mesh * tf_sym
-# hu_mesh = hu_fun_ca(y_mesh)
-# h_mesh = h_fun_ca(y_mesh)
-#
-# # Continuation parameter
-# s_sym = ca.SX.sym('s')  # 0 -> outer solution, 1 -> full dynamics
-#
-# # Initial boundary conditions
-# bc0 = ca.vcat((
-#     x_mesh[0, 0] - hE0,
-#     s_sym * (x_mesh[1, 0] - h0) + (1 - s_sym) * f_x_mesh[1, 0]*tf_sym,
-#     s_sym * (x_mesh[2, 0] - gam0) + (1 - s_sym) * f_x_mesh[2, 0]*tf_sym,
-#     hu_mesh[:, 0]  # Control initial BC
-# ))
-#
-# # Terminal boundary conditions
-# bcf = ca.vcat((
-#     x_mesh[0, -1] - hEf,
-#     s_sym * lam_mesh[1, -1] + (1 - s_sym) * f_lam_mesh[1, -1]*tf_sym,
-#     s_sym * lam_mesh[2, -1] + (1 - s_sym) * f_lam_mesh[2, -1]*tf_sym,
-#     h_mesh[:, -1],  # Time terminal BC
-# ))
-#
-# # continuation condition
-# bcs = s_sym - 1
-#
-# # Dynamic residual
-# dtau_tile = np.tile(dtau_mesh[None, :], y_sym.shape)
-# # tau_middle = tau_mesh[:-1] + 0.5*dtau_mesh
-# y_middle = \
-#     0.5 * (y_mesh[:, :-1] + y_mesh[:, 1:])\
-#     - dtau_tile/8 * (fyp_mesh[:, 1:] - fyp_mesh[:, :-1])
-# fyp_middle = tf_sym * fy_fun_ca(y_middle)
-# col_res = y_mesh[:, 1:] - y_mesh[:, :-1] - dtau_tile/6 * (fyp_mesh[:, :-1] + 4*fyp_middle + fyp_mesh[:, 1:])
-#
-# # Replace U residual with Hu=0
-# col_res[-1, :] = hu_mesh[:, 1:]
-#
-# # Continue collocation for fast states from dx/dt=0 to continuity
-# # (NOTE: for x,   INITIAL BC is enforced,  so collocation continued with f(1), ..., f(N)
-# #        for lam, TERMINAL BC is enforced, so collocation continued with f(0), ..., f(N-1)
-# idces_x_fast = (1, 2)
-# idces_lam_fast = (4, 5)
-#
-# col_res[idces_x_fast, :] *= s_sym
-# col_res[idces_x_fast, :] += (1 - s_sym) * fyp_mesh[idces_x_fast, 1:]
-#
-# col_res[idces_lam_fast, :] *= s_sym
-# col_res[idces_lam_fast, :] += (1 - s_sym) * fyp_mesh[idces_lam_fast, :-1]
-#
-# # Global system
-# z_sym = ca.vcat((
-#     ca.vec(y_mesh),
-#     tf_sym,
-#     s_sym
-# ))
-# res_sym = ca.vcat((
-#     bc0,
-#     ca.vec(col_res),
-#     bcf,
-#     bcs
-# ))
-# jac_sym = ca.jacobian(res_sym, z_sym)
-#
-# res_fun = ca.Function('r', (z_sym,), (res_sym,))
-# jac_fun = ca.Function('J', (z_sym,), (jac_sym,))
-#
-# y_mesh0 = np.vstack((sol_outer.x, sol_outer.lam, sol_outer.u))
-# fy_mesh0 = fy_fun_ca(y_mesh0)
-# fyp_mesh0 = fy_mesh0 * sol_outer.t[-1]
-# z0 = np.concatenate((
-#     np.ravel(y_mesh0, order='F'),
-#     sol_outer.t[-1:],
-#     (0.,)
-# ))[:, None]
-#
-# # Run simple damped Newton search
-# acc_min = 0.95
-# max_iter = 1_000
-# alpha_min = 1E-5
-# alpha_max = 0.1
-#
-# z = z0.copy()
-# res = res_fun(z).full()
-# alpha = alpha_max
-# recompute_jac = True
-# singular = False
-# for iteration in range(max_iter):
-#     if recompute_jac:
-#         print('Computing Jac...')
-#         J = jac_fun(z).sparse()
-#
-#         try:
-#             LU = splu(J)
-#         except RuntimeError:
-#             print('Jac is singular! Stopping search.')
-#             singular = True
-#             break
-#
-#         step = LU.solve(res)
-#         cost = np.dot(step.T, step)[0, 0]
-#         # cost = np.abs(res).max(initial=0.)
-#
-#     accept = False
-#     print('Running backtracking line search...')
-#     while alpha > alpha_min:
-#         z_new = z - alpha * step
-#         res = res_fun(z_new).full()
-#         step_new = LU.solve(res)
-#         cost_new = np.dot(step_new.T, step_new)[0, 0]
-#         # cost_new = np.abs(res).max(initial=0.)
-#         if cost_new < (1 + acc_min*alpha*(alpha-2)) * cost:
-#         # if cost_new < (1 - acc_min * alpha) * cost:
-#             # Accept step
-#             print(f'Accept alpha={alpha}')
-#             accept = True
-#             alpha *= 8
-#             if alpha > alpha_max:
-#                 alpha = alpha_max
-#             break
-#         else:
-#             print(f'Reject alpha={alpha}')
-#             alpha /= 2
-#
-#     if accept:
-#         z = z_new
-#     else:
-#         print(f'Backtrack failed! Stopping search.')
-#         break
-#
-#     if np.all(np.abs(res) < 1E-3):
-#         print(f'Success! Huzzah!')
-#         break
-#
-#     # If the full step was taken, then we are going to continue with
-#     # the same Jacobian. This is the approach of BVP_SOLVER.
-#     if alpha == 1:
-#         step = step_new
-#         # step = LU.solve(res)
-#         cost = cost_new
-#         recompute_jac = False
-#     else:
-#         recompute_jac = True
+# Unknown values
+X_mesh_sym = [ca.SX.sym('X' + str(idx), nx, p_order+1) for idx in range(taug_vals.shape[0]-1)]
+Lam_mesh_sym = [ca.SX.sym('Lam' + str(idx), nlam, p_order+1) for idx in range(taug_vals.shape[0]-1)]
+U_mesh_sym = [ca.SX.sym('U' + str(idx), nu, p_order+1) for idx in range(taug_vals.shape[0]-1)]
+tf_sym = ca.SX.sym('tf')
+
+# Initial guesses
+X_mesh0 = [x_interp(_phase_dict['t_vals']).T for _phase_dict in phases]
+Lam_mesh0 = [lam_interp(_phase_dict['t_vals']).T for _phase_dict in phases]
+U_mesh0 = [u_interp(_phase_dict['t_vals']).T for _phase_dict in phases]
+tf0 = t_phase_vals[-1]
+
+DX_mesh_sym = [_X @ diff_mat_T for _X in X_mesh_sym]
+Xf_mesh_sym = [_X[:, 0] + _X[:, 1:] @ int_vec[:, None] for _X in X_mesh_sym]
+DLam_mesh_sym = [_L @ diff_mat_T for _L in Lam_mesh_sym]
+Lamf_mesh_sym = [_L[:, 0] + _L[:, 1:] @ int_vec[:, None] for _L in Lam_mesh_sym]
+Uf_mesh_sym = [_U[:, 0] + _U[:, 1:] @ int_vec[:, None] for _U in U_mesh_sym]
+
+# Gains
+dtaug_vals = np.diff(taug_vals)
+dt_dtaul = tf_sym * dtaug_vals/4
+
+# Initial boundary condition
+hE0_sym = ca.SX.sym('hE0')
+h0_sym = ca.SX.sym('h0')
+gam0_sym = ca.SX.sym('gam0')
+x0_sym = ca.vcat((hE0_sym, h0_sym, gam0_sym))
+x0 = ca.vcat((hE0, h0, gam0))
+
+# Initial mesh
+bc00 = ca.vcat((
+    X_mesh_sym[0][:, 0] - x0,
+    hu_fun_ca(X_mesh_sym[0][:, 0], Lam_mesh_sym[0][:, 0], U_mesh_sym[0][:, 0]),
+))
+col_res0 = ca.vcat((
+    DX_mesh_sym[0] - dt_dtaul[0] * f_fun_ca(X_mesh_sym[0][:, 1:], U_mesh_sym[0][:, 1:]),
+    DLam_mesh_sym[0] - dt_dtaul[0] * f_lam_fun_ca(X_mesh_sym[0][:, 1:], Lam_mesh_sym[0][:, 1:], U_mesh_sym[0][:, 1:]),
+    hu_fun_ca(X_mesh_sym[0][:, 1:], Lam_mesh_sym[0][:, 1:], U_mesh_sym[0][:, 1:]),
+))
+bcf0 = ca.vcat((
+    Xf_mesh_sym[0] - X_mesh_sym[1][:, 0],
+    Lamf_mesh_sym[0] - Lamf_mesh_sym[1][:, 0],
+))
+
+z0 = ca.vec(ca.vcat((X_mesh_sym[0], Lam_mesh_sym[0], U_mesh_sym[0])))
+res0 = ca.vcat((
+    bc00,
+    ca.vec(col_res0),
+    bcf0
+))
+
+# Intermediate meshes
+residuals = [res0]
+unknowns = [z0]
+guesses = [np.vstack((X_mesh0[0], Lam_mesh0[0], U_mesh0[0])).ravel(order='F')]
+for mesh_idx in range(1, len(X_mesh_sym)-1):
+    X_i = X_mesh_sym[mesh_idx]
+    Lam_i = Lam_mesh_sym[mesh_idx]
+    U_i = U_mesh_sym[mesh_idx]
+
+    bc0i = ca.vcat((
+        hu_fun_ca(X_i[:, 0], Lam_i[:, 0], U_i[:, 0]),
+    ))
+    col_resi = ca.vcat((
+        DX_mesh_sym[mesh_idx] - dt_dtaul[mesh_idx] * f_fun_ca(X_i[:, 1:], U_i[:, 1:]),
+        DLam_mesh_sym[mesh_idx] - dt_dtaul[mesh_idx] * f_lam_fun_ca(X_i[:, 1:], Lam_i[:, 1:], U_i[:, 1:]),
+        hu_fun_ca(X_i[:, 1:], Lam_i[:, 1:], U_i[:, 1:]),
+    ))
+    bcfi = ca.vcat((
+        Xf_mesh_sym[mesh_idx] - X_mesh_sym[mesh_idx + 1][:, 0],
+        Lamf_mesh_sym[mesh_idx] - Lam_mesh_sym[mesh_idx + 1][:, 0],
+    ))
+
+    residuals.append(ca.vcat((
+        bc0i,
+        ca.vec(col_resi),
+        bcfi
+    )))
+    unknowns.append(ca.vec(ca.vcat((X_i, Lam_i, U_i))))
+    guesses.append(np.vstack((X_mesh0[mesh_idx], Lam_mesh0[mesh_idx], U_mesh0[mesh_idx])).ravel(order='F'))
+
+# Terminal mesh residual
+X_i = X_mesh_sym[-1]
+Lam_i = Lam_mesh_sym[-1]
+U_i = U_mesh_sym[-1]
+
+bc0f = ca.vcat((
+    hu_fun_ca(X_i[:, 0], Lam_i[:, 0], U_i[:, 0]),
+))
+col_resf = ca.vcat((
+    DX_mesh_sym[-1] - dt_dtaul[-1] * f_fun_ca(X_i[:, 1:], U_i[:, 1:]),
+    DLam_mesh_sym[-1] - dt_dtaul[-1] * f_lam_fun_ca(X_i[:, 1:], Lam_i[:, 1:], U_i[:, 1:]),
+    hu_fun_ca(X_i[:, 1:], Lam_i[:, 1:], U_i[:, 1:]),
+))
+
+bcff = ca.vcat((
+    Xf_mesh_sym[-1][0] - hEf,  # Terminal energy fixed
+    Lamf_mesh_sym[-1][1:],  # Terminal fast costates = 0 b/c terminal fast states are free
+    h_fun_ca(Xf_mesh_sym[-1], 0., Uf_mesh_sym[-1]),
+))
+
+residuals.append(ca.vcat((
+    bc0f,
+    ca.vec(col_resf),
+    bcff
+)))
+unknowns.append(ca.vcat((
+    ca.vec(ca.vcat((X_i, Lam_i, U_i))),
+    tf_sym,
+)))
+guesses.append(np.append(
+    np.vstack((X_mesh0[-1], Lam_mesh0[-1], U_mesh0[-1])).ravel(order='F'),
+    tf0
+))
+
+res_sym = ca.vcat(residuals)
+z_sym = ca.vcat(unknowns)
+jac_sym = ca.jacobian(res_sym, z_sym)
+
+res_fun = ca.Function('r', (z_sym,), (res_sym,), ('z',), ('r',))
+jac_fun = ca.Function('J', (z_sym,), (jac_sym,), ('z',), ('J',))
+
+z0 = np.concatenate(guesses)[:, None]
+
+sol_root = optimize.root(fun=lambda _z: res_fun(_z).full()[:, 0], x0=z0[:, 0], jac=jac_fun)
+
+# Run simple damped Newton search ------------------------------------------------------------------------------------ #
+acc_min = 0.95
+max_iter = 1_000
+alpha_min = 1E-5
+alpha_max = 0.1
+
+z = z0.copy()
+res = res_fun(z).full()
+alpha = alpha_max
+recompute_jac = True
+singular = False
+for iteration in range(max_iter):
+    if recompute_jac:
+        print('Computing Jac...')
+        J = jac_fun(z).sparse()
+
+        try:
+            LU = splu(J)
+        except RuntimeError:
+            print('Jac is singular! Stopping search.')
+            singular = True
+            break
+
+        step = LU.solve(res)
+        cost = np.dot(step.T, step)[0, 0]
+        print(f'Cost: {cost_new}')
+        # cost = np.abs(res).max(initial=0.)
+
+    accept = False
+    print('Running backtracking line search...')
+    while alpha > alpha_min:
+        z_new = z - alpha * step
+        res = res_fun(z_new).full()
+        step_new = LU.solve(res)
+        cost_new = np.dot(step_new.T, step_new)[0, 0]
+        # cost_new = np.abs(res).max(initial=0.)
+        if cost_new < (1 + acc_min*alpha*(alpha-2)) * cost:
+        # if cost_new < (1 - acc_min * alpha) * cost:
+            # Accept step
+            print(f'Accept alpha={alpha}')
+            accept = True
+            alpha *= 8
+            if alpha > alpha_max:
+                alpha = alpha_max
+            break
+        else:
+            print(f'Reject alpha={alpha}')
+            alpha /= 2
+
+    if accept:
+        z = z_new
+    else:
+        print(f'Backtrack failed! Stopping search.')
+        break
+
+    if np.all(np.abs(res) < 1E-3):
+        print(f'Success! Huzzah!')
+        break
+
+    # If the full step was taken, then we are going to continue with
+    # the same Jacobian. This is the approach of BVP_SOLVER.
+    if alpha == 1:
+        step = step_new
+        # step = LU.solve(res)
+        cost = cost_new
+        recompute_jac = False
+    else:
+        recompute_jac = True
