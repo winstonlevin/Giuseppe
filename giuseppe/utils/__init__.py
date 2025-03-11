@@ -2,3 +2,4 @@ from . import typing, conversion, compilation, strings, timer, exceptions, numer
     visual
 from .timer import Timer
 from .slicing import make_array_slices
+from . import pseudospectral

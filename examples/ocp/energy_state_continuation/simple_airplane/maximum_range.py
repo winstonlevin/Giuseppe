@@ -193,75 +193,70 @@ with open('sol_outer.data', 'wb') as f:
 # CONTINUATION SOLUTION FROM OUTER TO FULL FIDELITY                                                                    #
 # -------------------------------------------------------------------------------------------------------------------- #
 # Hard-coded mesh [for phases]
-t_phase_vals = np.array((0., 200., 600., sol.t[-1]))
-tau_vals = 2*t_phase_vals / t_phase_vals[-1] - 1
-n_vals = (8, 4, 8)
+p_order = 4  # Number of collocation points
+t_phase_vals = np.array((0., 50., 100., 150., 200., 600., 650., sol.t[-1]))
+taug_vals = 2*t_phase_vals / t_phase_vals[-1] - 1
 
-# Hard-coded mesh [for each phase]
+# Local mesh info for each polynomial of order ``p_order''
 tau_sym = ca.SX.sym('tau')
+taul_vals, w_vals = giuseppe.utils.pseudospectral.lg(p_order)
+taul_vals = np.concatenate(((-1,), taul_vals))  # Prepend (non-collocated) initial point
+x_sym = ca.SX.sym('x', p_order + 1)  # Symbolic interpolation points
+lagrange_polynomials = ca.SX.ones(p_order + 1)
+l_idces = np.arange(0, p_order + 1, 1)
+for num_idx, tau_num in enumerate(taul_vals):
+    idces_poly_i = np.delete(l_idces, num_idx)
+    lagrange_polynomials[idces_poly_i] *= (tau_sym - tau_num) / (taul_vals[idces_poly_i] - tau_num)
+
+dl_dtau = ca.jacobian(lagrange_polynomials, tau_sym).T
+diff_mat = ca.vcat([
+    ca.substitute(dl_dtau, tau_sym, _xi) for _xi in taul_vals[1:]
+])
+
+# Global tau values
 phases = []
-for idx in range(len(n_vals)):
+for idx in range(taug_vals.shape[0] - 1):
     phase_dict = {}
-    phase_dict['tau_vals'], phase_dict['w'] = giuseppe.utils.lgl(n_vals[idx])
     phase_dict['taug_vals'] = \
-        0.5*(tau_vals[idx] + tau_vals[idx+1]) \
-        + 0.5*(tau_vals[idx+1] - tau_vals[idx]) * phase_dict['tau_vals']
-
-    # Obtain differentiation matrix
-    x_sym = ca.SX.sym('x', n_vals[idx])  # Interpolation points
-    lagrange_polynomials = ca.SX.ones(n_vals[idx])
-    l_idces = np.arange(0, n_vals[idx], 1)
-    for num_idx, tau_num in enumerate(phase_dict['tau_vals']):
-        idces_poly_i = np.delete(l_idces, num_idx)
-        lagrange_polynomials[idces_poly_i] *= (tau_sym - tau_num) / (phase_dict['tau_vals'][idces_poly_i] - tau_num)
-
-    # TODO - derive differentiation matrix (CF. GPOPS-II Eq. 29)
-
+        0.5*(taug_vals[idx] + taug_vals[idx+1]) \
+        + 0.5*(taug_vals[idx+1] - taug_vals[idx]) * taul_vals
     phases.append(phase_dict)
 
-# hE_sym = ca.SX.sym('hE')
-# h_sym = ca.SX.sym('h')
-# gam_sym = ca.SX.sym('gam')
-# CL_sym = ca.SX.sym('CL')
-# CD_sym = CD0 + eta/CLa * CL_sym**2
-#
-# v2_sym = 2*g*(hE_sym - h_sym)
-# v_sym = ca.sqrt(v2_sym)
-#
-# rho_sym = rho0 * ca.exp(-h_sym/h_ref)
-# qdyn_sym = 0.5 * rho_sym * v2_sym
-# wing_load_sym = qdyn_sym * Sref
-# lift_sym = wing_load_sym * CL_sym
-# drag_sym = wing_load_sym * CD_sym
-#
-# x_sym = ca.vcat((hE_sym, h_sym, gam_sym))
-# tf_sym = ca.SX.sym('tf')
-# f_sym = ca.vcat((
-#     -v_sym * drag_sym / weight,
-#     v_sym * ca.sin(gam_sym),
-#     lift_sym / (mass * v_sym) - g/v_sym * ca.cos(gam_sym)
-# ))
-# f_fun_ca = ca.Function('f', (x_sym, CL_sym), (f_sym,))
-# path_cost_sym = -v_sym * ca.cos(gam_sym)  # -dx/dt -> maximum range
-#
-# lam_sym = ca.vcat([ca.SX.sym('lam_' + _x_sym.name()) for _x_sym in ca.vertsplit(x_sym)])
-# ham_sym = path_cost_sym + ca.dot(f_sym, lam_sym)
-# hu_sym = ca.jacobian(ham_sym, CL_sym)
-# f_lam_sym = -ca.jacobian(ham_sym, x_sym).T
-# f_lam_fun_ca = ca.Function('flam', (x_sym, lam_sym, CL_sym), (f_lam_sym,))
-#
-# # Index reduction to obtain control dynamics
-# huu_sym = ca.jacobian(hu_sym, CL_sym)
-# hux_sym = ca.jacobian(hu_sym, x_sym)
-# fu_sym = ca.jacobian(f_sym, CL_sym)
-# f_u_sym = -(hux_sym@f_sym + ca.dot(fu_sym, f_lam_sym))/huu_sym
-#
-# y_sym = ca.vcat((x_sym, lam_sym, CL_sym))
-# fy_sym = ca.vcat((f_sym, f_lam_sym, f_u_sym))
-# fy_fun_ca = ca.Function('fy', (y_sym,), (fy_sym,))
-# hu_fun_ca = ca.Function('Hu', (y_sym,), (hu_sym,))
-# h_fun_ca = ca.Function('H', (y_sym,), (ham_sym,))
-#
+# Build Necessary Conditions for Optimality
+hE_sym = ca.SX.sym('hE')
+h_sym = ca.SX.sym('h')
+gam_sym = ca.SX.sym('gam')
+CL_sym = ca.SX.sym('CL')
+CD_sym = CD0 + eta/CLa * CL_sym**2
+
+v2_sym = 2*g*(hE_sym - h_sym)
+v_sym = ca.sqrt(v2_sym)
+
+rho_sym = rho0 * ca.exp(-h_sym/h_ref)
+qdyn_sym = 0.5 * rho_sym * v2_sym
+wing_load_sym = qdyn_sym * Sref
+lift_sym = wing_load_sym * CL_sym
+drag_sym = wing_load_sym * CD_sym
+
+x_sym = ca.vcat((hE_sym, h_sym, gam_sym))
+tf_sym = ca.SX.sym('tf')
+f_sym = ca.vcat((
+    -v_sym * drag_sym / weight,
+    v_sym * ca.sin(gam_sym),
+    lift_sym / (mass * v_sym) - g/v_sym * ca.cos(gam_sym)
+))
+f_fun_ca = ca.Function('f', (x_sym, CL_sym), (f_sym,))
+path_cost_sym = -v_sym * ca.cos(gam_sym)  # -dx/dt -> maximum range
+
+lam_sym = ca.vcat([ca.SX.sym('lam_' + _x_sym.name()) for _x_sym in ca.vertsplit(x_sym)])
+ham_sym = path_cost_sym + ca.dot(f_sym, lam_sym)
+hu_sym = ca.jacobian(ham_sym, CL_sym)
+f_lam_sym = -ca.jacobian(ham_sym, x_sym).T
+f_lam_fun_ca = ca.Function('flam', (x_sym, lam_sym, CL_sym), (f_lam_sym,))
+
+# Problem definition:
+# (1)
+
 # # Discretized states / costates
 # tau_mesh = sol_outer.t / sol_outer.t[-1]
 # dtau_mesh = np.diff(tau_mesh)
