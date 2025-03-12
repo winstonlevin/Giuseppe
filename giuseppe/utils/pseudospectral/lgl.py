@@ -1,3 +1,12 @@
+"""
+This script is borrowed from Dymos, which is licensed under:
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+[1] R. Falck, J. S. Gray, K. Ponnapalli, and T. Wright, "Dymos: A Python package for Optimal Control of
+Multidisciplinary Systems," Journal of Open Source Software, 6(59), 2809 (2021).
+DOI: https://doi.org/10.21105/joss.02809.
+"""
 import numpy as np
 
 _lgl_cache = {}

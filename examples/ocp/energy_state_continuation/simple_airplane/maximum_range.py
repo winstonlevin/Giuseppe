@@ -223,10 +223,9 @@ taug_vals = 2*t_phase_vals / t_phase_vals[-1] - 1
 # Local mesh info for each polynomial of order ``p_order''
 tau_sym = ca.SX.sym('tau')
 taul_vals, w_vals = giuseppe.utils.pseudospectral.lg(p_order)
-taul_vals = np.concatenate(((-1,), taul_vals))  # Prepend (non-collocated) initial point
-x_sym = ca.SX.sym('x', p_order + 1)  # Symbolic interpolation points
-lagrange_polynomials = ca.SX.ones(p_order + 1)
-l_idces = np.arange(0, p_order + 1, 1)
+x_sym = ca.SX.sym('x', p_order)  # Symbolic interpolation points
+lagrange_polynomials = ca.SX.ones(p_order)
+l_idces = np.arange(0, p_order, 1)
 for num_idx, tau_num in enumerate(taul_vals):
     idces_poly_i = np.delete(l_idces, num_idx)
     lagrange_polynomials[idces_poly_i] *= (tau_sym - tau_num) / (taul_vals[idces_poly_i] - tau_num)
@@ -303,9 +302,9 @@ nlam = nx
 nu = u_sym.shape[0]
 
 # Unknown values
-X_mesh_sym = [ca.SX.sym('X' + str(idx), nx, p_order+1) for idx in range(taug_vals.shape[0]-1)]
-Lam_mesh_sym = [ca.SX.sym('Lam' + str(idx), nlam, p_order+1) for idx in range(taug_vals.shape[0]-1)]
-U_mesh_sym = [ca.SX.sym('U' + str(idx), nu, p_order+1) for idx in range(taug_vals.shape[0]-1)]
+X_mesh_sym = [ca.SX.sym('X' + str(idx), nx, p_order) for idx in range(taug_vals.shape[0]-1)]
+Lam_mesh_sym = [ca.SX.sym('Lam' + str(idx), nlam, p_order) for idx in range(taug_vals.shape[0]-1)]
+U_mesh_sym = [ca.SX.sym('U' + str(idx), nu, p_order) for idx in range(taug_vals.shape[0]-1)]
 tf_sym = ca.SX.sym('tf')
 
 # Initial guesses

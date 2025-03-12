@@ -31,16 +31,18 @@ def _lg(n):
     w : numpy.array
         An array of the corresponding LG weights at the nodes in x.
     """
-    legendre_coeffs = np.zeros(shape=(n+1,), dtype=float)
+    legendre_coeffs = np.zeros(shape=(n,), dtype=float)
     legendre_coeffs[-1] = 1.
     legendre_poly = np.polynomial.legendre.Legendre(legendre_coeffs)
-    x = legendre_poly.roots()
-    if n % 2 == 1:
+    x = np.empty(shape=(n,), dtype=float)
+    x[0] = -1.
+    x[1:] = legendre_poly.roots()
+    if n % 2 == 0:
         # For an odd number of quadrature points, the middle point is exactly 0
         x[n // 2] = 0.
 
-    den_l_sqrt = legendre_poly.deriv()(x)
-    w = 2 / ((1 - x)*(1 + x)*den_l_sqrt*den_l_sqrt)
+    den_l_sqrt = legendre_poly.deriv()(x[1:])
+    w = 2 / ((1 - x[1:])*(1 + x[1:])*den_l_sqrt*den_l_sqrt)
 
     return x, w
 

@@ -109,12 +109,13 @@ tf_sym = ca.SX.sym('tf')
 
 
 def mesh_error(_y0, _y1, _h):
-    # Trapezoidal rule
+    # Trapezoidal Rule
     _fxlam0 = fxlam_fun_ca(_y0)
-    _hu0 = hu_fun_ca(_y0)
     _fxlam1 = fxlam_fun_ca(_y0)
-
     int_error = (_y1[:-nu] - _y0[:-nu]) - _h * (_fxlam0 + _fxlam1)
+
+    # Control Law
+    _hu0 = hu_fun_ca(_y0)
 
     return ca.vcat((int_error, _hu0))
 
