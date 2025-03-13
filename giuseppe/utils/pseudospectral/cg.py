@@ -30,7 +30,7 @@ def _cg(n):
     w : numpy.array
         An array of the corresponding CG weights at the nodes in x.
     """
-    x = np.cos(np.pi * np.arange(1, -1/(n-1), -1/(n-1)))
+    x = np.cos(np.pi * np.linspace(1, 0, n))
     if n % 2 == 1:
         # The middle collocation value is exactly zero b/c xi = cos(pi), eliminate numerical error:
         x[n // 2] = 0.
