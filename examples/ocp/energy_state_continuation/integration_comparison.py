@@ -1,7 +1,7 @@
 import numpy as np
 import casadi as ca
 from scipy import optimize, interpolate
-from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt, widgets
 
 import giuseppe
 
@@ -124,14 +124,21 @@ else:
     )
 
 sol_dicts: list[dict] = []
-for num_col in cols_try:
+cols_to_dict = {}
+for idx, num_col in enumerate(cols_try):
+    cols_to_dict[num_col] = idx  # Get dict value (to get sol idx from number of collocation points)
+
     # True value
     res_fun, yf_fun, tcol_fun = generator(num_col)
     tcol = tcol_fun(tf).full()[:, 0]
     ycol = true_state_equation(tcol).full()[:, 0]
 
-    # Root
-    ycol_sol = optimize.root(lambda _ycol: res_fun(_ycol, y0, tf).full()[:, 0], ycol)
+    # Root (fixed terminal time)
+    z_sym = ca.SX.sym('ycol', num_col)
+    res_sym = res_fun(z_sym, y0, tf)
+    jac_sym = ca.jacobian(res_sym, z_sym)
+    jac_fun = ca.Function('J', (z_sym,), (jac_sym,), ('z',), ('J',))
+    ycol_sol = optimize.root(lambda _ycol: res_fun(_ycol, y0, tf).full()[:, 0], ycol, jac=jac_fun, method='hybr')
     ycol_hat = ycol_sol.x
     yf_hat = yf_fun(ycol_hat, y0, tf).full()[0, 0]
 
@@ -169,7 +176,9 @@ ax_y.set_ylabel(r'$y(t)$')
 ax_y.set_xlim((-plot_buffer, tf + plot_buffer))
 
 
-def set_plot(_sol_dict):
+def set_plot(_n_col):
+    _n_col = np.round(_n_col).astype(int)
+    _sol_dict = sol_dicts[cols_to_dict[_n_col]]
     ycol_plot.set_data(_sol_dict['tcol'], _sol_dict['ycol_hat'])
     if _sol_dict["success"]:
         convergence_str = "SUCCESS"
@@ -184,4 +193,14 @@ def set_plot(_sol_dict):
     ))
 
 
-set_plot(sol_dicts[-1])
+fig_y.subplots_adjust(bottom=0.25)
+ax_ncol = fig_y.add_axes([0.25, 0.1, 0.65, 0.03])
+slider_ncol = widgets.Slider(
+    ax=ax_ncol,
+    label='Num. Col. Pts.',
+    valmin=cols_try[0],
+    valmax=cols_try[-1],
+    valinit=cols_try[-1],
+)
+slider_ncol.on_changed(set_plot)
+set_plot(cols_try[-1])
