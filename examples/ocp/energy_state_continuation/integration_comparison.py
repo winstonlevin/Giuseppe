@@ -234,8 +234,7 @@ else:
     )
 
 # Integration scheme ------------------------------------------------------------------------------------------------- #
-# cols_try = np.arange(2, 20+1, 1)
-cols_try = [5]
+cols_try = np.arange(2, 20+1, 1)
 collocation_method = 'lg'
 integration_scheme = 'pseudospectral'
 
@@ -276,8 +275,16 @@ for idx, num_col in enumerate(cols_try):
     ef = yf_hat - yf
 
     # Determine radius of convergence numerically
-    if ycol_sol.success:
-        rconv = np.nan
+    err_root_ycol_sol = np.dot(ycol_sol.fun, ycol_sol.fun)
+    if err_root_ycol_sol < 1E-3:
+        tolerance_for_near = 1E-3 + err_root_ycol_sol
+
+        def _rfp(_z0):
+            _sol = optimize.root(lambda _ycol: res_fun(_ycol, y0, tf).full()[:, 0], _z0, jac=jac_fun, method='hybr')
+            _err = _sol.x - ycol_sol.x
+            return np.dot(_err, _err) < tolerance_for_near
+
+        rconv = determine_radius_of_convergence(_rfp, ycol_sol.x, r_max=1_000)
     else:
         rconv = 0.
 
@@ -291,25 +298,25 @@ for idx, num_col in enumerate(cols_try):
         'rconv': rconv
     })
 
-# Experiment with radius of converged, TODO - remove
-tolerance_for_near = 1E-3 + np.dot(ycol_sol.fun, ycol_sol.fun)
-
-
-def _rfp(_z0):
-    _sol = optimize.root(lambda _ycol: res_fun(_ycol, y0, tf).full()[:, 0], _z0, jac=jac_fun, method='hybr')
-    _err = _sol.x - ycol_sol.x
-    return np.dot(_err, _err) < tolerance_for_near
-
-
-interp = determine_radius_of_convergence(_rfp, ycol_sol.x, return_continuous=True, r_max=1_000)
-
-fig_rcov, ax_rcov = plt.subplots()
-ax_rcov.grid(zorder=-1)
-r_vals = np.linspace(interp.x[0], interp.x[-1], 1000)
-ax_rcov.plot(r_vals, 100*interp(r_vals))
-ax_rcov.plot(interp.x, 100*interp(interp.x), 'o')
-ax_rcov.set_xlabel('r')
-fig_rcov.tight_layout()
+# # Experiment with radius of converged, TODO - remove
+# tolerance_for_near = 1E-3 + np.dot(ycol_sol.fun, ycol_sol.fun)
+#
+#
+# def _rfp(_z0):
+#     _sol = optimize.root(lambda _ycol: res_fun(_ycol, y0, tf).full()[:, 0], _z0, jac=jac_fun, method='hybr')
+#     _err = _sol.x - ycol_sol.x
+#     return np.dot(_err, _err) < tolerance_for_near
+#
+#
+# interp = determine_radius_of_convergence(_rfp, ycol_sol.x, return_continuous=True, r_max=1_000)
+#
+# fig_rcov, ax_rcov = plt.subplots()
+# ax_rcov.grid(zorder=-1)
+# r_vals = np.linspace(interp.x[0], interp.x[-1], 1000)
+# ax_rcov.plot(r_vals, 100*interp(r_vals))
+# ax_rcov.plot(interp.x, 100*interp(interp.x), 'o')
+# ax_rcov.set_xlabel('r')
+# fig_rcov.tight_layout()
 
 # -------------------------------------------------------------------------------------------------------------------- #
 # PLOTTING                                                                                                             #
@@ -320,7 +327,7 @@ y_min = y_vals.min(initial=np.inf)
 y_max = y_vals.max(initial=-np.inf)
 plot_buffer = 0.2
 
-# Plot state vs. time
+# State vs. time plot ------------------------------------------------------------------------------------------------ #
 fig_y, ax_y = plt.subplots()
 ax_y.grid(zorder=-1)
 ax_y.plot(t_vals, y_vals, label='True')
@@ -358,3 +365,20 @@ slider_ncol = widgets.Slider(
 )
 slider_ncol.on_changed(set_plot)
 set_plot(cols_try[-1])
+
+# Radius of convergence plot ----------------------------------------------------------------------------------------- #
+rconv_vals = []
+ncol_vals = []
+for _sol_dict in sol_dicts:
+    rconv_vals.append(_sol_dict['rconv'])
+    ncol_vals.append(_sol_dict['n'])
+rconv_vals = np.array(rconv_vals)
+ncol_vals = np.array(ncol_vals)
+
+idces = np.argsort(ncol_vals)
+fig_rconv, ax_rconv = plt.subplots()
+ax_rconv.grid(zorder=-1)
+ax_rconv.plot(ncol_vals[idces], rconv_vals[idces], 'o')
+ax_rconv.set_xlabel('Num. Col. Pts.')
+ax_rconv.set_ylabel('Radius of Convergence')
+fig_rconv.tight_layout()
