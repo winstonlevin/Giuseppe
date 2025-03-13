@@ -84,7 +84,7 @@ def generate_pseudospectral_residual(dynamic_fun: ca.Function, n: int, col_metho
 
 def orthonormal_sampler(n: int, m: int, rng_seed=None):
     """
-    Generate m sets of n orthogonal vectors of length n, randomly generated using the _rng_seed. Each set of n
+    Generate m sets of n orthogonal vectors of length n, randomly generated using the rng_seed. Each set of n
     orthogonal values is taken from the QR decomposition of the matrix H whose elements are normally distributed.
     This algorithm is adapted from:
     https://stackoverflow.com/questions/38426349/how-to-create-random-orthonormal-matrix-in-python-numpy
@@ -102,19 +102,28 @@ def orthonormal_sampler(n: int, m: int, rng_seed=None):
     _generator = np.random.default_rng(seed=rng_seed)
     _q_matrices = []
     _samples = []
-
+    _sign_mult = -1
+                     # flips, for my data. Multiplying by -1 should not affect distribution of rotation angles, since
+                     # they are still randomly between [-pi, pi].
     for _multiplicity_index in range(m):
         _normal_matrix = _generator.random(size=(n, n))
         _q, _r = np.linalg.qr(_normal_matrix, mode='complete')
         _q = _q @ np.diag(np.sign(np.diag(_r)))
-        _samples.extend(_q)
 
+        # Multiply every other matrix by -1. For whatever reason, I am not seeming to get typical sign flips for my
+        # data. Multiplying by -1 should not affect distribution of rotation angles, since they are still randomly
+        # between [-pi, pi].
+        _q *= _sign_mult
+        _sign_mult *= -1
+
+        _samples.extend(_q)
     return _samples
 
 
 def determine_radius_of_convergence(
         root_finding_problem, sol_converged, multiplicity: int = 2, confidence: int = 0.99,
-        r_max: float = 100., return_continuous=False, rng_seed=None, max_iter: int=1_000, tol: float = 1E-3
+        r_max: float = 100., return_continuous=False, rng_seed=None, max_iter: int=1_000, tol: float = 1E-3,
+        lb_sample=None, ub_sample=None
 ):
     """
     Determined the radius of convergence around the root z* via a binary search. The validity of a given radius is
@@ -136,6 +145,8 @@ def determine_radius_of_convergence(
     rng_seed, int or None, default=None, seed to be used in sampling perturbations to the guess vector
     max_iter, int, default=1_000, maximum number of search steps to find radius of convergence
     tol, float, default=1E-3, tolerance for binary search (break when upper/lower are within this value of each other)
+    lb_sample, np.ndarray or None, lower bound applied to truncate samples
+    ub_sample, np.ndarray or None, upper bound applied to truncate samples
 
     Returns
     -------
@@ -144,6 +155,10 @@ def determine_radius_of_convergence(
     """
     # Generate the unit vectors for the samples
     sample_unit_vectors = orthonormal_sampler(n=len(sol_converged), m=multiplicity, rng_seed=rng_seed)
+    if lb_sample is not None:
+        [np.maximum(_sample, lb_sample, out=_sample) for _sample in sample_unit_vectors]
+    if ub_sample is not None:
+        [np.minimum(_sample, ub_sample, out=_sample) for _sample in sample_unit_vectors]
 
     def _find_num_converged(_r):
         return np.sum([root_finding_problem(sol_converged + _r * _sample) for _sample in sample_unit_vectors])
@@ -238,6 +253,8 @@ cols_try = np.arange(2, 20+1, 1)
 collocation_method = 'lg'
 integration_scheme = 'pseudospectral'
 fixed_final_time = False  # True -> estimate y(tf). False -> estimate tf(yf)
+use_log_tf = False  # True -> replace tf with log(tf) in unknown vector
+rng_seed = 10
 
 if integration_scheme == 'pseudospectral':
     def generator(_num_col):
@@ -252,6 +269,8 @@ else:
 
 sol_dicts: list[dict] = []
 cols_to_dict = {}
+r_max = 100  # Upper bound to give up search for radius of convergence
+tf_min = 1/r_max  # Lower bound on final time (in random sample generation)
 for idx, num_col in enumerate(cols_try):
     cols_to_dict[num_col] = idx  # Get dict value (to get sol idx from number of collocation points)
 
@@ -268,14 +287,21 @@ for idx, num_col in enumerate(cols_try):
         yf_sym = yf_fun(ycol_sym, y0, tf)
         res_sym = rcol_fun(ycol_sym, y0, tf)
         solution_fun = ca.Function('s', (z_sym,), (tf, yf_sym, ycol_sym))
+        lb_sample = -np.inf*np.ones_like(ycol)  # TODO - saturate later b/c only applies to direction of offset right now
     else:
         # Root (free terminal time, fixed terminal state)
-        tf_sym = ca.SX.sym('tf')
-        z_sym = ca.vcat((tf_sym, ycol_sym))
+        if use_log_tf:
+            log_tf_sym = ca.SX.sym('log_tf')
+            z_sym = ca.vcat((log_tf_sym, ycol_sym))
+            tf_sym = np.exp(log_tf_sym)
+        else:
+            tf_sym = ca.SX.sym('tf')
+            z_sym = ca.vcat((tf_sym, ycol_sym))
         z_true = np.concatenate(((tf,), ycol))
         yf_sym = yf_fun(ycol_sym, y0, tf_sym)
         res_sym = ca.vcat((yf_sym - yf, rcol_fun(ycol_sym, y0, tf_sym)))
         solution_fun = ca.Function('s', (z_sym,), (tf_sym, yf_sym, ycol_sym))
+        lb_sample = np.concatenate(((tf_min,), -np.inf*np.ones_like(ycol)))
 
     jac_sym = ca.jacobian(res_sym, z_sym)
     res_fun = ca.Function('r', (z_sym,), (res_sym,))
@@ -312,8 +338,13 @@ for idx, num_col in enumerate(cols_try):
             _err = _sol.x - sol_root.x
             return np.dot(_err, _err) < tolerance_for_near
 
-        r_max = 100
-        rconv = determine_radius_of_convergence(_rfp, sol_root.x, r_max=r_max)
+
+        multiplicity = np.round(500 / num_col).astype(int)  # Generate about 500 samples
+        if multiplicity < 1:
+            multiplicity = 1
+        rconv = determine_radius_of_convergence(
+            _rfp, sol_root.x, r_max=r_max, lb_sample=lb_sample, multiplicity=multiplicity, rng_seed=rng_seed
+        )
         if rconv == r_max:
             # We hit numeric limit -> simply set to infinity
             rconv = np.inf
