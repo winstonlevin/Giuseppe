@@ -237,6 +237,7 @@ else:
 cols_try = np.arange(2, 20+1, 1)
 collocation_method = 'lg'
 integration_scheme = 'pseudospectral'
+fixed_final_time = False  # True -> estimate y(tf). False -> estimate tf(yf)
 
 if integration_scheme == 'pseudospectral':
     def generator(_num_col):
@@ -255,36 +256,67 @@ for idx, num_col in enumerate(cols_try):
     cols_to_dict[num_col] = idx  # Get dict value (to get sol idx from number of collocation points)
 
     # True value
-    res_fun, yf_fun, tcol_fun = generator(num_col)
+    rcol_fun, yf_fun, tcol_fun = generator(num_col)
     tcol = tcol_fun(tf).full()[:, 0]
     ycol = true_state_equation(tcol).full()[:, 0]
+    ycol_sym = ca.SX.sym('ycol', num_col)
 
-    # Root (fixed terminal time)
-    z_sym = ca.SX.sym('ycol', num_col)
-    res_sym = res_fun(z_sym, y0, tf)
+    if fixed_final_time:
+        # Root (fixed terminal time)
+        z_sym = ycol_sym
+        z_true = ycol
+        yf_sym = yf_fun(ycol_sym, y0, tf)
+        res_sym = rcol_fun(ycol_sym, y0, tf)
+        solution_fun = ca.Function('s', (z_sym,), (tf, yf_sym, ycol_sym))
+    else:
+        # Root (free terminal time, fixed terminal state)
+        tf_sym = ca.SX.sym('tf')
+        z_sym = ca.vcat((tf_sym, ycol_sym))
+        z_true = np.concatenate(((tf,), ycol))
+        yf_sym = yf_fun(ycol_sym, y0, tf_sym)
+        res_sym = ca.vcat((yf_sym - yf, rcol_fun(ycol_sym, y0, tf_sym)))
+        solution_fun = ca.Function('s', (z_sym,), (tf_sym, yf_sym, ycol_sym))
+
     jac_sym = ca.jacobian(res_sym, z_sym)
+    res_fun = ca.Function('r', (z_sym,), (res_sym,))
+
+    def res_fun_wrapped(_z):
+        return res_fun(_z).full()[:, 0]
+
     jac_fun = ca.Function('J', (z_sym,), (jac_sym,), ('z',), ('J',))
-    ycol_sol = optimize.root(lambda _ycol: res_fun(_ycol, y0, tf).full()[:, 0], ycol, jac=jac_fun, method='hybr')
-    ycol_hat = ycol_sol.x
-    yf_hat = yf_fun(ycol_hat, y0, tf).full()[0, 0]
+
+    sol_root = optimize.root(res_fun_wrapped, z_true, jac=jac_fun, method='hybr')
+    tf_hat, yf_hat, ycol_hat = solution_fun(sol_root.x)
+    tf_hat = float(tf_hat)  # Convert to non-CasADi type
+    yf_hat = float(yf_hat)
+    ycol_hat = ycol_hat.full()[:, 0]
+    tcol_hat = tcol_fun(tf_hat).full()[:, 0]
 
     # Errors
-    ecol = ycol_hat - ycol
-    norm_err = np.dot(ecol, ecol)**0.5
+    root_error = sol_root.x - z_true
+    norm_root_err = np.dot(root_error, root_error)**0.5
 
     ef = yf_hat - yf
+    ecol = ycol_hat - ycol
+    etcol = tcol_hat - tcol
+    etf = tf_hat - tf
 
     # Determine radius of convergence numerically
-    err_root_ycol_sol = np.dot(ycol_sol.fun, ycol_sol.fun)
-    if err_root_ycol_sol < 1E-3:
+    err_root_ycol_sol = np.dot(sol_root.fun, sol_root.fun)
+    success = err_root_ycol_sol < 1E-3
+    if success:
         tolerance_for_near = 1E-3 + err_root_ycol_sol
 
         def _rfp(_z0):
-            _sol = optimize.root(lambda _ycol: res_fun(_ycol, y0, tf).full()[:, 0], _z0, jac=jac_fun, method='hybr')
-            _err = _sol.x - ycol_sol.x
+            _sol = optimize.root(res_fun_wrapped, _z0, jac=jac_fun, method='hybr')
+            _err = _sol.x - sol_root.x
             return np.dot(_err, _err) < tolerance_for_near
 
-        rconv = determine_radius_of_convergence(_rfp, ycol_sol.x, r_max=1_000)
+        r_max = 100
+        rconv = determine_radius_of_convergence(_rfp, sol_root.x, r_max=r_max)
+        if rconv == r_max:
+            # We hit numeric limit -> simply set to infinity
+            rconv = np.inf
     else:
         rconv = 0.
 
@@ -292,9 +324,11 @@ for idx, num_col in enumerate(cols_try):
         'n': num_col,
         'tcol': np.append(tcol, tf),
         'ycol': np.append(ycol, yf),
+        'tcol_hat': np.append(tcol_hat, tf_hat),
         'ycol_hat': np.append(ycol_hat, yf_hat),
+        'etcol': np.append(etcol, etf),
         'ecol': np.append(ecol, ef),
-        'success': ycol_sol.success,
+        'success': success,
         'rconv': rconv
     })
 
@@ -340,7 +374,7 @@ ax_y.set_xlim((-plot_buffer, tf + plot_buffer))
 def set_plot(_n_col):
     _n_col = np.round(_n_col).astype(int)
     _sol_dict = sol_dicts[cols_to_dict[_n_col]]
-    ycol_plot.set_data(_sol_dict['tcol'], _sol_dict['ycol_hat'])
+    ycol_plot.set_data(_sol_dict['tcol_hat'], _sol_dict['ycol_hat'])
     if _sol_dict["success"]:
         convergence_str = "SUCCESS"
     else:
@@ -362,23 +396,37 @@ slider_ncol = widgets.Slider(
     valmin=cols_try[0],
     valmax=cols_try[-1],
     valinit=cols_try[-1],
+    valstep=1,
 )
 slider_ncol.on_changed(set_plot)
 set_plot(cols_try[-1])
 
 # Radius of convergence plot ----------------------------------------------------------------------------------------- #
+err_lab = 'yf Err.' if fixed_final_time else 'tf Err.'
 rconv_vals = []
 ncol_vals = []
+ef_vals = []
 for _sol_dict in sol_dicts:
     rconv_vals.append(_sol_dict['rconv'])
     ncol_vals.append(_sol_dict['n'])
+    ef_vals.append(_sol_dict['ecol'][-1] if fixed_final_time else _sol_dict['etcol'][-1])
 rconv_vals = np.array(rconv_vals)
 ncol_vals = np.array(ncol_vals)
+ef_vals = np.array(ef_vals)
 
 idces = np.argsort(ncol_vals)
-fig_rconv, ax_rconv = plt.subplots()
+fig_col, axes_col = plt.subplots(nrows=2)
+
+ax_ef = axes_col[0]
+ax_ef.grid(zorder=-1)
+ax_ef.plot(ncol_vals[idces], ef_vals[idces], 'o')
+# ax_ef.set_xlabel('Num. Col. Pts.')
+ax_ef.set_ylabel(err_lab)
+
+ax_rconv = axes_col[1]
 ax_rconv.grid(zorder=-1)
 ax_rconv.plot(ncol_vals[idces], rconv_vals[idces], 'o')
 ax_rconv.set_xlabel('Num. Col. Pts.')
 ax_rconv.set_ylabel('Radius of Convergence')
-fig_rconv.tight_layout()
+ax_rconv.set_xticks(np.unique(np.round(np.linspace(ncol_vals[0], ncol_vals[-1], 5))))
+fig_col.tight_layout()
