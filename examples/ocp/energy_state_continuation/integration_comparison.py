@@ -123,104 +123,104 @@ def orthonormal_sampler(n: int, n_samples: Optional[int] = None, rng_seed=None):
     return _samples[:n_samples]
 
 
-def determine_linearization_radius(
-        jac_fun: ca.Function, res_fun: ca.Function, z0: np.ndarray,
-        r_upper: float = 10., confidence: float = 0.95,
-        max_iter: int = 100, tol: float = 1E-3, n_samples: int = 100, preprocess: Optional[Callable] = None
-):
-    """
-    Determined the radius of convergence around the root z* via a binary search. The radius is
-    determined by:
-        1. Generate co-varied points about the optimal solution at distance R away from optimal solution
-        2. The perturbed step vs the predicted step is:
-                  z - z0   = R*dzhat ~= J^-1 (F(z) - F0)
-                ||z - z0|| = R       ~= ||J^-1 (F(z) - F0)|| = Rhat
-        3. The ``radius of convergence'' is defined as the location where:
-                |E(Rhat) - R| == (1 - confidence)*R
-           The expectation E(*) is calculated from the average  of random orthogonal samples
-    NOTE: since a binary search is used, it is implicitly assumed that increasing R will lower the likelihood of
-    convergence.
-
-    Parameters
-    ----------
-    jac_fun, ca.Function, function of z to calculate Jacobian
-    res_fun, ca.Function, function of z to calculate residual
-    z0, np.ndarray, value about which to find the radius of convergence
-    r_upper, float, default=10., maximum value checked for radius of convergence
-    confidence, float, default=0.95, (1-confidence) is ratio of error norm to residual norm. Should be in range:
-                                     0 < confidence < 1
-    max_iter, int, default=100, maximum number of binary search iterations to check convergence
-    tol, float, default=1E-3, tolerance for radius of convergence
-    n_samples, int, default=100, number of randomly generated sample unit vectors at which to check error
-    preprocess, Callable or None, default=None, if given, puts generated samples through preprocessor before checking
-                                                the error
-
-    Returns
-    -------
-    float, the radius of convergence value where, on average, ||e(z)|| == (1 - confidence) ||F(z)||
-    """
-    # Generate Jacobian (once)
-    jac = jac_fun(z0).full()
-    try:
-        jac_inv = np.linalg.inv(jac)
-    except np.linalg.LinAlgError:
-        # Jacobian is not invertible -> no radius of convergence
-        return 0.
-
-    res0 = res_fun(z0).full().ravel()
-    convergent_error_fraction = 1. - confidence
-
-    # Generate the unit vectors for the samples
-    sample_unit_vectors = orthonormal_sampler(n=len(z0), n_samples=n_samples, rng_seed=rng_seed)
-
-    if preprocess is None:
-        def preprocess(_z, _dz):
-            return _z + _dz
-
-    def _estimate_radius(_z):
-        """Rhat = ||J^-1 (F(z) - F0)||"""
-        return np.linalg.norm(jac_inv.dot(res_fun(_z).full().ravel() - res0))
-
-    def _mean_radius_error(_r):
-        return np.sum(
-            [_estimate_radius(preprocess(z0, _r * _sample)) for _sample in sample_unit_vectors]
-        ) / n_samples - _r
-        # for _idx_sample, _sample in enumerate(sample_unit_vectors):
-        #     if _convergence_number(preprocess(z0 + _r * _sample)) > 0:
-        #         # Move failed sample to front to speed up next check
-        #         sample_unit_vectors.insert(0, sample_unit_vectors.pop(_idx_sample))
-        #         return False
-        # return True
-
-    # Save list of prior values
-    # |E(Rhat) - R| == (1 - confidence)*R
-    error = _mean_radius_error(r_upper)
-    if error > convergent_error_fraction * r_upper:
-        return r_upper  # Uppermost value is inside radius of convergence
-
-    r_lower = tol
-    error = _mean_radius_error(r_lower)
-    if error > convergent_error_fraction * r_lower:
-        return 0.  # Even at tolerance, outside radius of convergence
-
-    # Conduct binary search to determine where r stops converging
-    r = (r_lower + r_upper) / 2
-    for iteration in range(max_iter):
-        # Update R value
-        error = _mean_radius_error(r)
-        if error > convergent_error_fraction * r:
-            # This value is outside the radius of convergence
-            r_upper = r
-        else:
-            # This value is inside the radius of convergence
-            r_lower = r
-        r = (r_lower + r_upper) / 2
-
-        # Termination criteria
-        if abs(r_lower - r_upper) < tol or abs(error) < tol*r:
-            break
-
-    return r
+# def determine_linearization_radius(
+#         jac_fun: ca.Function, res_fun: ca.Function, z0: np.ndarray,
+#         r_upper: float = 10., confidence: float = 0.95,
+#         max_iter: int = 100, tol: float = 1E-3, n_samples: int = 100, preprocess: Optional[Callable] = None
+# ):
+#     """
+#     Determined the radius of convergence around the root z* via a binary search. The radius is
+#     determined by:
+#         1. Generate co-varied points about the optimal solution at distance R away from optimal solution
+#         2. The perturbed step vs the predicted step is:
+#                   z - z0   = R*dzhat ~= J^-1 (F(z) - F0)
+#                 ||z - z0|| = R       ~= ||J^-1 (F(z) - F0)|| = Rhat
+#         3. The ``radius of convergence'' is defined as the location where:
+#                 |E(Rhat) - R| == (1 - confidence)*R
+#            The expectation E(*) is calculated from the average  of random orthogonal samples
+#     NOTE: since a binary search is used, it is implicitly assumed that increasing R will lower the likelihood of
+#     convergence.
+#
+#     Parameters
+#     ----------
+#     jac_fun, ca.Function, function of z to calculate Jacobian
+#     res_fun, ca.Function, function of z to calculate residual
+#     z0, np.ndarray, value about which to find the radius of convergence
+#     r_upper, float, default=10., maximum value checked for radius of convergence
+#     confidence, float, default=0.95, (1-confidence) is ratio of error norm to residual norm. Should be in range:
+#                                      0 < confidence < 1
+#     max_iter, int, default=100, maximum number of binary search iterations to check convergence
+#     tol, float, default=1E-3, tolerance for radius of convergence
+#     n_samples, int, default=100, number of randomly generated sample unit vectors at which to check error
+#     preprocess, Callable or None, default=None, if given, puts generated samples through preprocessor before checking
+#                                                 the error
+#
+#     Returns
+#     -------
+#     float, the radius of convergence value where, on average, ||e(z)|| == (1 - confidence) ||F(z)||
+#     """
+#     # Generate Jacobian (once)
+#     jac = jac_fun(z0).full()
+#     try:
+#         jac_inv = np.linalg.inv(jac)
+#     except np.linalg.LinAlgError:
+#         # Jacobian is not invertible -> no radius of convergence
+#         return 0.
+#
+#     res0 = res_fun(z0).full().ravel()
+#     convergent_error_fraction = 1. - confidence
+#
+#     # Generate the unit vectors for the samples
+#     sample_unit_vectors = orthonormal_sampler(n=len(z0), n_samples=n_samples, rng_seed=rng_seed)
+#
+#     if preprocess is None:
+#         def preprocess(_z, _dz):
+#             return _z + _dz
+#
+#     def _estimate_radius(_z):
+#         """Rhat = ||J^-1 (F(z) - F0)||"""
+#         return np.linalg.norm(jac_inv.dot(res_fun(_z).full().ravel() - res0))
+#
+#     def _mean_radius_error(_r):
+#         return np.sum(
+#             [_estimate_radius(preprocess(z0, _r * _sample)) for _sample in sample_unit_vectors]
+#         ) / n_samples - _r
+#         # for _idx_sample, _sample in enumerate(sample_unit_vectors):
+#         #     if _convergence_number(preprocess(z0 + _r * _sample)) > 0:
+#         #         # Move failed sample to front to speed up next check
+#         #         sample_unit_vectors.insert(0, sample_unit_vectors.pop(_idx_sample))
+#         #         return False
+#         # return True
+#
+#     # Save list of prior values
+#     # |E(Rhat) - R| == (1 - confidence)*R
+#     error = _mean_radius_error(r_upper) - convergent_error_fraction * r_upper
+#     if error <= 0:
+#         return r_upper  # Uppermost value is inside radius of convergence
+#
+#     r_lower = tol
+#     error = _mean_radius_error(r_lower) - convergent_error_fraction * r_lower
+#     if error > 0:
+#         return 0.  # Even at tolerance, outside radius of convergence
+#
+#     # Conduct binary search to determine where r stops converging
+#     r = (r_lower + r_upper) / 2
+#     for iteration in range(max_iter):
+#         # Update R value
+#         error = _mean_radius_error(r) - convergent_error_fraction * r
+#         if error > 0:
+#             # This value is outside the radius of convergence
+#             r_upper = r
+#         else:
+#             # This value is inside the radius of convergence
+#             r_lower = r
+#         r = (r_lower + r_upper) / 2
+#
+#         # Termination criteria
+#         if r_upper - r_lower < tol or abs(error) < tol*r:
+#             break
+#
+#     return r
 
 # -------------------------------------------------------------------------------------------------------------------- #
 # NUMERICAL EXAMPLES                                                                                                   #
@@ -339,13 +339,14 @@ for idx, num_col in enumerate(cols_try):
     etcol = tcol_hat - tcol
     etf = tf_hat - tf
 
-    # Determine radius of convergence numerically
     err_root_sol = np.dot(sol_root.fun, sol_root.fun)
     success = err_root_sol < 1E-3
-    if success:
-        rlin = determine_linearization_radius(jac_fun, res_fun, sol_root.x, preprocess=_preprocess_guess)
-    else:
-        rlin = 0.
+
+    # # Determine radius of convergence numerically
+    # if success:
+    #     rlin = determine_linearization_radius(jac_fun, res_fun, sol_root.x, preprocess=_preprocess_guess)
+    # else:
+    #     rlin = 0.
 
     sol_dicts.append({
         'n': num_col,
@@ -356,7 +357,7 @@ for idx, num_col in enumerate(cols_try):
         'etcol': np.append(etcol, etf),
         'ecol': np.append(ecol, ef),
         'success': success,
-        'rlin': rlin
+        # 'rlin': rlin
     })
 
 # # Experiment with radius of converged, TODO - remove
@@ -430,30 +431,31 @@ set_plot(cols_try[-1])
 
 # Radius of convergence plot ----------------------------------------------------------------------------------------- #
 err_lab = 'yf Err.' if fixed_final_time else 'tf Err.'
-rconv_vals = []
+# rconv_vals = []
 ncol_vals = []
 ef_vals = []
 for _sol_dict in sol_dicts:
-    rconv_vals.append(_sol_dict['rconv'])
+    # rconv_vals.append(_sol_dict['rconv'])
     ncol_vals.append(_sol_dict['n'])
     ef_vals.append(_sol_dict['ecol'][-1] if fixed_final_time else _sol_dict['etcol'][-1])
-rconv_vals = np.array(rconv_vals)
+# rconv_vals = np.array(rconv_vals)
 ncol_vals = np.array(ncol_vals)
 ef_vals = np.array(ef_vals)
 
 idces = np.argsort(ncol_vals)
-fig_col, axes_col = plt.subplots(nrows=2, sharex=True)
+fig_col, ax_ef = plt.subplots(nrows=2, sharex=True)
+# fig_col, axes_col = plt.subplots(nrows=2, sharex=True)
 
-ax_ef = axes_col[0]
+# ax_ef = axes_col[0]
 ax_ef.grid(zorder=-1)
 ax_ef.plot(ncol_vals[idces], ef_vals[idces], 'o')
 # ax_ef.set_xlabel('Num. Col. Pts.')
 ax_ef.set_ylabel(err_lab)
 
-ax_rconv = axes_col[1]
-ax_rconv.grid(zorder=-1)
-ax_rconv.plot(ncol_vals[idces], rconv_vals[idces], 'o')
-ax_rconv.set_xlabel('Num. Col. Pts.')
-ax_rconv.set_ylabel('Radius of Convergence')
-ax_rconv.set_xticks(np.unique(np.round(np.linspace(ncol_vals[0], ncol_vals[-1], 5))))
+# ax_rconv = axes_col[1]
+# ax_rconv.grid(zorder=-1)
+# ax_rconv.plot(ncol_vals[idces], rconv_vals[idces], 'o')
+# ax_rconv.set_xlabel('Num. Col. Pts.')
+# ax_rconv.set_ylabel('Radius of Convergence')
+# ax_rconv.set_xticks(np.unique(np.round(np.linspace(ncol_vals[0], ncol_vals[-1], 5))))
 fig_col.tight_layout()
