@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Callable
 import math
 
 import numpy as np
@@ -123,214 +123,104 @@ def orthonormal_sampler(n: int, n_samples: Optional[int] = None, rng_seed=None):
     return _samples[:n_samples]
 
 
-def full_newton_solver(
-        res_fun: ca.Function, jac_fun: ca.Function,
-        z: np.array, tol: float = 1E-3, max_iter_without_improvement=4, max_jev: int = 100,
-        stall_fraction: float = 0.95
+def determine_linearization_radius(
+        jac_fun: ca.Function, res_fun: ca.Function, z0: np.ndarray,
+        r_upper: float = 10., confidence: float = 0.95,
+        max_iter: int = 100, tol: float = 1E-3, n_samples: int = 100, preprocess: Optional[Callable] = None
 ):
     """
-
-    Parameters
-    ----------
-    res_fun, residual function
-    jac_fun, jacobian function
-    z, initial guess for root
-    tol, tolerance to break before maximum iterations are exceeded.
-    max_iter_without_improvement, int, default=4, maximum iteration without desired cost reduction before giving up.
-    max_jev, int, default=100, maximum iterations before failing.
-    stall_fraction, float, default=0.95, equal to 1 - required_accuracy. When cost/cost_old below this ratio, considered
-    an iteration without improvement.
-
-    Returns
-    -------
-    dict with fields:
-        'z': np.ndarray, root
-        'res': np.ndarray, residual, equal to res_fun(z)
-        'njev': int, number of jacobian evaluations and inversions performed
-        'success': bool, True if residual is below tolerance
-        'message': str, message associated with success
-    """
-    _z = z.copy().ravel()  # _z will be modified in-place -> make copy
-    res = res_fun(z).full().ravel()
-    cost_old = np.abs(res).max(initial=0.)
-    success = False
-    message = 'Failure: Exceeded maximum number of Jacobian evaluations.'
-    njev = 0
-    niter_without_improvement = 0
-    for njev in range(1, max_jev+1):
-        # Generate step
-        try:
-            lu = splu(jac_fun(z).sparse())
-        except RuntimeError:
-            message = 'Failure: Jacobian cannot be inverted.'
-            break
-
-        _z -= lu.solve(res)
-        res = res_fun(_z).full().ravel()
-        cost = np.abs(res).max(initial=0.)
-        if cost < tol:
-            success = True
-            message = 'Success: maximum residual is below tolerance.'
-            break
-        elif cost_old*stall_fraction < cost:
-            niter_without_improvement += 1
-            if niter_without_improvement == max_iter_without_improvement:
-                message = 'Failure: Exceeded maximum number of iterations without improvement!'
-                break
-        else:
-            # Reset iterations without improvment
-            niter_without_improvement = 0
-            cost_old = cost
-
-    return {'z': _z, 'res': res, 'njev': njev, 'success': success, 'message': message}
-
-
-def damped_newton_solver(
-        res_fun: ca.Function, jac_fun: ca.Function, z: np.array,
-        alpha_min: float = 1E-6, alpha_max: float = 1., acc_min: float = 0.75,
-        fac_decrease: float = 0.5, fac_increase: float = 8.,
-        max_jev: int = 100, max_fev: int = 100, tol: float = 1E-3,
-        max_jev_steps: int = 4
-):
-    z = z.reshape((-1, 1))
-    nfev = 0
-    njev = 0
-    jev_steps = 0
-    res = res_fun(z).full()
-    nfev += 1
-    cost = np.abs(res).max(initial=0.)
-    alpha = alpha_max
-    success = True
-    message = 'Success: maximum residual is below tolerance.'
-    recompute_jac = True
-
-    while cost > tol:
-        if recompute_jac:
-            # Compute step direction (Newton step)
-            if njev == max_jev:
-                success = False
-                message = 'Failure: exceeded maximum number of Jacobian evaluations.'
-                break
-
-            jac = jac_fun(z).sparse()
-            njev += 1
-            recompute_jac = False
-            try:
-                lu = splu(jac)
-            except RuntimeError:
-                success = False
-                message = 'Failure: Jacobian cannot be inverted.'
-                break
-            step = lu.solve(-res)
-            jev_steps = 1
-
-        # Evaluate damped step
-        z_new = z + alpha * step
-        if nfev == max_fev:
-            success = False
-            message = 'Failure: exceeded maximum number of residual evaluations.'
-            break
-        res_new = res_fun(z_new).full()
-        nfev += 1
-        cost_new = np.abs(res_new).max(initial=0.)
-
-        # Accuracy = (1 - cost_new/cost_old)/alpha < Acc_min                --> Fail. Equivalently:
-        #            (cost_old - cost_new)/alpha   < acc_min*cost_old
-        #             cost_old - cost_new          < alpha*acc_min*cost_old
-        #             cost_old*(1 - alpha*acc_min) < cost_new
-        if cost*(1 - alpha*acc_min) < cost_new:  # accuracy:
-            # Reject step
-            if jev_steps == 1:
-                # This step is a new Jacobian, decrease alpha
-                alpha *= fac_decrease
-                if alpha < alpha_min:
-                    success = False
-                    message = 'Failure: damping parameter below minimum value.'
-                    break
-            else:
-                # This step is a re-used Jacobian, re-calculate Jacobian
-                recompute_jac = True
-
-        else:
-            # Accept step
-            z = z_new
-            res = res_new
-            cost = cost_new
-
-            if alpha == alpha_max and jev_steps < max_jev_steps:
-                # Keep same Jac for up to "max_jev_steps" steps instead of recomputing inverse
-                jev_steps += 1
-                step = lu.solve(-res)
-            else:
-                alpha *= fac_increase
-                alpha = alpha_max if alpha > alpha_max else alpha
-                recompute_jac = True
-
-    return {'z': z, 'res': res, 'njev': njev, 'nfev': nfev, 'message': message, 'success': success}
-
-
-def determine_radius_of_convergence(
-        root_finding_problem, sol_converged, n_samples: Optional[int] = None,
-        r_upper: float = 100., rng_seed=None, max_iter: int = 1_000, tol: float = 1E-3,
-):
-    """
-    Determined the radius of convergence around the root z* via a binary search. The validity of a given radius is
+    Determined the radius of convergence around the root z* via a binary search. The radius is
     determined by:
         1. Generate co-varied points about the optimal solution at distance R away from optimal solution
-        2. If any fail, this is outside the radius of convergence
+        2. The perturbed step vs the predicted step is:
+                  z - z0   = R*dzhat ~= J^-1 (F(z) - F0)
+                ||z - z0|| = R       ~= ||J^-1 (F(z) - F0)|| = Rhat
+        3. The ``radius of convergence'' is defined as the location where:
+                |E(Rhat) - R| == (1 - confidence)*R
+           The expectation E(*) is calculated from the average  of random orthogonal samples
     NOTE: since a binary search is used, it is implicitly assumed that increasing R will lower the likelihood of
     convergence.
 
     Parameters
     ----------
-    root_finding_problem, Callable, function taking in the initial guess and outputting a boolean flag of success.
-    sol_converged, (n,) np.ndarray, root of the root-finding problem about which to find the radius of convergence.
-    n_samples, int, default=n, Number of perturb samples.
-    r_max, float, default=100.,
-    rng_seed, int or None, default=None, seed to be used in sampling perturbations to the guess vector
-    max_iter, int, default=1_000, maximum number of search steps to find radius of convergence
-    tol, float, default=1E-3, tolerance for binary search (break when upper/lower are within this value of each other)
+    jac_fun, ca.Function, function of z to calculate Jacobian
+    res_fun, ca.Function, function of z to calculate residual
+    z0, np.ndarray, value about which to find the radius of convergence
+    r_upper, float, default=10., maximum value checked for radius of convergence
+    confidence, float, default=0.95, (1-confidence) is ratio of error norm to residual norm. Should be in range:
+                                     0 < confidence < 1
+    max_iter, int, default=100, maximum number of binary search iterations to check convergence
+    tol, float, default=1E-3, tolerance for radius of convergence
+    n_samples, int, default=100, number of randomly generated sample unit vectors at which to check error
+    preprocess, Callable or None, default=None, if given, puts generated samples through preprocessor before checking
+                                                the error
 
     Returns
     -------
-    if _return_continuous, returns an interpolant of the fraction of successful results vs. radius of convergence.
-    Otherwise, returns radius of convergence as a float.
+    float, the radius of convergence value where, on average, ||e(z)|| == (1 - confidence) ||F(z)||
     """
-    # Generate the unit vectors for the samples
-    sample_unit_vectors = orthonormal_sampler(n=len(sol_converged), n_samples=n_samples, rng_seed=rng_seed)
+    # Generate Jacobian (once)
+    jac = jac_fun(z0).full()
+    try:
+        jac_inv = np.linalg.inv(jac)
+    except np.linalg.LinAlgError:
+        # Jacobian is not invertible -> no radius of convergence
+        return 0.
 
-    def _check_if_convergent(_r):
-        for _idx_sample, _sample in enumerate(sample_unit_vectors):
-            if not root_finding_problem(sol_converged + _r * _sample):
-                # Move failed sample to front to speed up next check
-                sample_unit_vectors.insert(0, sample_unit_vectors.pop(_idx_sample))
-                return False
-        return True
+    res0 = res_fun(z0).full().ravel()
+    convergent_error_fraction = 1. - confidence
+
+    # Generate the unit vectors for the samples
+    sample_unit_vectors = orthonormal_sampler(n=len(z0), n_samples=n_samples, rng_seed=rng_seed)
+
+    if preprocess is None:
+        def preprocess(_z, _dz):
+            return _z + _dz
+
+    def _estimate_radius(_z):
+        """Rhat = ||J^-1 (F(z) - F0)||"""
+        return np.linalg.norm(jac_inv.dot(res_fun(_z).full().ravel() - res0))
+
+    def _mean_radius_error(_r):
+        return np.sum(
+            [_estimate_radius(preprocess(z0, _r * _sample)) for _sample in sample_unit_vectors]
+        ) / n_samples - _r
+        # for _idx_sample, _sample in enumerate(sample_unit_vectors):
+        #     if _convergence_number(preprocess(z0 + _r * _sample)) > 0:
+        #         # Move failed sample to front to speed up next check
+        #         sample_unit_vectors.insert(0, sample_unit_vectors.pop(_idx_sample))
+        #         return False
+        # return True
 
     # Save list of prior values
-    r_upper_convergent = _check_if_convergent(r_upper)
-    if r_upper_convergent:
-        return r_upper
+    # |E(Rhat) - R| == (1 - confidence)*R
+    error = _mean_radius_error(r_upper)
+    if error > convergent_error_fraction * r_upper:
+        return r_upper  # Uppermost value is inside radius of convergence
+
+    r_lower = tol
+    error = _mean_radius_error(r_lower)
+    if error > convergent_error_fraction * r_lower:
+        return 0.  # Even at tolerance, outside radius of convergence
 
     # Conduct binary search to determine where r stops converging
-    # (It occurs at some value between 0 and r_upper)
-    # Since it is much faster to check failure (only one needs to fail rather than all needing to pass),
-    # the gain is biased toward r_upper by setting:
-    # r = 1/3 r_lower + 2/3 r_upper
-    r_lower = 0.
+    r = (r_lower + r_upper) / 2
     for iteration in range(max_iter):
-        r = (r_lower + r_upper*2)/3
-        if _check_if_convergent(r):
-            # This value is inside the radius of convergence
-            r_lower = r
-        else:
+        # Update R value
+        error = _mean_radius_error(r)
+        if error > convergent_error_fraction * r:
             # This value is outside the radius of convergence
             r_upper = r
+        else:
+            # This value is inside the radius of convergence
+            r_lower = r
+        r = (r_lower + r_upper) / 2
 
-        if abs(r_lower - r_upper) < tol:
+        # Termination criteria
+        if abs(r_lower - r_upper) < tol or abs(error) < tol*r:
             break
 
-    return (r_lower + r_upper)/2
+    return r
 
 # -------------------------------------------------------------------------------------------------------------------- #
 # NUMERICAL EXAMPLES                                                                                                   #
@@ -396,13 +286,7 @@ for idx, num_col in enumerate(cols_try):
         yf_sym = yf_fun(ycol_sym, y0, tf)
         res_sym = rcol_fun(ycol_sym, y0, tf)
         solution_fun = ca.Function('s', (z_sym,), (tf, yf_sym, ycol_sym))
-
-        def _preprocess_guess(_z):
-            pass
-
-        def _postprocess_guess(_z):
-            pass
-
+        _preprocess_guess = None
     else:
         # Root (free terminal time, fixed terminal state)
         if use_log_tf:
@@ -410,23 +294,21 @@ for idx, num_col in enumerate(cols_try):
             z_sym = ca.vcat((log_tf_sym, ycol_sym))
             tf_sym = np.exp(log_tf_sym)
 
-            def _preprocess_guess(_z):
+            def _preprocess_guess(_z0, _dz):
+                _z = _z0 + _dz
+                _z[0] = np.exp(_z0[0]) + _dz[0]  # Convert logt0 + dt to t0 + dt
                 np.maximum(_z[0], tf_min, out=_z[0:1])
                 _z[0] = np.log(_z[0], out=_z[0:1])
-
-            def _postprocess_guess(_z):
-                np.exp(_z[0], out=_z[0:1])
+                return _z
 
         else:
             tf_sym = ca.SX.sym('tf')
             z_sym = ca.vcat((tf_sym, ycol_sym))
 
-            def _preprocess_guess(_z):
-                if _z[0] < tf_min:
-                    _z[0] = tf_min
-
-            def _postprocess_guess(_z):
-                pass
+            def _preprocess_guess(_z0, _dz):
+                _z = _z0 + _dz
+                np.maximum(_z[0], tf_min, out=_z[0:1])
+                return _z
 
         z_true = np.concatenate(((tf,), ycol))
         yf_sym = yf_fun(ycol_sym, y0, tf_sym)
@@ -436,23 +318,20 @@ for idx, num_col in enumerate(cols_try):
     jac_sym = ca.jacobian(res_sym, z_sym)
     res_fun = ca.Function('r', (z_sym,), (res_sym,))
 
-    # def res_fun_wrapped(_z):
-    #     return res_fun(_z).full()[:, 0]
+    def res_fun_wrapped(_z):
+        return res_fun(_z).full()[:, 0]
 
     jac_fun = ca.Function('J', (z_sym,), (jac_sym,), ('z',), ('J',))
 
-    sol_root = full_newton_solver(res_fun=res_fun, jac_fun=jac_fun, z=z_true, tol=1E-4)
-    # sol_root = optimize.root(res_fun_wrapped, z_true, jac=jac_fun, method='hybr')
-    # tf_hat, yf_hat, ycol_hat = solution_fun(sol_root.x)
-    tf_hat, yf_hat, ycol_hat = solution_fun(sol_root['z'])
+    sol_root = optimize.root(res_fun_wrapped, z_true, jac=jac_fun, method='hybr')
+    tf_hat, yf_hat, ycol_hat = solution_fun(sol_root.x)
     tf_hat = float(tf_hat)  # Convert to non-CasADi type
     yf_hat = float(yf_hat)
-    ycol_hat = ycol_hat.full()[:, 0]
-    tcol_hat = tcol_fun(tf_hat).full()[:, 0]
+    ycol_hat = ycol_hat.full().ravel()
+    tcol_hat = tcol_fun(tf_hat).full().ravel()
 
     # Errors
-    root_error = sol_root['z'][:, 0] - z_true
-    # root_error = sol_root.x - z_true
+    root_error = sol_root.x - z_true
     norm_root_err = np.dot(root_error, root_error)**0.5
 
     ef = yf_hat - yf
@@ -461,36 +340,12 @@ for idx, num_col in enumerate(cols_try):
     etf = tf_hat - tf
 
     # Determine radius of convergence numerically
-    # err_root_ycol_sol = np.dot(sol_root.fun, sol_root.fun)
-    # success = err_root_ycol_sol < 1E-3
-    success = np.abs(sol_root['res']).max(initial=0.) < 1E-3
+    err_root_sol = np.dot(sol_root.fun, sol_root.fun)
+    success = err_root_sol < 1E-3
     if success:
-        err_root_ycol_sol = sol_root['res'].T.dot(sol_root['res'])
-        tolerance_for_near = 1E-3 + err_root_ycol_sol
-        _postprocess_guess(sol_root['z'])
-        # _postprocess_guess(sol_root.x)
-
-        def _rfp(_z0):
-            _preprocess_guess(_z0)
-            _sol = full_newton_solver(res_fun=res_fun, jac_fun=jac_fun, z=_z0, tol=1E-4)
-            _postprocess_guess(_sol['z'])
-            _err = _sol['z'] - sol_root['z']
-            # _sol = optimize.root(res_fun_wrapped, _z0, jac=jac_fun, method='hybr')
-            # _postprocess_guess(_sol.x)
-            # _err = _sol.x - sol_root.x
-            return _err.T.dot(_err) < tolerance_for_near
-
-        rconv = determine_radius_of_convergence(
-            _rfp, sol_root['z'][:, 0], r_upper=r_max, n_samples=50, rng_seed=rng_seed, tol=1E-2
-        )
-        # rconv = determine_radius_of_convergence(
-        #     _rfp, sol_root.x, r_max=r_max, n_samples=50, rng_seed=rng_seed, confidence=0.95
-        # )
-        if rconv == r_max:
-            # We hit numeric limit -> simply set to infinity
-            rconv = np.inf
+        rlin = determine_linearization_radius(jac_fun, res_fun, sol_root.x, preprocess=_preprocess_guess)
     else:
-        rconv = 0.
+        rlin = 0.
 
     sol_dicts.append({
         'n': num_col,
@@ -501,7 +356,7 @@ for idx, num_col in enumerate(cols_try):
         'etcol': np.append(etcol, etf),
         'ecol': np.append(ecol, ef),
         'success': success,
-        'rconv': rconv
+        'rlin': rlin
     })
 
 # # Experiment with radius of converged, TODO - remove
