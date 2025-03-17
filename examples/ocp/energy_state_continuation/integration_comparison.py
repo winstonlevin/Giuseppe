@@ -82,8 +82,69 @@ def generate_pseudospectral_residual(dynamic_fun: ca.Function, n: int, col_metho
     res_fun = ca.Function('rcol', (ycol, y0, tf), (ycol_dot - tf/2*dynamic_fun(ycol),), ('yCol', 'y0', 'tf'), ('rcol',))
     yf_fun = ca.Function('yf', (ycol, y0, tf), (yf,), ('yCol', 'y0', 'tf'), ('rcol',))
     tcol_fun = ca.Function('tcol', (tf,), ((col_points + 1)*tf/2,), ('tf',), ('tcol',))
+    ycol_fun = ca.Function('ycol', (y0, ycol, tf), (ycol,), ('y0', 'ycol', 'tf'), ('ycol',))
 
-    return res_fun, yf_fun, tcol_fun
+    return res_fun, yf_fun, tcol_fun, ycol_fun
+
+
+def generate_collocation_derivative_residual(dynamic_fun: ca.Function, n: int, col_method: str = 'lgl'):
+    """
+    Generates residual associated with n collocation points, returning a Tuple of:
+    (residual_function, terminal_state_function)
+    The inputs to the residual function are the n collocation derivatives and final time.
+    """
+    y0 = ca.SX.sym('y0')
+    ydotcol = ca.SX.sym('ydot', n)  # n collocation points
+    tf = ca.SX.sym('tf')
+
+    # Generate nondimensional collocation points
+    _collocation_method = col_method.lower()
+    if _collocation_method == 'lgl':
+        # Legendre-Gauss-Lobatto Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lgl(n)
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points)
+        ycol = y0 + tf/2*(int_mat @ ydotcol)
+        yf = ycol[-1]
+    elif _collocation_method == 'lg':
+        # Legendre-Gauss Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lg(n+1)
+        col_points = col_points[1:]
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, -1.))
+        ycol = y0 + tf/2*(int_mat[:-1, :] @ ydotcol)
+        yf = y0 + tf/2*((int_mat[-1, :] @ ydotcol))
+    elif _collocation_method == 'lgr':
+        # Legendre-Gauss-Radau Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, -1.))
+        ycol = y0 + int_mat[:-1, :] @ ydotcol
+        yf = y0 + tf/2*((int_mat[-1, :] @ ydotcol))
+    elif _collocation_method == 'flgr':
+        col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
+        col_points = -col_points[::-1]
+        # col_weights = col_weights[::-1]
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points)
+        ycol = y0 + tf/2*(int_mat @ ydotcol)
+        yf = ycol[-1]
+    elif _collocation_method == 'cg':
+        col_points, _ = giuseppe.utils.pseudospectral.cg(n+2)
+        col_points = col_points[1:-1]
+        # col_weights = col_weights[1:-1]
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, -1.))
+        ycol = y0 + tf/2*(int_mat[:-1, :] @ ydotcol)
+        yf = y0 + tf/2*(int_mat[-1, :] @ ydotcol)
+    else:
+        raise ValueError(
+            f'col_method="{col_method}" is not implemented! Valid options are:\n'
+            f'\t["lgl", "lg", "lgr", "flgr", "cg"]'
+        )
+
+    # Residual, final value, and collocation time functions
+    res_fun = ca.Function('rcol', (ydotcol, y0, tf), (ydotcol - dynamic_fun(ycol),), ('ydotCol', 'y0', 'tf'), ('rcol',))
+    yf_fun = ca.Function('yf', (ydotcol, y0, tf), (yf,), ('ydotCol', 'y0', 'tf'), ('rcol',))
+    tcol_fun = ca.Function('tcol', (tf,), ((col_points + 1)*tf/2,), ('tf',), ('tcol',))
+    ycol_fun = ca.Function('ycol', (y0, ydotcol, tf), (ycol,), ('y0', 'ydotcol', 'tf'), ('ycol',))
+
+    return res_fun, yf_fun, tcol_fun, ycol_fun
 
 
 def orthonormal_sampler(n: int, n_samples: Optional[int] = None, rng_seed=None):
@@ -123,105 +184,6 @@ def orthonormal_sampler(n: int, n_samples: Optional[int] = None, rng_seed=None):
     return _samples[:n_samples]
 
 
-# def determine_linearization_radius(
-#         jac_fun: ca.Function, res_fun: ca.Function, z0: np.ndarray,
-#         r_upper: float = 10., confidence: float = 0.95,
-#         max_iter: int = 100, tol: float = 1E-3, n_samples: int = 100, preprocess: Optional[Callable] = None
-# ):
-#     """
-#     Determined the radius of convergence around the root z* via a binary search. The radius is
-#     determined by:
-#         1. Generate co-varied points about the optimal solution at distance R away from optimal solution
-#         2. The perturbed step vs the predicted step is:
-#                   z - z0   = R*dzhat ~= J^-1 (F(z) - F0)
-#                 ||z - z0|| = R       ~= ||J^-1 (F(z) - F0)|| = Rhat
-#         3. The ``radius of convergence'' is defined as the location where:
-#                 |E(Rhat) - R| == (1 - confidence)*R
-#            The expectation E(*) is calculated from the average  of random orthogonal samples
-#     NOTE: since a binary search is used, it is implicitly assumed that increasing R will lower the likelihood of
-#     convergence.
-#
-#     Parameters
-#     ----------
-#     jac_fun, ca.Function, function of z to calculate Jacobian
-#     res_fun, ca.Function, function of z to calculate residual
-#     z0, np.ndarray, value about which to find the radius of convergence
-#     r_upper, float, default=10., maximum value checked for radius of convergence
-#     confidence, float, default=0.95, (1-confidence) is ratio of error norm to residual norm. Should be in range:
-#                                      0 < confidence < 1
-#     max_iter, int, default=100, maximum number of binary search iterations to check convergence
-#     tol, float, default=1E-3, tolerance for radius of convergence
-#     n_samples, int, default=100, number of randomly generated sample unit vectors at which to check error
-#     preprocess, Callable or None, default=None, if given, puts generated samples through preprocessor before checking
-#                                                 the error
-#
-#     Returns
-#     -------
-#     float, the radius of convergence value where, on average, ||e(z)|| == (1 - confidence) ||F(z)||
-#     """
-#     # Generate Jacobian (once)
-#     jac = jac_fun(z0).full()
-#     try:
-#         jac_inv = np.linalg.inv(jac)
-#     except np.linalg.LinAlgError:
-#         # Jacobian is not invertible -> no radius of convergence
-#         return 0.
-#
-#     res0 = res_fun(z0).full().ravel()
-#     convergent_error_fraction = 1. - confidence
-#
-#     # Generate the unit vectors for the samples
-#     sample_unit_vectors = orthonormal_sampler(n=len(z0), n_samples=n_samples, rng_seed=rng_seed)
-#
-#     if preprocess is None:
-#         def preprocess(_z, _dz):
-#             return _z + _dz
-#
-#     def _estimate_radius(_z):
-#         """Rhat = ||J^-1 (F(z) - F0)||"""
-#         return np.linalg.norm(jac_inv.dot(res_fun(_z).full().ravel() - res0))
-#
-#     def _mean_radius_error(_r):
-#         return np.sum(
-#             [_estimate_radius(preprocess(z0, _r * _sample)) for _sample in sample_unit_vectors]
-#         ) / n_samples - _r
-#         # for _idx_sample, _sample in enumerate(sample_unit_vectors):
-#         #     if _convergence_number(preprocess(z0 + _r * _sample)) > 0:
-#         #         # Move failed sample to front to speed up next check
-#         #         sample_unit_vectors.insert(0, sample_unit_vectors.pop(_idx_sample))
-#         #         return False
-#         # return True
-#
-#     # Save list of prior values
-#     # |E(Rhat) - R| == (1 - confidence)*R
-#     error = _mean_radius_error(r_upper) - convergent_error_fraction * r_upper
-#     if error <= 0:
-#         return r_upper  # Uppermost value is inside radius of convergence
-#
-#     r_lower = tol
-#     error = _mean_radius_error(r_lower) - convergent_error_fraction * r_lower
-#     if error > 0:
-#         return 0.  # Even at tolerance, outside radius of convergence
-#
-#     # Conduct binary search to determine where r stops converging
-#     r = (r_lower + r_upper) / 2
-#     for iteration in range(max_iter):
-#         # Update R value
-#         error = _mean_radius_error(r) - convergent_error_fraction * r
-#         if error > 0:
-#             # This value is outside the radius of convergence
-#             r_upper = r
-#         else:
-#             # This value is inside the radius of convergence
-#             r_lower = r
-#         r = (r_lower + r_upper) / 2
-#
-#         # Termination criteria
-#         if r_upper - r_lower < tol or abs(error) < tol*r:
-#             break
-#
-#     return r
-
 # -------------------------------------------------------------------------------------------------------------------- #
 # NUMERICAL EXAMPLES                                                                                                   #
 # -------------------------------------------------------------------------------------------------------------------- #
@@ -249,9 +211,9 @@ else:
 
 # Integration scheme ------------------------------------------------------------------------------------------------- #
 cols_try = np.arange(2, 20+1, 1)
-collocation_method = 'lg'
-integration_scheme = 'pseudospectral'
-fixed_final_time = False  # True -> estimate y(tf). False -> estimate tf(yf)
+collocation_method = 'lgl'
+integration_scheme = 'collocation'
+fixed_final_time = True  # True -> estimate y(tf). False -> estimate tf(yf)
 use_log_tf = True  # True -> replace tf with log(tf) in unknown vector
 rng_seed = 10
 
@@ -260,6 +222,9 @@ if integration_scheme == 'pseudospectral':
         return generate_pseudospectral_residual(
             equations_of_motion, n=_num_col, col_method=collocation_method
         )
+elif integration_scheme == 'collocation':
+    def generator(_num_col):
+        return generate_collocation_derivative_residual(equations_of_motion, n=_num_col, col_method=collocation_method)
 else:
     raise ValueError(
         f'integration_scheme="{function_type}" is not implemented! Valid options are:\n'
@@ -274,46 +239,36 @@ for idx, num_col in enumerate(cols_try):
     cols_to_dict[num_col] = idx  # Get dict value (to get sol idx from number of collocation points)
 
     # True value
-    rcol_fun, yf_fun, tcol_fun = generator(num_col)
+    rcol_fun, yf_fun, tcol_fun, ycol_fun = generator(num_col)
     tcol = tcol_fun(tf).full()[:, 0]
     ycol = true_state_equation(tcol).full()[:, 0]
+    ydotcol = equations_of_motion(ycol).full()[:, 0]
     ycol_sym = ca.SX.sym('ycol', num_col)
 
     if fixed_final_time:
         # Root (fixed terminal time)
         z_sym = ycol_sym
-        z_true = ycol
+        if integration_scheme == 'collocation':
+            z_true = ydotcol
+        else:
+            z_true = ycol
         yf_sym = yf_fun(ycol_sym, y0, tf)
         res_sym = rcol_fun(ycol_sym, y0, tf)
-        solution_fun = ca.Function('s', (z_sym,), (tf, yf_sym, ycol_sym))
-        _preprocess_guess = None
+        solution_fun = ca.Function('s', (z_sym,), (tf, yf_sym, ycol_fun(y0, ycol_sym, tf)))
     else:
         # Root (free terminal time, fixed terminal state)
         if use_log_tf:
             log_tf_sym = ca.SX.sym('log_tf')
             z_sym = ca.vcat((log_tf_sym, ycol_sym))
             tf_sym = np.exp(log_tf_sym)
-
-            def _preprocess_guess(_z0, _dz):
-                _z = _z0 + _dz
-                _z[0] = np.exp(_z0[0]) + _dz[0]  # Convert logt0 + dt to t0 + dt
-                np.maximum(_z[0], tf_min, out=_z[0:1])
-                _z[0] = np.log(_z[0], out=_z[0:1])
-                return _z
-
         else:
             tf_sym = ca.SX.sym('tf')
             z_sym = ca.vcat((tf_sym, ycol_sym))
 
-            def _preprocess_guess(_z0, _dz):
-                _z = _z0 + _dz
-                np.maximum(_z[0], tf_min, out=_z[0:1])
-                return _z
-
         z_true = np.concatenate(((tf,), ycol))
         yf_sym = yf_fun(ycol_sym, y0, tf_sym)
         res_sym = ca.vcat((yf_sym - yf, rcol_fun(ycol_sym, y0, tf_sym)))
-        solution_fun = ca.Function('s', (z_sym,), (tf_sym, yf_sym, ycol_sym))
+        solution_fun = ca.Function('s', (z_sym,), (tf_sym, yf_sym, ycol_fun(y0, ycol_sym, tf_sym)))
 
     jac_sym = ca.jacobian(res_sym, z_sym)
     res_fun = ca.Function('r', (z_sym,), (res_sym,))
@@ -342,12 +297,6 @@ for idx, num_col in enumerate(cols_try):
     err_root_sol = np.dot(sol_root.fun, sol_root.fun)
     success = err_root_sol < 1E-3
 
-    # # Determine radius of convergence numerically
-    # if success:
-    #     rlin = determine_linearization_radius(jac_fun, res_fun, sol_root.x, preprocess=_preprocess_guess)
-    # else:
-    #     rlin = 0.
-
     sol_dicts.append({
         'n': num_col,
         'tcol': np.append(tcol, tf),
@@ -357,28 +306,7 @@ for idx, num_col in enumerate(cols_try):
         'etcol': np.append(etcol, etf),
         'ecol': np.append(ecol, ef),
         'success': success,
-        # 'rlin': rlin
     })
-
-# # Experiment with radius of converged, TODO - remove
-# tolerance_for_near = 1E-3 + np.dot(ycol_sol.fun, ycol_sol.fun)
-#
-#
-# def _rfp(_z0):
-#     _sol = optimize.root(lambda _ycol: res_fun(_ycol, y0, tf).full()[:, 0], _z0, jac=jac_fun, method='hybr')
-#     _err = _sol.x - ycol_sol.x
-#     return np.dot(_err, _err) < tolerance_for_near
-#
-#
-# interp = determine_radius_of_convergence(_rfp, ycol_sol.x, return_continuous=True, r_max=1_000)
-#
-# fig_rcov, ax_rcov = plt.subplots()
-# ax_rcov.grid(zorder=-1)
-# r_vals = np.linspace(interp.x[0], interp.x[-1], 1000)
-# ax_rcov.plot(r_vals, 100*interp(r_vals))
-# ax_rcov.plot(interp.x, 100*interp(interp.x), 'o')
-# ax_rcov.set_xlabel('r')
-# fig_rcov.tight_layout()
 
 # -------------------------------------------------------------------------------------------------------------------- #
 # PLOTTING                                                                                                             #
@@ -431,31 +359,21 @@ set_plot(cols_try[-1])
 
 # Radius of convergence plot ----------------------------------------------------------------------------------------- #
 err_lab = 'yf Err.' if fixed_final_time else 'tf Err.'
-# rconv_vals = []
 ncol_vals = []
 ef_vals = []
 for _sol_dict in sol_dicts:
-    # rconv_vals.append(_sol_dict['rconv'])
     ncol_vals.append(_sol_dict['n'])
     ef_vals.append(_sol_dict['ecol'][-1] if fixed_final_time else _sol_dict['etcol'][-1])
-# rconv_vals = np.array(rconv_vals)
+
 ncol_vals = np.array(ncol_vals)
 ef_vals = np.array(ef_vals)
 
 idces = np.argsort(ncol_vals)
-fig_col, ax_ef = plt.subplots(nrows=2, sharex=True)
-# fig_col, axes_col = plt.subplots(nrows=2, sharex=True)
-
-# ax_ef = axes_col[0]
+fig_col, ax_ef = plt.subplots()
 ax_ef.grid(zorder=-1)
 ax_ef.plot(ncol_vals[idces], ef_vals[idces], 'o')
-# ax_ef.set_xlabel('Num. Col. Pts.')
+ax_ef.set_xlabel('Num. Col. Pts.')
+ax_ef.set_xticks(np.unique(np.round(np.linspace(ncol_vals[0], ncol_vals[-1], 10)).astype('int')))
 ax_ef.set_ylabel(err_lab)
 
-# ax_rconv = axes_col[1]
-# ax_rconv.grid(zorder=-1)
-# ax_rconv.plot(ncol_vals[idces], rconv_vals[idces], 'o')
-# ax_rconv.set_xlabel('Num. Col. Pts.')
-# ax_rconv.set_ylabel('Radius of Convergence')
-# ax_rconv.set_xticks(np.unique(np.round(np.linspace(ncol_vals[0], ncol_vals[-1], 5))))
 fig_col.tight_layout()
