@@ -161,7 +161,7 @@ def generate_collocation_derivative_residual(dynamic_fun: ca.Function, n: int, c
 
 def generate_simpson_residual(dynamic_fun: ca.Function, n: int, col_method: str = 'lgl'):
     """
-    Implicitly integrate between start/end point using the Simpson scheme
+    Implicitly integrate between mesh points using the Simpson scheme
     """
     y0 = ca.SX.sym('y0')
     ycol = ca.SX.sym('ycol', n)
@@ -202,6 +202,123 @@ def generate_simpson_residual(dynamic_fun: ca.Function, n: int, col_method: str 
     y_middle = (yvals[:-1] + yvals[1:])/2 + dt/8 * (fvals[:-1] - fvals[1:])
     f_middle = dynamic_fun(y_middle)
     col_res = (yvals[1:] - yvals[:-1]) - dt/6*(fvals[:-1] + 4*f_middle + fvals[1:])
+    yf = yvals[-1]
+
+    # Residual, final value, and collocation time functions
+    res_fun = ca.Function('rcol', (ycol, y0, tf), (col_res,), ('yCol', 'y0', 'tf'), ('rcol',))
+    yf_fun = ca.Function('yf', (ycol, y0, tf), (yf,), ('yCol', 'y0', 'tf'), ('rcol',))
+    tcol_fun = ca.Function('tcol', (tf,), ((col_points[1:] + 1)*tf/2,), ('tf',), ('tcol',))
+    ycol_fun = ca.Function('ycol', (y0, ycol, tf), (ycol,), ('y0', 'ycol', 'tf'), ('ycol',))
+
+    return res_fun, yf_fun, tcol_fun, ycol_fun
+
+# ROW Coefficients
+gam_row0 = 0.572816062482135
+alpha_row = np.zeros(shape=(6, 6), dtype=float)
+alpha_row[1, 0] = 0.52
+alpha_row[2, 0] = 0.2851168665349716
+alpha_row[2, 1] = 0.6248831334650284
+alpha_row[3, 0] = 1.04668145485072
+alpha_row[3, 1] = -1.127221164631929
+alpha_row[3, 2] = 0.3910371962111624
+alpha_row[4, 0] = 0.08451547656533995
+alpha_row[4, 1] = 1.14
+alpha_row[4, 2] = -0.06668002390497316
+alpha_row[4, 3] = -0.1578354526603668
+alpha_row[5, 0] = 0.2419543570166118
+alpha_row[5, 1] = 1.202773495063071
+alpha_row[5, 2] = -0.6377178468105325
+alpha_row[5, 3] = -0.3798260677512852
+alpha_row[5, 4] = 0.572816062482135
+
+b_row = np.array((
+    0.2419543570166118,
+    1.202773495063071,
+    -0.6377178468105325,
+    -0.3798260677512852,
+    0,
+    0.572816062482135
+))
+
+gam_row = np.zeros(shape=(6, 6), dtype=float)
+gam_row[1, 0] = -0.52
+gam_row[2, 0] = -1.034772479328808
+gam_row[2, 1] = 0.6501423878169246
+gam_row[3, 0] = 0.2625385974420247
+gam_row[3, 1] = 0.2922670258511625
+gam_row[3, 2] = -0.9114397095544884
+gam_row[4, 0] = 0.1574388804512719
+gam_row[4, 1] = 0.06277349506307095
+gam_row[4, 2] = -0.5710378229055593
+gam_row[4, 3] = -0.2219906150909184
+gam_row[5, 0] = 0
+gam_row[5, 1] = 0
+gam_row[5, 2] = 0
+gam_row[5, 3] = 0
+gam_row[5, 4] = -0.572816062482135
+
+e_row = np.zeros(shape=(6,), dtype=float)
+e_row[4] = -0.572816062482135
+e_row[5] = 0.572816062482135
+
+m_row = len(e_row)
+
+
+def generate_rosenbrock_residual(dynamic_fun: ca.Function, n: int, col_method: str = 'lgl'):
+    """
+    Implicitly integrate between mesh points using single-step Rosenbrock integration
+    (Method used by Fabien's multiple shooting method)
+    """
+    y0 = ca.SX.sym('y0')
+    ycol = ca.SX.sym('ycol', n)
+    yvals = ca.vcat((y0, ycol))
+    tf = ca.SX.sym('tf')
+
+    # Generate nondimensional fixed mesh
+    _collocation_method = col_method.lower()
+    if _collocation_method == 'lgl':
+        # Legendre-Gauss-Lobatto Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lgl(n + 1)
+    elif _collocation_method == 'lg':
+        # Legendre-Gauss Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lg(n)
+        col_points = np.append(col_points, 1.)
+    elif _collocation_method == 'lgr':
+        # Legendre-Gauss-Radau Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
+        col_points = np.append(col_points, 1.)
+    elif _collocation_method == 'flgr':
+        col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
+        col_points = np.concatenate(((-1.,), -col_points[::-1]))
+    elif _collocation_method == 'cg':
+        col_points, _ = giuseppe.utils.pseudospectral.cg(n + 1)
+    elif _collocation_method == 'unif':
+        col_points = np.linspace(-1., 1., n+1)
+    else:
+        raise ValueError(
+            f'col_method="{col_method}" is not implemented! Valid options are:\n'
+            f'\t["lgl", "lg", "lgr", "flgr", "cg", "unif"]'
+        )
+
+    # Convert to changes in time
+    dt = np.diff(col_points) * tf/2
+
+    col_res = []
+    f = dynamic_fun(yvals)
+    dfdy = ca.vcat([ca.jacobian(_f, _y) for _f, _y in zip(ca.vertsplit(f), ca.vertsplit(yvals))])
+    k_vals = ca.SX.zeros(m_row)
+    for (y0i, dfdy0i, yfi, dti) in zip(
+            ca.vertsplit(yvals[:-1]), ca.vertsplit(dfdy[:-1]), ca.vertsplit(yvals[1:]), ca.vertsplit(dt)
+    ):
+        jac = 1. - gam_row0 * dti * dfdy0i
+        for stage in range(m_row):
+            yi = y0i + dti * ca.dot(alpha_row[stage, :stage], k_vals[:stage])
+            jac_k = dynamic_fun(yi) + dti * dfdy0i * ca.dot(gam_row[stage, :stage], k_vals[:stage])
+            k_vals[stage] = jac_k / jac
+        col_res.append(yfi - y0i - dti * ca.dot(b_row, k_vals))
+    col_res = ca.vcat(col_res)
+
+    # Last mesh point is final value
     yf = yvals[-1]
 
     # Residual, final value, and collocation time functions
@@ -280,7 +397,8 @@ cols_try = np.arange(2, 15+1, 1)
 collocation_method = 'unif'
 # integration_scheme = 'pseudospectral'
 # integration_scheme = 'collocation'
-integration_scheme = 'simpson'
+# integration_scheme = 'simpson'
+integration_scheme = 'rosenbrock'
 fixed_final_time = True  # True -> estimate y(tf). False -> estimate tf(yf)
 use_log_tf = True  # True -> replace tf with log(tf) in unknown vector
 rng_seed = 10
@@ -299,10 +417,14 @@ elif integration_scheme == 'simpson':
     def generator(_num_col):
         return generate_simpson_residual(equations_of_motion, n=_num_col, col_method=collocation_method)
     method_str = 'Simpson (' + collocation_method.upper() + ')'
+elif integration_scheme == 'rosenbrock':
+    def generator(_num_col):
+        return generate_rosenbrock_residual(equations_of_motion, n=_num_col, col_method=collocation_method)
+    method_str = 'Rosenbrock (' + collocation_method.upper() + ')'
 else:
     raise ValueError(
         f'integration_scheme="{function_type}" is not implemented! Valid options are:\n'
-        f'["pseudospectral"]'
+        f'["pseudospectral", "collocation", "simpson", "rosenbrock"]'
     )
 
 sol_dicts: list[dict] = []
