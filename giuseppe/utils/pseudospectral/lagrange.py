@@ -7,7 +7,10 @@ This script is borrowed from Dymos, which is licensed under:
 Multidisciplinary Systems," Journal of Open Source Software, 6(59), 2809 (2021).
 DOI: https://doi.org/10.21105/joss.02809.
 """
+from typing import Optional
+
 import numpy as np
+# import sympy
 
 
 def lagrange_matrices(x_disc, x_interp, compute_interp_matrix=True, compute_diff_matrix=True):
@@ -79,3 +82,72 @@ def lagrange_matrices(x_disc, x_interp, compute_interp_matrix=True, compute_diff
         Di = None
 
     return Li, Di
+
+
+# -------------------------------------------------------------------------------------------------------------------- #
+# Lagrange Integration Matrix                                                                                          #
+# -------------------------------------------------------------------------------------------------------------------- #
+x_sym = sympy.Symbol('tau')
+
+
+def integration_matrix(x_disc: np.ndarray, x_interp: Optional[np.ndarray] = None):
+    """
+    A simple brute-force implementation of Lagrange integration matrices defined by x_disc, interpolated at x_interp
+    """
+    if x_interp is None:
+        x_interp = x_disc
+
+    n_in = x_disc.shape[0]
+    n_out = x_interp.shape[0]
+
+    # Lagrange polynomials, in power basis form
+    denominators = x_disc[:, None] - x_disc[None, :]
+    lagrange_polynomials = []
+    idces = np.arange(0, n_in, 1)
+    for idx in idces:
+        idces_remaining = np.delete(idces, idx)
+        lagrange_polynomials.append(np.polynomial.Polynomial.fromroots(x_disc[idces_remaining]))
+        lagrange_polynomials[-1] /= np.prod(denominators[idx, idces_remaining])
+
+    # The integration matrix is defined as:
+    # Aij = int(Lj, -1, taui)
+    # [See Eq. 66 in https://doi.org/10.1016/j.automatica.2010.06.048]
+    int_mat = np.empty(shape=(n_out, n_in))
+    for jdx, poly in enumerate(lagrange_polynomials):
+        poly_int = poly.integ()
+        int_mat[:, jdx] = poly_int(x_interp) - poly_int(-1.)
+    int_mat[np.abs(int_mat) < 1E-12] = 0.  # Set near-zero values to exactly zero
+
+    return int_mat
+
+
+# def integration_matrix_sympy(x_disc: np.ndarray, x_interp: Optional[np.ndarray] = None):
+#     """
+#     A simple brute-force implementation of Lagrange integration matrices defined by x_disc, interpolated at x_interp
+#     """
+#     if x_interp is None:
+#         x_interp = x_disc
+#
+#     n_in = x_disc.shape[0]
+#     n_out = x_interp.shape[0]
+#
+#     # Generate Lagrange polynomials
+#     lagrange_polys = sympy.Matrix.zeros(n_in, 1)
+#     numerators = x_sym - x_disc
+#     denominators = x_disc[:, None] - x_disc[None, :]
+#     idces = np.arange(0, n_in, 1)
+#     for idx in idces:
+#         idces_remaining = np.delete(idces, idx)
+#         lagrange_polys[idx, 0] = sympy.prod(numerators[idces_remaining] / denominators[idx, idces_remaining])
+#
+#     # The integration matrix is defined as:
+#     # Aij = int(Lj, -1, taui)
+#     # [See Eq. 66 in https://doi.org/10.1016/j.automatica.2010.06.048]
+#     lagrange_poly_int = sympy.integrate(lagrange_polys, x_sym)
+#     lagrange_poly_int -= lagrange_poly_int.subs(x_sym, -1)  # Initial value is tau=-1
+#     int_mat = np.empty(shape=(n_out, n_in))
+#     for idx, xi in enumerate(x_interp):
+#         int_mat[idx:idx+1, :] = lagrange_poly_int.subs(x_sym, xi).T
+#     int_mat[np.abs(int_mat) < 1E-12] = 0.  # Set near-zero values to exactly zero
+#
+#     return int_mat
