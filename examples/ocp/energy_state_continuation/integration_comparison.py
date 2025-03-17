@@ -72,10 +72,19 @@ def generate_pseudospectral_residual(dynamic_fun: ca.Function, n: int, col_metho
         yf = ca.dot(np.dot(col_weights, diff_mat), ca.vcat((y0, ycol)))
         ycol_dot = diff_mat[1:, :] @ ca.vcat((y0, ycol))
         col_points = col_points[1:]
+    elif _collocation_method == 'unif':
+        col_points = np.linspace(-1., 1., n+1)
+        col_weights = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.ones(shape=(1,))).ravel()
+        _, diff_mat = giuseppe.utils.pseudospectral.lagrange_matrices(
+            col_points, col_points, compute_interp_matrix=False, compute_diff_matrix=True
+        )
+        yf = y0 + ca.dot(np.dot(col_weights, diff_mat), y_vals)
+        ycol_dot = diff_mat[1:, :] @ y_vals
+        col_points = col_points[1:]
     else:
         raise ValueError(
             f'col_method="{col_method}" is not implemented! Valid options are:\n'
-            f'\t["lgl", "lg", "lgr", "flgr", "cg"]'
+            f'\t["lgl", "lg", "lgr", "flgr", "cg", "unif"]'
         )
 
     # Residual, final value, and collocation time functions
@@ -121,21 +130,24 @@ def generate_collocation_derivative_residual(dynamic_fun: ca.Function, n: int, c
     elif _collocation_method == 'flgr':
         col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
         col_points = -col_points[::-1]
-        # col_weights = col_weights[::-1]
         int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points)
         ycol = y0 + tf/2*(int_mat @ ydotcol)
         yf = ycol[-1]
     elif _collocation_method == 'cg':
         col_points, _ = giuseppe.utils.pseudospectral.cg(n+2)
         col_points = col_points[1:-1]
-        # col_weights = col_weights[1:-1]
         int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, 1.))
         ycol = y0 + tf/2*(int_mat[:-1, :] @ ydotcol)
         yf = y0 + tf/2*(int_mat[-1:, :] @ ydotcol)
+    elif _collocation_method == 'unif':
+        col_points = np.linspace(-1., 1., n)
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points)
+        ycol = y0 + tf/2*(int_mat @ ydotcol)
+        yf = ycol[-1]
     else:
         raise ValueError(
             f'col_method="{col_method}" is not implemented! Valid options are:\n'
-            f'\t["lgl", "lg", "lgr", "flgr", "cg"]'
+            f'\t["lgl", "lg", "lgr", "flgr", "cg", "unif"]'
         )
 
     # Residual, final value, and collocation time functions
@@ -143,6 +155,60 @@ def generate_collocation_derivative_residual(dynamic_fun: ca.Function, n: int, c
     yf_fun = ca.Function('yf', (ydotcol, y0, tf), (yf,), ('ydotCol', 'y0', 'tf'), ('rcol',))
     tcol_fun = ca.Function('tcol', (tf,), ((col_points + 1)*tf/2,), ('tf',), ('tcol',))
     ycol_fun = ca.Function('ycol', (y0, ydotcol, tf), (ycol,), ('y0', 'ydotcol', 'tf'), ('ycol',))
+
+    return res_fun, yf_fun, tcol_fun, ycol_fun
+
+
+def generate_simpson_residual(dynamic_fun: ca.Function, n: int, col_method: str = 'lgl'):
+    """
+    Implicitly integrate between start/end point using the Simpson scheme
+    """
+    y0 = ca.SX.sym('y0')
+    ycol = ca.SX.sym('ycol', n)
+    yvals = ca.vcat((y0, ycol))
+    tf = ca.SX.sym('tf')
+
+    # Generate nondimensional fixed mesh
+    _collocation_method = col_method.lower()
+    if _collocation_method == 'lgl':
+        # Legendre-Gauss-Lobatto Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lgl(n + 1)
+    elif _collocation_method == 'lg':
+        # Legendre-Gauss Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lg(n)
+        col_points = np.append(col_points, 1.)
+    elif _collocation_method == 'lgr':
+        # Legendre-Gauss-Radau Quadrature
+        col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
+        col_points = np.append(col_points, 1.)
+    elif _collocation_method == 'flgr':
+        col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
+        col_points = np.concatenate(((-1.,), -col_points[::-1]))
+    elif _collocation_method == 'cg':
+        col_points, _ = giuseppe.utils.pseudospectral.cg(n + 1)
+    elif _collocation_method == 'unif':
+        col_points = np.linspace(-1., 1., n+1)
+    else:
+        raise ValueError(
+            f'col_method="{col_method}" is not implemented! Valid options are:\n'
+            f'\t["lgl", "lg", "lgr", "flgr", "cg", "unif"]'
+        )
+
+    # Convert to changes in time
+    dt = np.diff(col_points) * tf/2
+
+    # Generate "middle" point
+    fvals = dynamic_fun(yvals)
+    y_middle = (yvals[:-1] + yvals[1:])/2 + dt/8 * (fvals[:-1] - fvals[1:])
+    f_middle = dynamic_fun(y_middle)
+    col_res = (yvals[1:] - yvals[:-1]) - dt/6*(fvals[:-1] + 4*f_middle + fvals[1:])
+    yf = yvals[-1]
+
+    # Residual, final value, and collocation time functions
+    res_fun = ca.Function('rcol', (ycol, y0, tf), (col_res,), ('yCol', 'y0', 'tf'), ('rcol',))
+    yf_fun = ca.Function('yf', (ycol, y0, tf), (yf,), ('yCol', 'y0', 'tf'), ('rcol',))
+    tcol_fun = ca.Function('tcol', (tf,), ((col_points[1:] + 1)*tf/2,), ('tf',), ('tcol',))
+    ycol_fun = ca.Function('ycol', (y0, ycol, tf), (ycol,), ('y0', 'ycol', 'tf'), ('ycol',))
 
     return res_fun, yf_fun, tcol_fun, ycol_fun
 
@@ -210,10 +276,11 @@ else:
     )
 
 # Integration scheme ------------------------------------------------------------------------------------------------- #
-cols_try = np.arange(2, 20+1, 1)
-collocation_method = 'lg'
+cols_try = np.arange(2, 15+1, 1)
+collocation_method = 'unif'
 # integration_scheme = 'pseudospectral'
-integration_scheme = 'collocation'
+# integration_scheme = 'collocation'
+integration_scheme = 'simpson'
 fixed_final_time = True  # True -> estimate y(tf). False -> estimate tf(yf)
 use_log_tf = True  # True -> replace tf with log(tf) in unknown vector
 rng_seed = 10
@@ -228,6 +295,10 @@ elif integration_scheme == 'collocation':
     def generator(_num_col):
         return generate_collocation_derivative_residual(equations_of_motion, n=_num_col, col_method=collocation_method)
     method_str = 'Collocation (' + collocation_method.upper() + ')'
+elif integration_scheme == 'simpson':
+    def generator(_num_col):
+        return generate_simpson_residual(equations_of_motion, n=_num_col, col_method=collocation_method)
+    method_str = 'Simpson (' + collocation_method.upper() + ')'
 else:
     raise ValueError(
         f'integration_scheme="{function_type}" is not implemented! Valid options are:\n'
