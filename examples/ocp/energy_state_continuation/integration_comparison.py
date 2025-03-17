@@ -109,15 +109,15 @@ def generate_collocation_derivative_residual(dynamic_fun: ca.Function, n: int, c
         # Legendre-Gauss Quadrature
         col_points, _ = giuseppe.utils.pseudospectral.lg(n+1)
         col_points = col_points[1:]
-        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, -1.))
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, 1.))
         ycol = y0 + tf/2*(int_mat[:-1, :] @ ydotcol)
-        yf = y0 + tf/2*((int_mat[-1, :] @ ydotcol))
+        yf = y0 + tf/2*((int_mat[-1:, :] @ ydotcol))
     elif _collocation_method == 'lgr':
         # Legendre-Gauss-Radau Quadrature
         col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
-        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, -1.))
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, 1.))
         ycol = y0 + int_mat[:-1, :] @ ydotcol
-        yf = y0 + tf/2*((int_mat[-1, :] @ ydotcol))
+        yf = y0 + tf/2*((int_mat[-1:, :] @ ydotcol))
     elif _collocation_method == 'flgr':
         col_points, _ = giuseppe.utils.pseudospectral.lgr(n)
         col_points = -col_points[::-1]
@@ -129,9 +129,9 @@ def generate_collocation_derivative_residual(dynamic_fun: ca.Function, n: int, c
         col_points, _ = giuseppe.utils.pseudospectral.cg(n+2)
         col_points = col_points[1:-1]
         # col_weights = col_weights[1:-1]
-        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, -1.))
+        int_mat = giuseppe.utils.pseudospectral.integration_matrix(col_points, np.append(col_points, 1.))
         ycol = y0 + tf/2*(int_mat[:-1, :] @ ydotcol)
-        yf = y0 + tf/2*(int_mat[-1, :] @ ydotcol)
+        yf = y0 + tf/2*(int_mat[-1:, :] @ ydotcol)
     else:
         raise ValueError(
             f'col_method="{col_method}" is not implemented! Valid options are:\n'
@@ -211,7 +211,8 @@ else:
 
 # Integration scheme ------------------------------------------------------------------------------------------------- #
 cols_try = np.arange(2, 20+1, 1)
-collocation_method = 'lgl'
+collocation_method = 'lg'
+# integration_scheme = 'pseudospectral'
 integration_scheme = 'collocation'
 fixed_final_time = True  # True -> estimate y(tf). False -> estimate tf(yf)
 use_log_tf = True  # True -> replace tf with log(tf) in unknown vector
@@ -222,9 +223,11 @@ if integration_scheme == 'pseudospectral':
         return generate_pseudospectral_residual(
             equations_of_motion, n=_num_col, col_method=collocation_method
         )
+    method_str = 'Pseudospectral (' + collocation_method.upper() + ')'
 elif integration_scheme == 'collocation':
     def generator(_num_col):
         return generate_collocation_derivative_residual(equations_of_motion, n=_num_col, col_method=collocation_method)
+    method_str = 'Collocation (' + collocation_method.upper() + ')'
 else:
     raise ValueError(
         f'integration_scheme="{function_type}" is not implemented! Valid options are:\n'
@@ -336,7 +339,7 @@ def set_plot(_n_col):
     else:
         convergence_str = "FAILURE"
     ax_y.set_title(
-        f'PS Approximation [{_sol_dict["n"]} col. pts, {convergence_str}, ef={_sol_dict["ecol"][-1]:.2e}]'
+        method_str + f' [{_sol_dict["n"]} col. pts, {convergence_str}, ef={_sol_dict["ecol"][-1]:.2e}]'
     )
     ax_y.set_ylim((
         min(_sol_dict['ycol_hat'].min(), y_min) - plot_buffer,
@@ -375,5 +378,6 @@ ax_ef.plot(ncol_vals[idces], ef_vals[idces], 'o')
 ax_ef.set_xlabel('Num. Col. Pts.')
 ax_ef.set_xticks(np.unique(np.round(np.linspace(ncol_vals[0], ncol_vals[-1], 10)).astype('int')))
 ax_ef.set_ylabel(err_lab)
+ax_ef.set_title(method_str)
 
 fig_col.tight_layout()
