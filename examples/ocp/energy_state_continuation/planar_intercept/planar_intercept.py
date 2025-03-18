@@ -24,6 +24,7 @@ p_hat = dp / np.linalg.norm(dp)
 psi_outer = np.arctan2(dp[1], dp[0])
 u_outer = np.array((0.,))
 lam_outer = np.array((-p_hat[0], -p_hat[1], 0.))
+tf_outer = np.dot(dp, dp)**0.5
 
 # -------------------------------------------------------------------------------------------------------------------- #
 # GIUSEPPE SOLUTION                                                                                                    #
@@ -79,24 +80,60 @@ sol_set.save('sol_set.data')
 # -------------------------------------------------------------------------------------------------------------------- #
 # CUSTOM SOLUTION                                                                                                      #
 # -------------------------------------------------------------------------------------------------------------------- #
-# Derivation of necessary conditions
+# Dynamic model
 x_sym = ca.SX.sym('x', 3)
-lam_sym = ca.SX.sym('lam', 3)
 u_sym = ca.SX.sym('u', 1)
-y_sym = ca.vcat((x_sym, lam_sym, u_sym))
 nx = x_sym.shape[0]
-nlam = nx
 nu = u_sym.shape[0]
+eom_sym = ca.vcat((ca.cos(x_sym[2]), ca.sin(x_sym[2]), u_sym))
+eom_fun = ca.Function('f', (x_sym, u_sym,), (eom_sym,), ('x', 'u',), ('f',))
 
-fx_sym = ca.vcat((ca.cos(x_sym[2]), ca.sin(x_sym[2]), u_sym))
+# Path cost model
 path_cost_sym = 1 + k/2 * (u_sym*u_sym)
-ham_sym = path_cost_sym + ca.dot(lam_sym, fx_sym)
-hu_sym = ca.jacobian(ham_sym, u_sym)
-flam_sym = ca.jacobian(ham_sym, x_sym).T
+path_cost_fun = ca.Function('L', (x_sym, u_sym), (path_cost_sym,), ('x', 'u'), ('L',))
 
-h_fun_ca = ca.Function('H', (y_sym,), (ham_sym,), ('y',), ('H',))
-hu_fun_ca = ca.Function('Hu', (y_sym,), (hu_sym,), ('y',), ('Hu',))
-fxlam_fun_ca = ca.Function('fxlam', (y_sym,), (ca.vcat((fx_sym, flam_sym)),), ('y',), ('fxlam',))
+# Pseudospectral optimal control problem statement
+n_col = 10
+col_points, col_weights = giuseppe.utils.pseudospectral.lg(n_col+1)
+_, diff_mat = giuseppe.utils.pseudospectral.lagrange_matrices(
+    col_points, col_points[1:], compute_diff_matrix=True, compute_interp_matrix=False
+)
+
+X_sym = ca.SX.sym('X', nx, n_col+1)  # Include initial state
+U_sym = ca.SX.sym('U', nu, n_col)
+tf_sym = ca.SX.sym('tf')
+z_sym = ca.vcat((
+    X_sym[:, 0],  # Initial state
+    ca.vec(ca.vcat((X_sym[:, 1:], U_sym))),  # Ravel (x,u) [x0; u0; ...; xf; uf]
+    tf_sym,
+))
+
+L_col = path_cost_fun(X_sym[:, 1:], U_sym)
+f_col = eom_fun(X_sym[:, 1:], U_sym)
+
+integrated_cost = L_col @ col_weights
+dynamic_constraint = tf_sym/2*f_col - X_sym @ diff_mat.T
+
+nlp = {
+    'x': z_sym,  # Unknown variables
+    'f': integrated_cost,  # Objective function
+    'g': ca.vec(dynamic_constraint),  # Inequality constraints
+}
+nlp_solver = ca.nlpsol('NLP', 'ipopt', nlp)
+
+# Initial guess (from outer solution)
+X_outer = np.empty(shape=X_sym.shape, dtype=float)
+X_outer[:2, :] = 0.5*(x0[:2, None] + xf[:2, None]) + 0.5*(xf[:2, None] - x0[:2, None]) * col_points[None, :]
+X_outer[2, :] = psi_outer
+U_outer = np.zeros(shape=U_sym.shape, dtype=float)
+
+z_outer = np.concatenate((
+    X_outer[:, 0],  # Initial state
+    (np.vstack((X_outer[:, 1:], U_outer))).ravel(order='F'),  # Ravel (x,u) [x0; u0; ...; xf; uf]
+    (tf_outer,),
+))
+
+# TODO
 
 # Solution on same mesh as SciPy solution
 sol = sol_set[-1]
