@@ -394,11 +394,16 @@ else:
 
 # Integration scheme ------------------------------------------------------------------------------------------------- #
 cols_try = np.arange(2, 15+1, 1)
-collocation_method = 'unif'
-# integration_scheme = 'pseudospectral'
+integration_scheme = 'pseudospectral'
 # integration_scheme = 'collocation'
 # integration_scheme = 'simpson'
-integration_scheme = 'rosenbrock'
+# integration_scheme = 'rosenbrock'
+
+if integration_scheme in ['simpson', 'rosenbrock']:
+    collocation_method = 'unif'
+else:
+    collocation_method = 'lg'
+
 fixed_final_time = True  # True -> estimate y(tf). False -> estimate tf(yf)
 use_log_tf = True  # True -> replace tf with log(tf) in unknown vector
 rng_seed = 10
@@ -457,11 +462,13 @@ for idx, num_col in enumerate(cols_try):
             log_tf_sym = ca.SX.sym('log_tf')
             z_sym = ca.vcat((log_tf_sym, ycol_sym))
             tf_sym = np.exp(log_tf_sym)
+            z_true = np.concatenate(((np.log(tf),), ycol))
         else:
             tf_sym = ca.SX.sym('tf')
             z_sym = ca.vcat((tf_sym, ycol_sym))
+            z_true = np.concatenate(((tf,), ycol))
 
-        z_true = np.concatenate(((tf,), ycol))
+
         yf_sym = yf_fun(ycol_sym, y0, tf_sym)
         res_sym = ca.vcat((yf_sym - yf, rcol_fun(ycol_sym, y0, tf_sym)))
         solution_fun = ca.Function('s', (z_sym,), (tf_sym, yf_sym, ycol_fun(y0, ycol_sym, tf_sym)))
@@ -473,6 +480,9 @@ for idx, num_col in enumerate(cols_try):
         return res_fun(_z).full()[:, 0]
 
     jac_fun = ca.Function('J', (z_sym,), (jac_sym,), ('z',), ('J',))
+
+    # Moment analysis
+    moment_sym = ca.ja(ca.vec(jac_sym), z_sym).reshape((-1, z_sym.shape[0]))
 
     sol_root = optimize.root(res_fun_wrapped, z_true, jac=jac_fun, method='hybr')
     tf_hat, yf_hat, ycol_hat = solution_fun(sol_root.x)
