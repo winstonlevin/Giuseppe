@@ -17,7 +17,7 @@ x0 = np.zeros(shape=(3,), dtype=float)
 x0[2] = np.pi/2
 xf = np.zeros(shape=(3,), dtype=float)
 xf[0] = 10.
-xf[2] = -np.pi/2
+xf[2] = np.pi/2
 
 # Outer solution
 dp = xf[:2] - x0[:2]
@@ -51,8 +51,9 @@ intercept.add_constant('x_f', xf[0])
 intercept.add_constant('y_f', xf[1])
 intercept.add_constant('psi_f', psi_outer)
 
-k = 1.
-intercept.add_constant('k', k)
+k0 = 1.
+kf = 1E-2
+intercept.add_constant('k', k0)
 intercept.set_cost('0', '1 + k/2*(u*u)', '0')
 
 intercept.add_constraint('initial', 't')
@@ -76,11 +77,12 @@ seed_sol = num_solver.solve(guess)
 cont = giuseppe.continuation.ContinuationHandler(num_solver, seed_sol)
 cont.add_linear_series(1, {'x_0': x0[0], 'y_0': x0[1], 'x_f': xf[0], 'y_f': xf[1]})
 cont.add_linear_series(1, {'psi_0': x0[2], 'psi_f': xf[2]})
+cont.add_logarithmic_series(5, {'k': kf})
 sol_set = cont.run_continuation()
 sol_set.save('sol_set.data')
 
 # -------------------------------------------------------------------------------------------------------------------- #
-# CUSTOM SOLUTION                                                                                                      #
+# NLP SOLUTION                                                                                                         #
 # -------------------------------------------------------------------------------------------------------------------- #
 # Dynamic model
 x_sym = ca.SX.sym('x', 3)
@@ -91,16 +93,22 @@ eom_sym = ca.vcat((ca.cos(x_sym[2]), ca.sin(x_sym[2]), u_sym))
 eom_fun = ca.Function('f', (x_sym, u_sym,), (eom_sym,), ('x', 'u',), ('f',))
 
 # Path cost model
-path_cost_sym = 1. + k/2 * (u_sym*u_sym)
+path_cost_sym = 1. + kf/2 * (u_sym*u_sym)
 path_cost_fun = ca.Function('L', (x_sym, u_sym), (path_cost_sym,), ('x', 'u'), ('L',))
 
 # Pseudospectral optimal control problem statement
 n_phase = 2
-n_col = 10
+n_col = 5
+# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col+2)
+# col_points_local = col_points_local[:-1]
+# col_weights_local = col_weights_local[1:-1]
 col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
 _, diff_mat_local = giuseppe.utils.pseudospectral.lagrange_matrices(
     col_points_local, col_points_local[1:], compute_diff_matrix=True, compute_interp_matrix=False
 )
+interp0f_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
+    col_points_local[1:], np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
+)  # Interpolate Lam/U to get 0/f values
 
 # Expand values for multi-phase
 diff_mat = np.zeros(shape=(n_col*n_phase, (n_col+1)*n_phase))
@@ -109,9 +117,13 @@ col_weights = np.tile(col_weights_local, n_phase)
 intf_matrix = np.zeros(shape=((n_col+1)*n_phase, n_phase), dtype=col_weights.dtype)
 col_points_global = np.empty_like(col_points)
 col_points_global_linkeage = np.linspace(-1, 1, n_phase+1)
+interp0_matrix = np.zeros(shape=(n_col*n_phase, n_phase), dtype=interp0f_local.dtype)
+interpf_matrix = np.zeros_like(interp0_matrix)
 for phase in range(n_phase):
     diff_mat[phase*n_col:(phase+1)*n_col, phase*(n_col+1):(phase+1)*(n_col+1)] = diff_mat_local
     intf_matrix[phase*(n_col+1):(phase+1)*(n_col+1), phase] = col_weights_local @ diff_mat_local
+    interp0_matrix[phase*n_col:(phase+1)*n_col, phase] = interp0f_local[0, :]
+    interpf_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_local[1, :]
 
     _middle = 0.5*(col_points_global_linkeage[phase] + col_points_global_linkeage[phase+1])
     _range = 0.5*(col_points_global_linkeage[phase+1] - col_points_global_linkeage[phase])
@@ -164,12 +176,21 @@ z_outer = np.concatenate((
 ))
 
 # Bounds (stolen from known optimal solution)
+
+# ubx = sol_set[-1].x.max(axis=1, initial=-np.inf) + 10.
+# # ubx[:2] += 10.
+# # ubx[2] += 30 * np.pi/180
+# lbx = sol_set[-1].x.min(axis=1, initial=np.inf) - 10.
+# # lbx[:2] -= 10.
+# # lbx[2] -= 30 * np.pi/180
+
 ubx = sol_set[-1].x.max(axis=1, initial=-np.inf)
 ubx[:2] += 10.
 ubx[2] += 30 * np.pi/180
 lbx = sol_set[-1].x.min(axis=1, initial=np.inf) - 1.
 lbx[:2] -= 10.
 lbx[2] -= 30 * np.pi/180
+
 ubu = sol_set[-1].u.max(initial=-np.inf) + 10.
 lbu = sol_set[-1].u.min(initial=np.inf) - 10.
 ubtf = sol_set[-1].t[-1] + 10.
@@ -197,20 +218,32 @@ adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
 nu_linkage_nlp = adjoints_nlp[nx:(n_phase-1)*n_phase*nx]
 nuf_nlp = adjoints_nlp[n_phase*nx:(n_phase+1)*nx]
-Lam_nlp = adjoints_nlp[(n_phase+1)*nx:].reshape((nx, -1), order='F')
+lam_nlp = adjoints_nlp[(n_phase + 1) * nx:].reshape((nx, -1), order='F')
 
-# Save solution
+# Save solution ------------------------------------------------------------------------------------------------------ #
 sol_nlp = copy(sol_set[-1])
 sol_nlp.t = t_nlp
 sol_nlp.x = X_nlp
 sol_nlp.lam = np.empty_like(X_nlp)
-sol_nlp.lam[:, idces_initial] = np.nan
-sol_nlp.lam[:, idces_interior] = Lam_nlp
+sol_nlp.lam[:, idces_initial] = lam_nlp @ interp0_matrix
+sol_nlp.lam[:, idces_interior] = lam_nlp
 sol_nlp.u = np.empty(shape=(nu, t_nlp.shape[0]), dtype=U_nlp.dtype)
-sol_nlp.u[:, idces_initial] = np.nan
+sol_nlp.u[:, idces_initial] = U_nlp @ interp0_matrix
 sol_nlp.u[:, idces_interior] = U_nlp
 sol_nlp.nu0 = nu0_nlp
 sol_nlp.nuf = nuf_nlp
+
+# Add jump values
+idces_fi = np.append(idces_initial[1:], len(t_nlp))
+t_nlp_fi = np.append(t_nlp[idces_fi[:-1]], tf_nlp)
+X_nlp_fi = X_nlp[:, idces_initial] + X_nlp @ intf_matrix
+lam_nlp_fi = lam_nlp @ interpf_matrix
+u_nlp_fi = U_nlp @ interpf_matrix
+
+sol_nlp.t = np.insert(sol_nlp.t, idces_fi, t_nlp_fi)
+sol_nlp.x = np.insert(sol_nlp.x, idces_fi, X_nlp_fi, axis=1)
+sol_nlp.lam = np.insert(sol_nlp.lam, idces_fi, lam_nlp_fi, axis=1)
+sol_nlp.u = np.insert(sol_nlp.u, idces_fi, u_nlp_fi, axis=1)
 
 with open('sol_nlp.data', 'wb') as f:
     pickle.dump(sol_nlp, f)
