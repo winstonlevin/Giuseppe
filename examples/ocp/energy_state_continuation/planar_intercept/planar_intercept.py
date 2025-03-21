@@ -1,4 +1,6 @@
 import os
+from copy import copy
+import pickle
 
 import numpy as np
 import casadi as ca
@@ -49,7 +51,7 @@ intercept.add_constant('x_f', xf[0])
 intercept.add_constant('y_f', xf[1])
 intercept.add_constant('psi_f', psi_outer)
 
-k = 3
+k = 15.
 intercept.add_constant('k', k)
 intercept.set_cost('0', '1 + k/2*(u*u)', '0')
 
@@ -89,7 +91,7 @@ eom_sym = ca.vcat((ca.cos(x_sym[2]), ca.sin(x_sym[2]), u_sym))
 eom_fun = ca.Function('f', (x_sym, u_sym,), (eom_sym,), ('x', 'u',), ('f',))
 
 # Path cost model
-path_cost_sym = 1 + k/2 * (u_sym*u_sym)
+path_cost_sym = 1. + k/2 * (u_sym*u_sym)
 path_cost_fun = ca.Function('L', (x_sym, u_sym), (path_cost_sym,), ('x', 'u'), ('L',))
 
 # Pseudospectral optimal control problem statement
@@ -110,14 +112,19 @@ z_sym = ca.vcat((
 
 L_col = path_cost_fun(X_sym[:, 1:], U_sym)
 f_col = eom_fun(X_sym[:, 1:], U_sym)
+Xf_sym = X_sym[:, 0] + X_sym @ (col_weights @ diff_mat)
 
-integrated_cost = L_col @ col_weights
-dynamic_constraint = tf_sym/2*f_col - X_sym @ diff_mat.T
+integrated_cost = tf_sym/2 * (L_col @ col_weights)
+dynamic_constraint = (tf_sym/2*f_col - X_sym @ diff_mat.T) * np.tile(col_weights[None, :], (3, 1))
+initial_state_constraint = X_sym[:, 0] - x0
+terminal_state_constraint = Xf_sym - xf
 
 nlp = {
     'x': z_sym,  # Unknown variables
     'f': integrated_cost,  # Objective function
-    'g': ca.vec(dynamic_constraint),  # Inequality constraints
+    'g': ca.vcat((
+        initial_state_constraint, ca.vec(dynamic_constraint), terminal_state_constraint
+    )),  # (In)equality constraints
 }
 nlp_solver = ca.nlpsol('NLP', 'ipopt', nlp)
 
@@ -133,28 +140,56 @@ z_outer = np.concatenate((
     (tf_outer,),
 ))
 
-# TODO
+# Bounds (stolen from known optimal solution)
+ubx = sol_set[-1].x.max(axis=1, initial=-np.inf)
+ubx[:2] += 10.
+ubx[2] += 30 * np.pi/180
+lbx = sol_set[-1].x.min(axis=1, initial=np.inf) - 1.
+lbx[:2] -= 10.
+lbx[2] -= 30 * np.pi/180
+ubu = sol_set[-1].u.max(initial=-np.inf) + 10.
+lbu = sol_set[-1].u.min(initial=np.inf) - 10.
+ubXUinterior = np.tile(np.append(ubx, ubu)[:, None], (1, n_col))
+lbXUinterior = np.tile(np.append(lbx, lbu)[:, None], (1, n_col))
+ubtf = sol_set[-1].t[-1] + 10.
+lbtf = 0.
 
-# Solution on same mesh as SciPy solution
-sol = sol_set[-1]
+ubz = np.empty_like(z_outer)
+ubz[:nx] = ubx
+ubz[nx:-1] = ubXUinterior.ravel(order='F')
+ubz[-1] = ubtf
+lbz = np.empty_like(z_outer)
+lbz[:nx] = lbx
+lbz[nx:-1] = lbXUinterior.ravel(order='F')
+lbz[-1] = lbtf
 
-X_sym = ca.SX.sym('X', sol.x.shape)
-L_sym = ca.SX.sym('Lam', sol.lam.shape)
-U_sym = ca.SX.sym('U', sol.u.shape)
-Y_sym = ca.vcat((X_sym, L_sym, U_sym))
-tf_sym = ca.SX.sym('tf')
+nlp_sol = nlp_solver(x0=z_outer, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 
+# Unpack solution
+z_nlp = nlp_sol['x'].full().ravel()
+XU_nlp_interior = z_nlp[nx:-1].reshape((nx+nu, -1), order='F')
+X_nlp = np.hstack((z_nlp[:nx, None], XU_nlp_interior[:nx, :]))
+U_nlp = XU_nlp_interior[nx:, :]
+tf_nlp = z_nlp[-1]
+t_nlp = tf_nlp*(1+col_points)/2
 
-def mesh_error(_y0, _y1, _h):
-    # Trapezoidal Rule
-    _fxlam0 = fxlam_fun_ca(_y0)
-    _fxlam1 = fxlam_fun_ca(_y0)
-    int_error = (_y1[:-nu] - _y0[:-nu]) - _h * (_fxlam0 + _fxlam1)
+adjoints_nlp = nlp_sol['lam_g'].full().ravel()
+nu0_nlp = adjoints_nlp[:nx]
+nuf_nlp = adjoints_nlp[nx:2*nx]
+Lam_nlp = adjoints_nlp[2*nx:].reshape((nx, -1), order='F')
 
-    # Control Law
-    _hu0 = hu_fun_ca(_y0)
+# Save solution
+sol_nlp = copy(sol_set[-1])
+sol_nlp.t = t_nlp
+sol_nlp.x = X_nlp
+sol_nlp.lam = np.empty_like(X_nlp)
+sol_nlp.lam[:, 0] = np.nan
+sol_nlp.lam[:, 1:] = Lam_nlp
+sol_nlp.u = np.empty(shape=(nu, t_nlp.shape[0]), dtype=U_nlp.dtype)
+sol_nlp.u[:, 0] = np.nan
+sol_nlp.u[:, 1:] = U_nlp
+sol_nlp.nu0 = nu0_nlp
+sol_nlp.nuf = nuf_nlp
 
-    return ca.vcat((int_error, _hu0))
-
-
-# TODO - generate residual and solve
+with open('sol_nlp.data', 'wb') as f:
+    pickle.dump(sol_nlp, f)
