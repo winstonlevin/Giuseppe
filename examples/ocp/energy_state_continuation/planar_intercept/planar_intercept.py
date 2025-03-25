@@ -97,7 +97,7 @@ path_cost_sym = 1. + kf/2 * (u_sym*u_sym)
 path_cost_fun = ca.Function('L', (x_sym, u_sym), (path_cost_sym,), ('x', 'u'), ('L',))
 
 # Pseudospectral optimal control problem statement
-n_phase = 2
+n_phase = 10
 n_col = 5
 # col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col+2)
 # col_points_local = col_points_local[:-1]
@@ -110,8 +110,13 @@ interp0f_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
     col_points_local[1:], np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
 )  # Interpolate Lam/U to get 0/f values
 
+_, diff_mat_u_local = giuseppe.utils.pseudospectral.lagrange_matrices(
+    col_points_local[1:], col_points_local[1:], compute_diff_matrix=True, compute_interp_matrix=False
+)
+
 # Expand values for multi-phase
 diff_mat = np.zeros(shape=(n_col*n_phase, (n_col+1)*n_phase))
+diff_mat_u = np.zeros(shape=(n_col*n_phase, n_col*n_phase))
 col_points = np.tile(col_points_local, n_phase)
 col_weights = np.tile(col_weights_local, n_phase)
 intf_matrix = np.zeros(shape=((n_col+1)*n_phase, n_phase), dtype=col_weights.dtype)
@@ -121,6 +126,7 @@ interp0_matrix = np.zeros(shape=(n_col*n_phase, n_phase), dtype=interp0f_local.d
 interpf_matrix = np.zeros_like(interp0_matrix)
 for phase in range(n_phase):
     diff_mat[phase*n_col:(phase+1)*n_col, phase*(n_col+1):(phase+1)*(n_col+1)] = diff_mat_local
+    diff_mat_u[phase*n_col:(phase+1)*n_col, phase*n_col:(phase+1)*n_col] = diff_mat_u_local
     intf_matrix[phase*(n_col+1):(phase+1)*(n_col+1), phase] = col_weights_local @ diff_mat_local
     interp0_matrix[phase*n_col:(phase+1)*n_col, phase] = interp0f_local[0, :]
     interpf_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_local[1, :]
@@ -143,6 +149,12 @@ z_sym = ca.vcat((
 ))
 
 L_col = path_cost_fun(X_sym[:, idces_interior], U_sym)
+
+# # Augment path cost to minimize change in control
+# dudtau = U_sym @ diff_mat_u.T
+# L_col_dudtau = 1E-6*0.5*dudtau*dudtau
+# L_col += L_col_dudtau
+
 f_col = eom_fun(X_sym[:, idces_interior], U_sym)
 X0i_sym = X_sym[:, idces_initial]
 Xfi_sym = X0i_sym + X_sym @ intf_matrix
@@ -216,7 +228,7 @@ t_nlp = tf_nlp*(1+col_points_global)/2
 
 adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
-nu_linkage_nlp = adjoints_nlp[nx:(n_phase-1)*n_phase*nx]
+nu_linkage_nlp = adjoints_nlp[nx:n_phase*nx].reshape((nx, -1), order='F')
 nuf_nlp = adjoints_nlp[n_phase*nx:(n_phase+1)*nx]
 lam_nlp = adjoints_nlp[(n_phase + 1) * nx:].reshape((nx, -1), order='F')
 
@@ -225,7 +237,7 @@ sol_nlp = copy(sol_set[-1])
 sol_nlp.t = t_nlp
 sol_nlp.x = X_nlp
 sol_nlp.lam = np.empty_like(X_nlp)
-sol_nlp.lam[:, idces_initial] = lam_nlp @ interp0_matrix
+sol_nlp.lam[:, idces_initial] = np.hstack((-nu0_nlp[:, None], -nu_linkage_nlp))
 sol_nlp.lam[:, idces_interior] = lam_nlp
 sol_nlp.u = np.empty(shape=(nu, t_nlp.shape[0]), dtype=U_nlp.dtype)
 sol_nlp.u[:, idces_initial] = U_nlp @ interp0_matrix
@@ -237,7 +249,7 @@ sol_nlp.nuf = nuf_nlp
 idces_fi = np.append(idces_initial[1:], len(t_nlp))
 t_nlp_fi = np.append(t_nlp[idces_fi[:-1]], tf_nlp)
 X_nlp_fi = X_nlp[:, idces_initial] + X_nlp @ intf_matrix
-lam_nlp_fi = lam_nlp @ interpf_matrix
+lam_nlp_fi = np.hstack((-nu_linkage_nlp, nuf_nlp[:, None]))  # lam_nlp @ interpf_matrix
 u_nlp_fi = U_nlp @ interpf_matrix
 
 sol_nlp.t = np.insert(sol_nlp.t, idces_fi, t_nlp_fi)
