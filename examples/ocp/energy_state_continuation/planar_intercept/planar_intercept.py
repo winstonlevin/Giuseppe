@@ -97,14 +97,22 @@ path_cost_sym = 1. + kf/2 * (u_sym*u_sym)
 path_cost_fun = ca.Function('L', (x_sym, u_sym), (path_cost_sym,), ('x', 'u'), ('L',))
 
 # Pseudospectral optimal control problem statement
-n_phase = 2
+n_phase = 1
 n_col = 20
-col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col)
-idces_anchor = np.empty(shape=(0,), dtype=int)
-idces_col = np.arange(0, n_col, 1)
-# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
-# idces_anchor = np.arange(0, 1, 1)
-# idces_col = np.arange(1, n_col+1, 1)
+
+# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col)
+# idces_anchor = np.empty(shape=(0,), dtype=int)
+# idces_col = np.arange(0, n_col, 1)
+
+col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
+# col_weights_local = np.insert(col_weights_local, 0, 0)
+idces_anchor = np.arange(0, 1, 1)
+idces_col = np.arange(1, n_col+1, 1)
+
+# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgr(n_col)
+# idces_anchor = np.empty(shape=(0,), dtype=int)
+# idces_col = np.arange(0, n_col, 1)
+
 n_mesh = len(col_points_local)
 _, diff_mat_local = giuseppe.utils.pseudospectral.lagrange_matrices(
     col_points_local, col_points_local[idces_col], compute_diff_matrix=True, compute_interp_matrix=False
