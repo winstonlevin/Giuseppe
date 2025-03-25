@@ -481,9 +481,6 @@ for idx, num_col in enumerate(cols_try):
 
     jac_fun = ca.Function('J', (z_sym,), (jac_sym,), ('z',), ('J',))
 
-    # Moment analysis
-    moment_sym = ca.ja(ca.vec(jac_sym), z_sym).reshape((-1, z_sym.shape[0]))
-
     sol_root = optimize.root(res_fun_wrapped, z_true, jac=jac_fun, method='hybr')
     tf_hat, yf_hat, ycol_hat = solution_fun(sol_root.x)
     tf_hat = float(tf_hat)  # Convert to non-CasADi type
