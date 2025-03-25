@@ -1,5 +1,5 @@
 """
-This script is borrowed from Dymos, which is licensed under:
+This script is adapted from Dymos, which is licensed under:
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 
 
-def lagrange_matrices(x_disc, x_interp, compute_interp_matrix=True, compute_diff_matrix=True):
+def lagrange_matrices(x_disc, x_interp=None, compute_interp_matrix=True, compute_diff_matrix=True):
     """
     Compute the lagrange matrices.
 
@@ -27,7 +27,7 @@ def lagrange_matrices(x_disc, x_interp, compute_interp_matrix=True, compute_diff
         The cardinal nodes at which values of the variable are specified.
     x_interp : np.array
         The interior nodes at which interpolated values of the variable or its derivative
-        are desired.
+        are desired. If left unsupplied, defaults to x_disc.
     compute_interp_matrix : bool
         If True, construct and return the interpolation matrix, otherwise return None.
     compute_diff_matrix : bool
@@ -47,7 +47,11 @@ def lagrange_matrices(x_disc, x_interp, compute_interp_matrix=True, compute_diff
         as None if compute_diff_matrix is None.
     """
     nd = len(x_disc)
-    ni = len(x_interp)
+    if x_interp is None:
+        x_interp = x_disc
+        ni = nd
+    else:
+        ni = len(x_interp)
 
     if compute_interp_matrix or compute_diff_matrix:
         temp = np.zeros((ni, nd))
