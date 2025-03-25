@@ -97,49 +97,56 @@ path_cost_sym = 1. + kf/2 * (u_sym*u_sym)
 path_cost_fun = ca.Function('L', (x_sym, u_sym), (path_cost_sym,), ('x', 'u'), ('L',))
 
 # Pseudospectral optimal control problem statement
-n_phase = 10
-n_col = 5
-# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col+2)
-# col_points_local = col_points_local[:-1]
-# col_weights_local = col_weights_local[1:-1]
-col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
+n_phase = 2
+n_col = 20
+col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col)
+idces_anchor = np.empty(shape=(0,), dtype=int)
+idces_col = np.arange(0, n_col, 1)
+# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
+# idces_anchor = np.arange(0, 1, 1)
+# idces_col = np.arange(1, n_col+1, 1)
+n_mesh = len(col_points_local)
 _, diff_mat_local = giuseppe.utils.pseudospectral.lagrange_matrices(
-    col_points_local, col_points_local[1:], compute_diff_matrix=True, compute_interp_matrix=False
+    col_points_local, col_points_local[idces_col], compute_diff_matrix=True, compute_interp_matrix=False
 )
-interp0f_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
-    col_points_local[1:], np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
+interp0f_col_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
+    col_points_local[idces_col], np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
+)  # Interpolate Lam/U to get 0/f values
+interp0f_mesh_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
+    col_points_local, np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
 )  # Interpolate Lam/U to get 0/f values
 
-_, diff_mat_u_local = giuseppe.utils.pseudospectral.lagrange_matrices(
-    col_points_local[1:], col_points_local[1:], compute_diff_matrix=True, compute_interp_matrix=False
-)
-
 # Expand values for multi-phase
-diff_mat = np.zeros(shape=(n_col*n_phase, (n_col+1)*n_phase))
-diff_mat_u = np.zeros(shape=(n_col*n_phase, n_col*n_phase))
+diff_mat = np.zeros(shape=(n_col*n_phase, n_mesh*n_phase))
 col_points = np.tile(col_points_local, n_phase)
 col_weights = np.tile(col_weights_local, n_phase)
-intf_matrix = np.zeros(shape=((n_col+1)*n_phase, n_phase), dtype=col_weights.dtype)
 col_points_global = np.empty_like(col_points)
 col_points_global_linkeage = np.linspace(-1, 1, n_phase+1)
-interp0_matrix = np.zeros(shape=(n_col*n_phase, n_phase), dtype=interp0f_local.dtype)
-interpf_matrix = np.zeros_like(interp0_matrix)
+interp0_col_matrix = np.zeros(shape=(n_col * n_phase, n_phase), dtype=interp0f_col_local.dtype)
+interpf_col_matrix = np.zeros_like(interp0_col_matrix)
+interp0_mesh_matrix = np.zeros(shape=(n_mesh * n_phase, n_phase), dtype=interp0f_col_local.dtype)
+interpf_mesh_matrix = np.zeros_like(interp0_mesh_matrix)
 for phase in range(n_phase):
-    diff_mat[phase*n_col:(phase+1)*n_col, phase*(n_col+1):(phase+1)*(n_col+1)] = diff_mat_local
-    diff_mat_u[phase*n_col:(phase+1)*n_col, phase*n_col:(phase+1)*n_col] = diff_mat_u_local
-    intf_matrix[phase*(n_col+1):(phase+1)*(n_col+1), phase] = col_weights_local @ diff_mat_local
-    interp0_matrix[phase*n_col:(phase+1)*n_col, phase] = interp0f_local[0, :]
-    interpf_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_local[1, :]
+    diff_mat[phase*n_col:(phase+1)*n_col, phase*n_mesh:(phase+1)*n_mesh] = diff_mat_local
+    interp0_col_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_col_local[0, :]
+    interpf_col_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_col_local[1, :]
+    interp0_mesh_matrix[phase * n_mesh:(phase + 1) * n_mesh, phase] = interp0f_mesh_local[0, :]
+    interpf_mesh_matrix[phase * n_mesh:(phase + 1) * n_mesh, phase] = interp0f_mesh_local[1, :]
 
     _middle = 0.5*(col_points_global_linkeage[phase] + col_points_global_linkeage[phase+1])
     _range = 0.5*(col_points_global_linkeage[phase+1] - col_points_global_linkeage[phase])
-    col_points_global[phase*(n_col+1):(phase+1)*(n_col+1)] = _middle + _range*col_points_local
+    col_points_global[phase*n_mesh:(phase+1)*n_mesh] = _middle + _range*col_points_local
 
-X_sym = ca.SX.sym('X', nx, (n_col+1)*n_phase)  # Include initial state
+X_sym = ca.SX.sym('X', nx, n_mesh*n_phase)  # Include initial state
 U_sym = ca.SX.sym('U', nu, n_col*n_phase)
-idces_initial = np.arange(0, X_sym.shape[1], n_col+1)
-idces_interior = np.delete(np.arange(0, X_sym.shape[1], 1), idces_initial)
-# X0i_sym = X_sym[:, ::n_col+1]
+idces_initial = np.arange(0, X_sym.shape[1], n_mesh)
+idces_collocation = np.arange(0, X_sym.shape[1], 1)
+if n_mesh == n_col:
+    idces_anchor = np.empty(shape=(0,), dtype=int)
+else:
+    idces_anchor = idces_initial
+    idces_collocation = np.delete(idces_collocation, idces_anchor)
+
 tf_sym = ca.SX.sym('tf')
 dt_phase = tf_sym / n_phase
 z_sym = ca.vcat((
@@ -148,16 +155,10 @@ z_sym = ca.vcat((
     tf_sym,
 ))
 
-L_col = path_cost_fun(X_sym[:, idces_interior], U_sym)
-
-# # Augment path cost to minimize change in control
-# dudtau = U_sym @ diff_mat_u.T
-# L_col_dudtau = 1E-6*0.5*dudtau*dudtau
-# L_col += L_col_dudtau
-
-f_col = eom_fun(X_sym[:, idces_interior], U_sym)
-X0i_sym = X_sym[:, idces_initial]
-Xfi_sym = X0i_sym + X_sym @ intf_matrix
+L_col = path_cost_fun(X_sym[:, idces_collocation], U_sym)
+f_col = eom_fun(X_sym[:, idces_collocation], U_sym)
+X0i_sym = X_sym @ interp0_mesh_matrix
+Xfi_sym = X_sym @ interpf_mesh_matrix
 
 integrated_cost = dt_phase/2 * (L_col @ col_weights)
 dynamic_constraint = (dt_phase/2*f_col - X_sym @ diff_mat.T) * np.tile(col_weights[None, :], (3, 1))
@@ -209,11 +210,11 @@ ubtf = sol_set[-1].t[-1] + 10.
 lbtf = 0.
 
 ubz = np.empty_like(z_outer)
-ubz[:X_sym.numel()] = np.tile(ubx, (n_col+1)*n_phase)
+ubz[:X_sym.numel()] = np.tile(ubx, n_mesh*n_phase)
 ubz[X_sym.numel():-1] = np.tile(ubu, n_col*n_phase)
 ubz[-1] = ubtf
 lbz = np.empty_like(z_outer)
-lbz[:X_sym.numel()] = np.tile(lbx, (n_col+1)*n_phase)
+lbz[:X_sym.numel()] = np.tile(lbx, n_mesh*n_phase)
 lbz[X_sym.numel():-1] = np.tile(lbu, n_col*n_phase)
 lbz[-1] = lbtf
 
@@ -237,20 +238,22 @@ sol_nlp = copy(sol_set[-1])
 sol_nlp.t = t_nlp
 sol_nlp.x = X_nlp
 sol_nlp.lam = np.empty_like(X_nlp)
-sol_nlp.lam[:, idces_initial] = np.hstack((-nu0_nlp[:, None], -nu_linkage_nlp))
-sol_nlp.lam[:, idces_interior] = lam_nlp
+sol_nlp.lam[:, idces_collocation] = lam_nlp
+# sol_nlp.lam[:, idces_initial] = np.hstack((-nu0_nlp[:, None], -nu_linkage_nlp))
+sol_nlp.lam[:, idces_initial] = lam_nlp @ interp0_col_matrix
 sol_nlp.u = np.empty(shape=(nu, t_nlp.shape[0]), dtype=U_nlp.dtype)
-sol_nlp.u[:, idces_initial] = U_nlp @ interp0_matrix
-sol_nlp.u[:, idces_interior] = U_nlp
+sol_nlp.u[:, idces_collocation] = U_nlp
+sol_nlp.u[:, idces_initial] = U_nlp @ interp0_col_matrix
 sol_nlp.nu0 = nu0_nlp
 sol_nlp.nuf = nuf_nlp
 
 # Add jump values
 idces_fi = np.append(idces_initial[1:], len(t_nlp))
 t_nlp_fi = np.append(t_nlp[idces_fi[:-1]], tf_nlp)
-X_nlp_fi = X_nlp[:, idces_initial] + X_nlp @ intf_matrix
-lam_nlp_fi = np.hstack((-nu_linkage_nlp, nuf_nlp[:, None]))  # lam_nlp @ interpf_matrix
-u_nlp_fi = U_nlp @ interpf_matrix
+X_nlp_fi = X_nlp @ interpf_mesh_matrix
+# lam_nlp_fi = np.hstack((-nu_linkage_nlp, nuf_nlp[:, None]))
+lam_nlp_fi = lam_nlp @ interpf_col_matrix
+u_nlp_fi = U_nlp @ interpf_col_matrix
 
 sol_nlp.t = np.insert(sol_nlp.t, idces_fi, t_nlp_fi)
 sol_nlp.x = np.insert(sol_nlp.x, idces_fi, X_nlp_fi, axis=1)
