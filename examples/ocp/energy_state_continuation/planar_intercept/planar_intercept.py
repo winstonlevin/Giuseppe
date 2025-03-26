@@ -84,41 +84,62 @@ sol_set.save('sol_set.data')
 # -------------------------------------------------------------------------------------------------------------------- #
 # NLP SOLUTION                                                                                                         #
 # -------------------------------------------------------------------------------------------------------------------- #
+use_mayer = False
+
 # Dynamic model
 x_sym = ca.SX.sym('x', 3)
 u_sym = ca.SX.sym('u', 1)
-nx = x_sym.shape[0]
-nu = u_sym.shape[0]
 eom_sym = ca.vcat((ca.cos(x_sym[2]), ca.sin(x_sym[2]), u_sym))
-eom_fun = ca.Function('f', (x_sym, u_sym,), (eom_sym,), ('x', 'u',), ('f',))
 
 # Path cost model
-path_cost_sym = 1. + kf/2 * (u_sym*u_sym)
+nxp = 3
+
+if use_mayer:
+    x0_nlp = np.append(x0, 0.)
+    integral_sym = ca.SX.sym('IL', 1)
+    x_sym = ca.vcat((x_sym, integral_sym))
+    eom_sym = ca.vcat((eom_sym, 1. + kf/2 * (u_sym*u_sym)))
+    end_cost_sym = integral_sym
+    path_cost_sym = ca.SX.zeros(1)
+else:
+    x0_nlp = x0
+    end_cost_sym = ca.SX.zeros(1)
+    path_cost_sym = 1. + kf/2 * (u_sym*u_sym)
+
+end_cost_fun = ca.Function('Phi', (x_sym,), (end_cost_sym,), ('x',), ('Phi',))
 path_cost_fun = ca.Function('L', (x_sym, u_sym), (path_cost_sym,), ('x', 'u'), ('L',))
+eom_fun = ca.Function('f', (x_sym, u_sym,), (eom_sym,), ('x', 'u',), ('f',))
 
 # Pseudospectral optimal control problem statement
+nx = x_sym.shape[0]
+nu = u_sym.shape[0]
+
 n_phase = 1
 n_col = 30
 
-# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col)
-# idces_anchor = np.empty(shape=(0,), dtype=int)
-# idces_col = np.arange(0, n_col, 1)
+collocation_method = 'lgl'
 
-# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
-# # col_weights_local = np.insert(col_weights_local, 0, 0)
-# idces_anchor = np.arange(0, 1, 1)
-# idces_col = np.arange(1, n_col+1, 1)
-
-col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgr(n_col)
-idces_anchor = np.empty(shape=(0,), dtype=int)
-idces_col = np.arange(0, n_col, 1)
+if collocation_method == 'lg':
+    col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col + 1)
+    # col_weights_local = np.insert(col_weights_local, 0, 0)
+    idces_anchor = np.arange(0, 1, 1)
+    idces_collocation = np.arange(1, n_col + 1, 1)
+elif collocation_method == 'lgr':
+    col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgr(n_col)
+    col_points_local = np.append(col_points_local, 1.)
+    idces_anchor = np.array((n_col,))
+    idces_collocation = np.arange(0, n_col, 1)
+elif collocation_method == 'lgl':
+    col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col)
+    idces_anchor = np.empty(shape=(0,), dtype=int)
+    idces_collocation = np.arange(0, n_col, 1)
 
 n_mesh = len(col_points_local)
 _, diff_mat_local = giuseppe.utils.pseudospectral.lagrange_matrices(
-    col_points_local, col_points_local[idces_col], compute_diff_matrix=True, compute_interp_matrix=False
+    col_points_local, col_points_local[idces_collocation], compute_diff_matrix=True, compute_interp_matrix=False
 )
 interp0f_col_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
-    col_points_local[idces_col], np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
+    col_points_local[idces_collocation], np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
 )  # Interpolate Lam/U to get 0/f values
 interp0f_mesh_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
     col_points_local, np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
@@ -148,12 +169,6 @@ for phase in range(n_phase):
 X_sym = ca.SX.sym('X', nx, n_mesh*n_phase)  # Include initial state
 U_sym = ca.SX.sym('U', nu, n_col*n_phase)
 idces_initial = np.arange(0, X_sym.shape[1], n_mesh)
-idces_collocation = np.arange(0, X_sym.shape[1], 1)
-if n_mesh == n_col:
-    idces_anchor = np.empty(shape=(0,), dtype=int)
-else:
-    idces_anchor = idces_initial
-    idces_collocation = np.delete(idces_collocation, idces_anchor)
 
 tf_sym = ca.SX.sym('tf')
 dt_phase = tf_sym / n_phase
@@ -168,13 +183,17 @@ f_col = eom_fun(X_sym[:, idces_collocation], U_sym)
 X0i_sym = X_sym @ interp0_mesh_matrix
 Xfi_sym = X_sym @ interpf_mesh_matrix
 
-integrated_cost = dt_phase/2 * (L_col @ col_weights)
+integrated_cost = end_cost_fun(Xfi_sym[:, -1]) + dt_phase/2 * (L_col @ col_weights)
 dynamic_constraint = dt_phase/2*f_col - X_sym @ diff_mat.T
 # dynamic_constraint = (dt_phase/2*f_col - X_sym @ diff_mat.T) * np.tile(col_weights[None, :], (3, 1))
-initial_state_constraint = X0i_sym[:, 0] - x0
+initial_state_constraint = X0i_sym[:, 0] - x0_nlp
 phase_linkage_constraint = X0i_sym[:, 1:] - Xfi_sym[:, :-1]
-terminal_state_constraint = Xfi_sym[:, -1] - xf
-boundary_constraints = ca.vec(ca.hcat((initial_state_constraint, phase_linkage_constraint, terminal_state_constraint)))
+terminal_state_constraint = Xfi_sym[:nxp, -1] - xf
+boundary_constraints = ca.vcat((
+    ca.vec(initial_state_constraint),
+    ca.vec(phase_linkage_constraint),
+    ca.vec(terminal_state_constraint),
+))
 
 # nlp = {
 #     'x': z_sym,  # Unknown variables
@@ -197,6 +216,8 @@ nlp_solver = ca.nlpsol('NLP', 'ipopt', nlp)
 X_outer = np.empty(shape=X_sym.shape, dtype=float)
 X_outer[:2, :] = 0.5*(x0[:2, None] + xf[:2, None]) + 0.5*(xf[:2, None] - x0[:2, None]) * col_points_global[None, :]
 X_outer[2, :] = psi_outer
+if use_mayer:
+    X_outer[3, :] = tf_outer*((1 + col_points_global)/2)
 U_outer = np.zeros(shape=U_sym.shape, dtype=float)
 
 z_outer = np.concatenate((
@@ -212,6 +233,10 @@ ubx[2] += 30 * np.pi/180
 lbx = sol_set[-1].x.min(axis=1, initial=np.inf) - 1.
 lbx[:2] -= 10.
 lbx[2] -= 30 * np.pi/180
+
+if use_mayer:
+    ubx = np.append(ubx, sol_set[-1].cost + 100.)
+    lbx = np.append(lbx, -10.)
 
 ubu = sol_set[-1].u.max(initial=-np.inf) + 10.
 lbu = sol_set[-1].u.min(initial=np.inf) - 10.
@@ -239,23 +264,25 @@ t_nlp = tf_nlp*(1+col_points_global)/2
 adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
 nu_linkage_nlp = adjoints_nlp[nx:n_phase*nx].reshape((nx, -1), order='F')
-nuf_nlp = adjoints_nlp[n_phase*nx:(n_phase+1)*nx]
-lam_nlp = adjoints_nlp[(n_phase + 1) * nx:].reshape((nx, -1), order='F') / col_weights[None, :]
+nuf_nlp = adjoints_nlp[n_phase*nx:n_phase*nx+nxp]
+lam_nlp = adjoints_nlp[n_phase*nx+nxp:].reshape((nx, -1), order='F') / col_weights[None, :]
 # lam_nlp = adjoints_nlp[n_phase * nx:].reshape((nx, -1), order='F')
 # nuf_nlp = lam_nlp @ interpf_col_matrix
 
 # Save solution ------------------------------------------------------------------------------------------------------ #
 sol_nlp = copy(sol_set[-1])
 sol_nlp.t = t_nlp
-sol_nlp.x = X_nlp
-sol_nlp.lam = np.empty_like(X_nlp)
-sol_nlp.lam[:, idces_collocation] = lam_nlp
+sol_nlp.x = X_nlp[:nxp, :]
+sol_nlp.lam = np.empty_like(sol_nlp.x)
+sol_nlp.lam[:, idces_collocation] = lam_nlp[:nxp, :]
 # sol_nlp.lam[:, idces_initial] = np.hstack((-nu0_nlp[:, None], -nu_linkage_nlp))
+sol_nlp.lam[:, idces_anchor] = np.nan
 sol_nlp.lam[:, idces_initial] = lam_nlp @ interp0_col_matrix
 sol_nlp.u = np.empty(shape=(nu, t_nlp.shape[0]), dtype=U_nlp.dtype)
 sol_nlp.u[:, idces_collocation] = U_nlp
+sol_nlp.u[:, idces_anchor] = np.nan
 sol_nlp.u[:, idces_initial] = U_nlp @ interp0_col_matrix
-sol_nlp.nu0 = nu0_nlp
+sol_nlp.nu0 = nu0_nlp[:nxp]
 sol_nlp.nuf = nuf_nlp
 
 # Add jump values
@@ -263,12 +290,19 @@ idces_fi = np.append(idces_initial[1:], len(t_nlp))
 t_nlp_fi = np.append(t_nlp[idces_fi[:-1]], tf_nlp)
 X_nlp_fi = X_nlp @ interpf_mesh_matrix
 # lam_nlp_fi = np.hstack((-nu_linkage_nlp, nuf_nlp[:, None]))
-lam_nlp_fi = lam_nlp @ interpf_col_matrix
+if collocation_method in ['lg', 'lgl']:
+    lam_nlp_fi = lam_nlp @ interpf_col_matrix
+elif collocation_method == 'lgr':
+    lam_nlp_fi = np.vstack([
+        lam_nlp[:, _phase:(_phase+1)*n_col] @ (col_weights_local * diff_mat_local[:, -1])
+        for _phase in range(n_phase)
+    ]).T
+
 u_nlp_fi = U_nlp @ interpf_col_matrix
 
 sol_nlp.t = np.insert(sol_nlp.t, idces_fi, t_nlp_fi)
-sol_nlp.x = np.insert(sol_nlp.x, idces_fi, X_nlp_fi, axis=1)
-sol_nlp.lam = np.insert(sol_nlp.lam, idces_fi, lam_nlp_fi, axis=1)
+sol_nlp.x = np.insert(sol_nlp.x, idces_fi, X_nlp_fi[:nxp, :], axis=1)
+sol_nlp.lam = np.insert(sol_nlp.lam, idces_fi, lam_nlp_fi[:nxp, :], axis=1)
 sol_nlp.u = np.insert(sol_nlp.u, idces_fi, u_nlp_fi, axis=1)
 
 with open('sol_nlp.data', 'wb') as f:
