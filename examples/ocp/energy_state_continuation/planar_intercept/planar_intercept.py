@@ -98,20 +98,20 @@ path_cost_fun = ca.Function('L', (x_sym, u_sym), (path_cost_sym,), ('x', 'u'), (
 
 # Pseudospectral optimal control problem statement
 n_phase = 1
-n_col = 20
+n_col = 30
 
 # col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col)
 # idces_anchor = np.empty(shape=(0,), dtype=int)
 # idces_col = np.arange(0, n_col, 1)
 
-col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
-# col_weights_local = np.insert(col_weights_local, 0, 0)
-idces_anchor = np.arange(0, 1, 1)
-idces_col = np.arange(1, n_col+1, 1)
+# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
+# # col_weights_local = np.insert(col_weights_local, 0, 0)
+# idces_anchor = np.arange(0, 1, 1)
+# idces_col = np.arange(1, n_col+1, 1)
 
-# col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgr(n_col)
-# idces_anchor = np.empty(shape=(0,), dtype=int)
-# idces_col = np.arange(0, n_col, 1)
+col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgr(n_col)
+idces_anchor = np.empty(shape=(0,), dtype=int)
+idces_col = np.arange(0, n_col, 1)
 
 n_mesh = len(col_points_local)
 _, diff_mat_local = giuseppe.utils.pseudospectral.lagrange_matrices(
@@ -169,17 +169,26 @@ X0i_sym = X_sym @ interp0_mesh_matrix
 Xfi_sym = X_sym @ interpf_mesh_matrix
 
 integrated_cost = dt_phase/2 * (L_col @ col_weights)
-dynamic_constraint = (dt_phase/2*f_col - X_sym @ diff_mat.T) * np.tile(col_weights[None, :], (3, 1))
+dynamic_constraint = dt_phase/2*f_col - X_sym @ diff_mat.T
+# dynamic_constraint = (dt_phase/2*f_col - X_sym @ diff_mat.T) * np.tile(col_weights[None, :], (3, 1))
 initial_state_constraint = X0i_sym[:, 0] - x0
 phase_linkage_constraint = X0i_sym[:, 1:] - Xfi_sym[:, :-1]
 terminal_state_constraint = Xfi_sym[:, -1] - xf
 boundary_constraints = ca.vec(ca.hcat((initial_state_constraint, phase_linkage_constraint, terminal_state_constraint)))
 
+# nlp = {
+#     'x': z_sym,  # Unknown variables
+#     'f': integrated_cost + ca.dot(sol_set[-1].nuf, boundary_constraints[-nx:]),  # Objective function
+#     'g': ca.vcat((
+#         boundary_constraints[:n_phase*nx], ca.vec(dynamic_constraint)
+#     )),  # (In)equality constraints
+# }
 nlp = {
     'x': z_sym,  # Unknown variables
     'f': integrated_cost,  # Objective function
     'g': ca.vcat((
-        boundary_constraints, ca.vec(dynamic_constraint)
+        boundary_constraints,
+        ca.vec(dynamic_constraint),
     )),  # (In)equality constraints
 }
 nlp_solver = ca.nlpsol('NLP', 'ipopt', nlp)
@@ -197,14 +206,6 @@ z_outer = np.concatenate((
 ))
 
 # Bounds (stolen from known optimal solution)
-
-# ubx = sol_set[-1].x.max(axis=1, initial=-np.inf) + 10.
-# # ubx[:2] += 10.
-# # ubx[2] += 30 * np.pi/180
-# lbx = sol_set[-1].x.min(axis=1, initial=np.inf) - 10.
-# # lbx[:2] -= 10.
-# # lbx[2] -= 30 * np.pi/180
-
 ubx = sol_set[-1].x.max(axis=1, initial=-np.inf)
 ubx[:2] += 10.
 ubx[2] += 30 * np.pi/180
@@ -239,7 +240,9 @@ adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
 nu_linkage_nlp = adjoints_nlp[nx:n_phase*nx].reshape((nx, -1), order='F')
 nuf_nlp = adjoints_nlp[n_phase*nx:(n_phase+1)*nx]
-lam_nlp = adjoints_nlp[(n_phase + 1) * nx:].reshape((nx, -1), order='F')
+lam_nlp = adjoints_nlp[(n_phase + 1) * nx:].reshape((nx, -1), order='F') / col_weights[None, :]
+# lam_nlp = adjoints_nlp[n_phase * nx:].reshape((nx, -1), order='F')
+# nuf_nlp = lam_nlp @ interpf_col_matrix
 
 # Save solution ------------------------------------------------------------------------------------------------------ #
 sol_nlp = copy(sol_set[-1])
