@@ -101,10 +101,10 @@ eom_fun = ca.Function('f', (x_sym, u_sym,), (eom_sym,), ('x', 'u',), ('f',))
 nx = x_sym.shape[0]
 nu = u_sym.shape[0]
 
-n_phase = 2
-n_col = 10
+n_phase = 1
+n_col = 30
 
-collocation_method = 'lgr'
+collocation_method = 'zlgl'
 
 if collocation_method == 'lg':
     col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col + 1)
@@ -120,6 +120,24 @@ elif collocation_method == 'lgl':
     col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col)
     idces_anchor_local = np.empty(shape=(0,), dtype=int)
     idces_collocation_local = np.arange(0, n_col, 1)
+elif collocation_method == 'zlg':
+    assert n_col % 2 == 0, f"ZLG requires an even number of collocation points, but n_col={n_col}!"
+    col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col)
+    col_points_local = np.sort(np.append(col_points_local[1:], 0))
+    idces_anchor_local = np.where(col_points_local == 0)[0]
+    idces_collocation_local = np.delete(np.arange(0, n_col+1, 1), idces_anchor_local)
+elif collocation_method == 'zlgr':
+    assert n_col % 2 == 0, f"ZLG requires an even number of collocation points, but n_col={n_col}!"
+    col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgr(n_col)
+    col_points_local = np.sort(np.append(col_points_local, 0))
+    idces_anchor_local = np.where(col_points_local == 0)[0]
+    idces_collocation_local = np.delete(np.arange(0, n_col+1, 1), idces_anchor_local)
+elif collocation_method == 'zlgl':
+    assert n_col % 2 == 0, f"ZLGL requires an even number of collocation points, but n_col={n_col}!"
+    col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lgl(n_col)
+    col_points_local = np.sort(np.append(col_points_local, 0))
+    idces_anchor_local = np.where(col_points_local == 0)[0]
+    idces_collocation_local = np.delete(np.arange(0, n_col+1, 1), idces_anchor_local)
 else:
     raise ValueError(f'collocation_method=={collocation_method} is not implemented!')
 
@@ -253,13 +271,13 @@ sol_nlp = copy(sol_set[-1])
 sol_nlp.t = t_nlp
 sol_nlp.x = X_nlp
 sol_nlp.lam = np.empty_like(sol_nlp.x)
+sol_nlp.lam[:] = np.nan
 sol_nlp.lam[:, idces_collocation] = lam_nlp
 # sol_nlp.lam[:, idces_initial] = np.hstack((-nu0_nlp[:, None], -nu_linkage_nlp))
-sol_nlp.lam[:, idces_anchor] = np.nan
 sol_nlp.lam[:, idces_initial] = lam_nlp @ interp0_col_matrix
 sol_nlp.u = np.empty(shape=(nu, t_nlp.shape[0]), dtype=U_nlp.dtype)
+sol_nlp.u[:] = np.nan
 sol_nlp.u[:, idces_collocation] = U_nlp
-sol_nlp.u[:, idces_anchor] = np.nan
 sol_nlp.u[:, idces_initial] = U_nlp @ interp0_col_matrix
 sol_nlp.nu0 = nu0_nlp
 sol_nlp.nuf = nuf_nlp
@@ -269,9 +287,9 @@ idces_fi = np.append(idces_initial[1:], len(t_nlp))
 t_nlp_fi = np.append(t_nlp[idces_fi[:-1]], tf_nlp)
 X_nlp_fi = X_nlp @ interpf_mesh_matrix
 # lam_nlp_fi = np.hstack((-nu_linkage_nlp, nuf_nlp[:, None]))
-if collocation_method in ['lg', 'lgl']:
+if collocation_method in ['lg', 'lgl', 'zlg', 'zlgl']:
     lam_nlp_fi = lam_nlp @ interpf_col_matrix
-elif collocation_method == 'lgr':
+elif collocation_method == ['lgr', 'zlgr']:
     lam_nlp_fi = np.vstack([
         lam_nlp[:, _phase*n_col:(_phase+1)*n_col] @ (col_weights_local * diff_mat_local[:, -1])
         for _phase in range(n_phase)
