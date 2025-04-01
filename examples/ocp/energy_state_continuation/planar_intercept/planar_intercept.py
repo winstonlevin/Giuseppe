@@ -122,7 +122,7 @@ elif collocation_method == 'lgl':
     idces_collocation_local = np.arange(0, n_col, 1)
 elif collocation_method == 'zlg':
     assert n_col % 2 == 0, f"ZLG requires an even number of collocation points, but n_col={n_col}!"
-    col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col)
+    col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col+1)
     col_points_local = np.sort(np.append(col_points_local[1:], 0))
     idces_anchor_local = np.where(col_points_local == 0)[0]
     idces_collocation_local = np.delete(np.arange(0, n_col+1, 1), idces_anchor_local)
@@ -289,7 +289,7 @@ X_nlp_fi = X_nlp @ interpf_mesh_matrix
 # lam_nlp_fi = np.hstack((-nu_linkage_nlp, nuf_nlp[:, None]))
 if collocation_method in ['lg', 'lgl', 'zlg', 'zlgl']:
     lam_nlp_fi = lam_nlp @ interpf_col_matrix
-elif collocation_method == ['lgr', 'zlgr']:
+elif collocation_method in ['lgr', 'zlgr']:
     lam_nlp_fi = np.vstack([
         lam_nlp[:, _phase*n_col:(_phase+1)*n_col] @ (col_weights_local * diff_mat_local[:, -1])
         for _phase in range(n_phase)
