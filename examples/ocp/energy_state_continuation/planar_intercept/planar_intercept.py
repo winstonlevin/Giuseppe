@@ -218,7 +218,6 @@ tf_sym = ca.SX.sym('tf')
 dt_phase = tf_sym / n_phase
 z_sym = ca.vcat((
     X_sym[idces_int_output, 0],
-    X_sym[idces_int_output, -1],
     ca.vec(X_sym[idces_state, :]),
     ca.vec(U_sym),
     tf_sym,
@@ -239,7 +238,7 @@ if use_continuation:
     # Add continuation into dynamics
     dynamic_constraint[idces_fast, :] = dt_phase/2*f_col[idces_fast, :] - s_sym * (X_sym @ diff_mat.T)[idces_fast, :]
 
-xf_int_sym = X_sym[idces_int_output, 0] + dt_phase/2*f_col[idces_int_output, :] @ col_weights
+xf_int_sym = X_sym[idces_int_output, 0] + tf_sym/2*f_col[idces_int_output, :] @ col_weights
 
 # if reduce_state:
 #     dynamic_constraint = ca.vcat((ca.vec(dynamic_constraint[2, :]), ca.sum2(dynamic_constraint[:2, :])))
@@ -247,12 +246,13 @@ xf_int_sym = X_sym[idces_int_output, 0] + dt_phase/2*f_col[idces_int_output, :] 
 dynamic_constraint = ca.vec(dynamic_constraint)
 initial_state_constraint = X0i_sym[:, 0] - x0
 phase_linkage_constraint = X0i_sym[idces_state, 1:] - Xfi_sym[idces_state, :-1]
-terminal_state_constraint = Xfi_sym[idces_state, -1] - xf
+terminal_state_constraint = Xfi_sym[idces_state, -1] - xf[idces_state]
+terminal_integral_constraint = xf_int_sym[idces_int_output] - xf[idces_int_output]
 boundary_constraints = ca.vcat((
     ca.vec(initial_state_constraint),
     ca.vec(phase_linkage_constraint),
     ca.vec(terminal_state_constraint),
-    xf_int_sym - X_sym[idces_int_output, -1]
+    terminal_integral_constraint
 ))
 if use_continuation:
     boundary_constraints = ca.vcat((boundary_constraints, s_sym - 1.))
@@ -275,7 +275,6 @@ U_outer = np.zeros(shape=U_sym.shape, dtype=float)
 
 z_outer = np.concatenate((
     X_outer[idces_int_output, 0],
-    X_outer[idces_int_output, -1],
     X_outer[idces_state, :].ravel(order='F'),
     U_outer.ravel(order='F'),
     (tf_outer,),
@@ -295,15 +294,15 @@ ubtf = sol_set[-1].t[-1] + 10.
 lbtf = 0.
 
 ubz = np.empty_like(z_outer)
-ubz[:2*n_int_output] = np.tile(ubx[idces_int_output], (2,))
-ubz[2*n_int_output:2*n_int_output+nx_mesh] = np.tile(ubx[idces_state], n_mesh*n_phase)
-ubz[2*n_int_output+nx_mesh:2*n_int_output+nx_mesh+nu_mesh] = np.tile(ubu, n_col*n_phase)
-ubz[2*n_int_output+nx_mesh+nu_mesh] = ubtf
+ubz[:n_int_output] = ubx[idces_int_output]
+ubz[n_int_output:n_int_output+nx_mesh] = np.tile(ubx[idces_state], n_mesh*n_phase)
+ubz[n_int_output+nx_mesh:n_int_output+nx_mesh+nu_mesh] = np.tile(ubu, n_col*n_phase)
+ubz[n_int_output+nx_mesh+nu_mesh] = ubtf
 lbz = np.empty_like(z_outer)
-lbz[:2*n_int_output] = np.tile(lbx[idces_int_output], (2,))
-lbz[2*n_int_output:2*n_int_output+nx_mesh] = np.tile(lbx[idces_state], n_mesh*n_phase)
-lbz[2*n_int_output+nx_mesh:2*n_int_output+nx_mesh+nu_mesh] = np.tile(lbu, n_col*n_phase)
-lbz[2*n_int_output+nx_mesh+nu_mesh] = lbtf
+lbz[:n_int_output] = lbx[idces_int_output]
+lbz[n_int_output:n_int_output+nx_mesh] = np.tile(lbx[idces_state], n_mesh*n_phase)
+lbz[n_int_output+nx_mesh:n_int_output+nx_mesh+nu_mesh] = np.tile(lbu, n_col*n_phase)
+lbz[n_int_output+nx_mesh+nu_mesh] = lbtf
 
 if use_continuation:
     z_outer = np.append(z_outer, 0.)
@@ -316,33 +315,34 @@ nlp_sol = nlp_solver(x0=z_outer, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 z_nlp = nlp_sol['x'].full().ravel()
 X_nlp = np.empty(shape=(nx, n_mesh*n_phase))
 X_nlp[idces_int_output, 0] = z_nlp[:n_int_output]
-X_nlp[idces_int_output, -1] = z_nlp[n_int_output:2*n_int_output]
-X_nlp[idces_int_output, 1:-1] = np.nan
-X_nlp[idces_state, :] = z_nlp[2*n_int_output:2*n_int_output+nx_mesh].reshape((nxr, -1), order='F')
+# X_nlp[idces_int_output, -1] = z_nlp[n_int_output:2*n_int_output]
+X_nlp[idces_int_output, 1:] = np.nan
+X_nlp[idces_state, :] = z_nlp[n_int_output:n_int_output+nx_mesh].reshape((nxr, -1), order='F')
 
-U_nlp = z_nlp[2*n_int_output+nx_mesh:2*n_int_output+nx_mesh+nu_mesh].reshape((nu, -1), order='F')
-tf_nlp = z_nlp[2*n_int_output+nx_mesh+nu_mesh]
+U_nlp = z_nlp[n_int_output+nx_mesh:n_int_output+nx_mesh+nu_mesh].reshape((nu, -1), order='F')
+tf_nlp = z_nlp[n_int_output+nx_mesh+nu_mesh]
 t_nlp = tf_nlp*(1+col_points_global)/2
 
 adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
-nu_linkage_nlp = adjoints_nlp[nx:n_phase*nx].reshape((nx, -1), order='F')
-nuf_nlp = adjoints_nlp[n_phase*nx:(n_phase+1)*nx]
-lam_nlp = np.empty(shape=(nx, n_col*n_phase))
-lam_nlp[idces_int_output, :] = adjoints_nlp[:n_int_output]
-lam_nlp[idces_int_output, -1] = z_nlp[n_int_output:2*n_int_output]
-X_nlp[idces_int_output, 1:-1] = np.nan
-X_nlp[idces_state, :] = z_nlp[2*n_int_output:2*n_int_output+nx_mesh].reshape((nxr, -1), order='F')
+nu_linkage_nlp = adjoints_nlp[nx:nx+(n_phase-1)*nxr].reshape((nx, -1), order='F')
+nuf_nlp = np.empty_like(nu0_nlp)
+nuf_nlp[idces_state] = adjoints_nlp[nx+(n_phase-1)*nxr:nx+n_phase*nxr]
+nuf_nlp[idces_int_output] = adjoints_nlp[nx+n_phase*nxr:(n_phase+1)*nx]
 
-
-if reduce_state:
-    lam_nlp = np.empty(shape=(nx, n_col*n_phase))
-    lam_nlp[0, :] = adjoints_nlp[(n_phase+1)*nx+n_phase*n_col]
-    lam_nlp[1, :] = adjoints_nlp[(n_phase+1)*nx+n_phase*n_col+1]
-    lam_nlp[2, :] = adjoints_nlp[(n_phase+1)*nx:(n_phase+1)*nx+n_phase*n_col].reshape((1, -1), order='F')
-
-else:
-    lam_nlp = adjoints_nlp[(n_phase + 1) * nx:(n_phase + 1) * nx + n_phase * nx * n_col].reshape((nx, -1), order='F')
+lam_nlp = np.empty(shape=(nx, n_col * n_phase))
+lam_nlp[idces_int_output, :] = np.nan
+lam_nlp[idces_state, :] = adjoints_nlp[(n_phase + 1) * nx:(n_phase + 1) * nx + n_phase * n_col * nxr].reshape((nxr, -1), order='F')
+for idx_int_output in idces_int_output:
+    lam_nlp[idx_int_output, :] = nuf_nlp[idx_int_output]
+# if reduce_state:
+#     lam_nlp = np.empty(shape=(nx, n_col*n_phase))
+#     for idx, idx_int_output in enumerate(idces_int_output):
+#         lam_nlp[idx_int_output, :] = adjoints_nlp[(n_phase+1)*nx+n_phase*n_col + idx]
+#     lam_nlp[idces_state, :] = adjoints_nlp[(n_phase+1)*nx:(n_phase+1)*nx+n_phase*n_col*nxr].reshape((1, -1), order='F')
+#
+# else:
+#     lam_nlp = adjoints_nlp[(n_phase + 1) * nx:(n_phase + 1) * nx + n_phase * nx * n_col].reshape((nx, -1), order='F')
 # lam_nlp = adjoints_nlp[n_phase * nx:].reshape((nx, -1), order='F')
 # nuf_nlp = lam_nlp @ interpf_col_matrix
 
