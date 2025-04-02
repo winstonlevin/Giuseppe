@@ -17,7 +17,8 @@ x0 = np.zeros(shape=(3,), dtype=float)
 x0[2] = np.pi/2
 xf = np.zeros(shape=(3,), dtype=float)
 xf[0] = 10.
-xf[2] = np.pi/2
+xf[1] = -2.
+xf[2] = np.pi/3
 
 # Outer solution
 dp = xf[:2] - x0[:2]
@@ -84,6 +85,10 @@ sol_set.save('sol_set.data')
 # -------------------------------------------------------------------------------------------------------------------- #
 # NLP SOLUTION                                                                                                         #
 # -------------------------------------------------------------------------------------------------------------------- #
+use_continuation = False
+idx_slow = 2
+idces_fast = np.array((0, 1))  # The heading is the "fast" state
+
 # Dynamic model
 x_sym = ca.SX.sym('x', 3)
 u_sym = ca.SX.sym('u', 1)
@@ -104,7 +109,7 @@ nu = u_sym.shape[0]
 n_phase = 1
 n_col = 30
 
-collocation_method = 'zlgl'
+collocation_method = 'lg'
 
 if collocation_method == 'lg':
     col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col + 1)
@@ -178,6 +183,10 @@ idces_anchor = np.concatenate([idces_anchor_local+n_mesh*_phase for _phase in ra
 
 X_sym = ca.SX.sym('X', nx, n_mesh*n_phase)  # Include initial state
 U_sym = ca.SX.sym('U', nu, n_col*n_phase)
+s_sym = ca.SX.sym('s')
+nx_mesh = nx*n_mesh*n_phase
+nu_mesh = nu*n_col*n_phase
+
 idces_initial = np.arange(0, X_sym.shape[1], n_mesh)
 
 tf_sym = ca.SX.sym('tf')
@@ -187,6 +196,8 @@ z_sym = ca.vcat((
     ca.vec(U_sym),
     tf_sym,
 ))
+if use_continuation:
+    z_sym = ca.vcat((z_sym, s_sym))
 
 L_col = path_cost_fun(X_sym[:, idces_collocation], U_sym)
 f_col = eom_fun(X_sym[:, idces_collocation], U_sym)
@@ -195,7 +206,9 @@ Xfi_sym = X_sym @ interpf_mesh_matrix
 
 integrated_cost = end_cost_fun(Xfi_sym[:, -1]) + dt_phase/2 * (L_col @ col_weights)
 dynamic_constraint = dt_phase/2*f_col - X_sym @ diff_mat.T
-# dynamic_constraint = (dt_phase/2*f_col - X_sym @ diff_mat.T) * np.tile(col_weights[None, :], (3, 1))
+if use_continuation:
+    # Add continuation into dynamics
+    dynamic_constraint[idces_fast, :] = dt_phase/2*f_col[idces_fast, :] - s_sym * (X_sym @ diff_mat.T)[idces_fast, :]
 initial_state_constraint = X0i_sym[:, 0] - x0
 phase_linkage_constraint = X0i_sym[:, 1:] - Xfi_sym[:, :-1]
 terminal_state_constraint = Xfi_sym[:, -1] - xf
@@ -204,6 +217,8 @@ boundary_constraints = ca.vcat((
     ca.vec(phase_linkage_constraint),
     ca.vec(terminal_state_constraint),
 ))
+if use_continuation:
+    boundary_constraints = ca.vcat((boundary_constraints, s_sym - 1.))
 
 nlp = {
     'x': z_sym,  # Unknown variables
@@ -241,28 +256,33 @@ ubtf = sol_set[-1].t[-1] + 10.
 lbtf = 0.
 
 ubz = np.empty_like(z_outer)
-ubz[:X_sym.numel()] = np.tile(ubx, n_mesh*n_phase)
-ubz[X_sym.numel():-1] = np.tile(ubu, n_col*n_phase)
-ubz[-1] = ubtf
+ubz[:nx_mesh] = np.tile(ubx, n_mesh*n_phase)
+ubz[nx_mesh:nx_mesh+nu_mesh] = np.tile(ubu, n_col*n_phase)
+ubz[nx_mesh+nu_mesh] = ubtf
 lbz = np.empty_like(z_outer)
-lbz[:X_sym.numel()] = np.tile(lbx, n_mesh*n_phase)
-lbz[X_sym.numel():-1] = np.tile(lbu, n_col*n_phase)
-lbz[-1] = lbtf
+lbz[:nx_mesh] = np.tile(lbx, n_mesh*n_phase)
+lbz[nx_mesh:nx_mesh+nu_mesh] = np.tile(lbu, n_col*n_phase)
+lbz[nx_mesh+nu_mesh] = lbtf
+
+if use_continuation:
+    z_outer = np.append(z_outer, 0.)
+    lbz = np.append(lbz, 0.)
+    ubz = np.append(ubz, 1.)
 
 nlp_sol = nlp_solver(x0=z_outer, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 
 # Unpack solution
 z_nlp = nlp_sol['x'].full().ravel()
-X_nlp = z_nlp[:X_sym.numel()].reshape((nx, -1), order='F')
-U_nlp = z_nlp[X_sym.numel():-1].reshape((nu, -1), order='F')
-tf_nlp = z_nlp[-1]
+X_nlp = z_nlp[:nx_mesh].reshape((nx, -1), order='F')
+U_nlp = z_nlp[nx_mesh:nx_mesh+nu_mesh].reshape((nu, -1), order='F')
+tf_nlp = z_nlp[nx_mesh+nu_mesh]
 t_nlp = tf_nlp*(1+col_points_global)/2
 
 adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
 nu_linkage_nlp = adjoints_nlp[nx:n_phase*nx].reshape((nx, -1), order='F')
 nuf_nlp = adjoints_nlp[n_phase*nx:(n_phase+1)*nx]
-lam_nlp = adjoints_nlp[(n_phase+1)*nx:].reshape((nx, -1), order='F') / col_weights[None, :]
+lam_nlp = adjoints_nlp[(n_phase+1)*nx:(n_phase+1)*nx+n_phase*nx*n_col].reshape((nx, -1), order='F') / col_weights[None, :]
 # lam_nlp = adjoints_nlp[n_phase * nx:].reshape((nx, -1), order='F')
 # nuf_nlp = lam_nlp @ interpf_col_matrix
 
