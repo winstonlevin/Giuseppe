@@ -175,6 +175,9 @@ n_mesh = len(col_points_local)
 _, diff_mat_local = giuseppe.utils.pseudospectral.lagrange_matrices(
     col_points_local, col_points_local[idces_collocation_local], compute_diff_matrix=True, compute_interp_matrix=False
 )
+int_mat_local = giuseppe.utils.pseudospectral.integration_matrix(
+    col_points_local[idces_collocation_local], col_points_local[idces_collocation_local],
+)
 interp0f_col_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
     col_points_local[idces_collocation_local], np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
 )  # Interpolate Lam/U to get 0/f values
@@ -184,6 +187,7 @@ interp0f_mesh_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
 
 # Expand values for multi-phase
 diff_mat = np.zeros(shape=(n_col*n_phase, n_mesh*n_phase))
+int_mat = np.zeros(shape=(n_col*n_phase, n_col*n_phase))
 col_points = np.tile(col_points_local, n_phase)
 col_weights = np.tile(col_weights_local, n_phase)
 col_points_global = np.empty_like(col_points)
@@ -194,6 +198,7 @@ interp0_mesh_matrix = np.zeros(shape=(n_mesh * n_phase, n_phase), dtype=interp0f
 interpf_mesh_matrix = np.zeros_like(interp0_mesh_matrix)
 for phase in range(n_phase):
     diff_mat[phase*n_col:(phase+1)*n_col, phase*n_mesh:(phase+1)*n_mesh] = diff_mat_local
+    int_mat[phase*n_col:(phase+1)*n_col, phase*n_col:(phase+1)*n_col] = int_mat_local
     interp0_col_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_col_local[0, :]
     interpf_col_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_col_local[1, :]
     interp0_mesh_matrix[phase * n_mesh:(phase + 1) * n_mesh, phase] = interp0f_mesh_local[0, :]
@@ -314,15 +319,19 @@ nlp_sol = nlp_solver(x0=z_outer, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 # Unpack solution
 z_nlp = nlp_sol['x'].full().ravel()
 X_nlp = np.empty(shape=(nx, n_mesh*n_phase))
-X_nlp[idces_int_output, 0] = z_nlp[:n_int_output]
-# X_nlp[idces_int_output, -1] = z_nlp[n_int_output:2*n_int_output]
-X_nlp[idces_int_output, 1:] = np.nan
 X_nlp[idces_state, :] = z_nlp[n_int_output:n_int_output+nx_mesh].reshape((nxr, -1), order='F')
+X_nlp[idces_int_output, 0] = z_nlp[:n_int_output]
+X_nlp[idces_int_output, 1:] = np.nan
 
 U_nlp = z_nlp[n_int_output+nx_mesh:n_int_output+nx_mesh+nu_mesh].reshape((nu, -1), order='F')
 tf_nlp = z_nlp[n_int_output+nx_mesh+nu_mesh]
 t_nlp = tf_nlp*(1+col_points_global)/2
 
+# Calculate integrated states
+f_col_nlp = eom_fun(X_nlp[:, idces_collocation], U_nlp).full()
+X_nlp[idces_int_output, 1:] = X_nlp[idces_int_output, 0:1] + tf_nlp/2*f_col_nlp[idces_int_output, :] @ int_mat.T
+
+# Costate information
 adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
 nu_linkage_nlp = adjoints_nlp[nx:nx+(n_phase-1)*nxr].reshape((nx, -1), order='F')
