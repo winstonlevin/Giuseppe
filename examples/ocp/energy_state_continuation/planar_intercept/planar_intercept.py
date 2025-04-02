@@ -85,9 +85,29 @@ sol_set.save('sol_set.data')
 # -------------------------------------------------------------------------------------------------------------------- #
 # NLP SOLUTION                                                                                                         #
 # -------------------------------------------------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------------------------------- #
+# CONTINUATION SETTINGS:                                                                              #
+# IF use_continuation -> s=0 corresponds with "energy state" (psi is a control variable, not a state) #
+#                        s=1 corresponds with true state (psi is time-varying)                        #
+# --------------------------------------------------------------------------------------------------- #
 use_continuation = False
-idx_slow = 2
-idces_fast = np.array((0, 1))  # The heading is the "fast" state
+idces_slow = np.array((0, 1))
+idces_fast = np.array((2,))  # The heading is the "fast" state
+
+# --------------------------------------------------------------------------------- #
+# STATE REDUCTION SETTINGS:                                                         #
+# IF reduce_state -> Eliminate x(t), y(t), lamX(t), lamY(t),                        #
+#                    replace with integral constraint xf-x0-int(dx/dt dt) = 0       #
+# --------------------------------------------------------------------------------- #
+reduce_state = True
+if reduce_state:
+    idces_int_output = idces_slow  # Dynamics do not depend on (x,y)
+    idces_state = idces_fast
+else:
+    idces_state = np.arange(0, 3, 1)
+    idces_int_output = np.empty(shape=(0,), dtype=idces_state.dtype)
+
+n_int_output = idces_int_output.size
 
 # Dynamic model
 x_sym = ca.SX.sym('x', 3)
@@ -106,8 +126,13 @@ eom_fun = ca.Function('f', (x_sym, u_sym,), (eom_sym,), ('x', 'u',), ('f',))
 nx = x_sym.shape[0]
 nu = u_sym.shape[0]
 
+if reduce_state:
+    nxr = idces_state.size
+else:
+    nxr = nx
+
 n_phase = 1
-n_col = 30
+n_col = 5
 
 collocation_method = 'lg'
 
@@ -184,7 +209,7 @@ idces_anchor = np.concatenate([idces_anchor_local+n_mesh*_phase for _phase in ra
 X_sym = ca.SX.sym('X', nx, n_mesh*n_phase)  # Include initial state
 U_sym = ca.SX.sym('U', nu, n_col*n_phase)
 s_sym = ca.SX.sym('s')
-nx_mesh = nx*n_mesh*n_phase
+nx_mesh = nxr*n_mesh*n_phase
 nu_mesh = nu*n_col*n_phase
 
 idces_initial = np.arange(0, X_sym.shape[1], n_mesh)
@@ -192,7 +217,9 @@ idces_initial = np.arange(0, X_sym.shape[1], n_mesh)
 tf_sym = ca.SX.sym('tf')
 dt_phase = tf_sym / n_phase
 z_sym = ca.vcat((
-    ca.vec(X_sym),
+    X_sym[idces_int_output, 0],
+    X_sym[idces_int_output, -1],
+    ca.vec(X_sym[idces_state, :]),
     ca.vec(U_sym),
     tf_sym,
 ))
@@ -205,17 +232,27 @@ X0i_sym = X_sym @ interp0_mesh_matrix
 Xfi_sym = X_sym @ interpf_mesh_matrix
 
 integrated_cost = end_cost_fun(Xfi_sym[:, -1]) + dt_phase/2 * (L_col @ col_weights)
-dynamic_constraint = dt_phase/2*f_col - X_sym @ diff_mat.T
+dynamic_constraint = (
+                             dt_phase/2*f_col[idces_state, :] - X_sym[idces_state, :] @ diff_mat.T
+                     ) * np.tile(col_weights[None, :], (nxr, 1))
 if use_continuation:
     # Add continuation into dynamics
     dynamic_constraint[idces_fast, :] = dt_phase/2*f_col[idces_fast, :] - s_sym * (X_sym @ diff_mat.T)[idces_fast, :]
+
+xf_int_sym = X_sym[idces_int_output, 0] + dt_phase/2*f_col[idces_int_output, :] @ col_weights
+
+# if reduce_state:
+#     dynamic_constraint = ca.vcat((ca.vec(dynamic_constraint[2, :]), ca.sum2(dynamic_constraint[:2, :])))
+# else:
+dynamic_constraint = ca.vec(dynamic_constraint)
 initial_state_constraint = X0i_sym[:, 0] - x0
-phase_linkage_constraint = X0i_sym[:, 1:] - Xfi_sym[:, :-1]
-terminal_state_constraint = Xfi_sym[:, -1] - xf
+phase_linkage_constraint = X0i_sym[idces_state, 1:] - Xfi_sym[idces_state, :-1]
+terminal_state_constraint = Xfi_sym[idces_state, -1] - xf
 boundary_constraints = ca.vcat((
     ca.vec(initial_state_constraint),
     ca.vec(phase_linkage_constraint),
     ca.vec(terminal_state_constraint),
+    xf_int_sym - X_sym[idces_int_output, -1]
 ))
 if use_continuation:
     boundary_constraints = ca.vcat((boundary_constraints, s_sym - 1.))
@@ -225,7 +262,7 @@ nlp = {
     'f': integrated_cost,  # Objective function
     'g': ca.vcat((
         boundary_constraints,
-        ca.vec(dynamic_constraint),
+        dynamic_constraint,
     )),  # (In)equality constraints
 }
 nlp_solver = ca.nlpsol('NLP', 'ipopt', nlp)
@@ -237,7 +274,9 @@ X_outer[2, :] = psi_outer
 U_outer = np.zeros(shape=U_sym.shape, dtype=float)
 
 z_outer = np.concatenate((
-    X_outer.ravel(order='F'),
+    X_outer[idces_int_output, 0],
+    X_outer[idces_int_output, -1],
+    X_outer[idces_state, :].ravel(order='F'),
     U_outer.ravel(order='F'),
     (tf_outer,),
 ))
@@ -256,13 +295,15 @@ ubtf = sol_set[-1].t[-1] + 10.
 lbtf = 0.
 
 ubz = np.empty_like(z_outer)
-ubz[:nx_mesh] = np.tile(ubx, n_mesh*n_phase)
-ubz[nx_mesh:nx_mesh+nu_mesh] = np.tile(ubu, n_col*n_phase)
-ubz[nx_mesh+nu_mesh] = ubtf
+ubz[:2*n_int_output] = np.tile(ubx[idces_int_output], (2,))
+ubz[2*n_int_output:2*n_int_output+nx_mesh] = np.tile(ubx[idces_state], n_mesh*n_phase)
+ubz[2*n_int_output+nx_mesh:2*n_int_output+nx_mesh+nu_mesh] = np.tile(ubu, n_col*n_phase)
+ubz[2*n_int_output+nx_mesh+nu_mesh] = ubtf
 lbz = np.empty_like(z_outer)
-lbz[:nx_mesh] = np.tile(lbx, n_mesh*n_phase)
-lbz[nx_mesh:nx_mesh+nu_mesh] = np.tile(lbu, n_col*n_phase)
-lbz[nx_mesh+nu_mesh] = lbtf
+lbz[:2*n_int_output] = np.tile(lbx[idces_int_output], (2,))
+lbz[2*n_int_output:2*n_int_output+nx_mesh] = np.tile(lbx[idces_state], n_mesh*n_phase)
+lbz[2*n_int_output+nx_mesh:2*n_int_output+nx_mesh+nu_mesh] = np.tile(lbu, n_col*n_phase)
+lbz[2*n_int_output+nx_mesh+nu_mesh] = lbtf
 
 if use_continuation:
     z_outer = np.append(z_outer, 0.)
@@ -273,16 +314,35 @@ nlp_sol = nlp_solver(x0=z_outer, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 
 # Unpack solution
 z_nlp = nlp_sol['x'].full().ravel()
-X_nlp = z_nlp[:nx_mesh].reshape((nx, -1), order='F')
-U_nlp = z_nlp[nx_mesh:nx_mesh+nu_mesh].reshape((nu, -1), order='F')
-tf_nlp = z_nlp[nx_mesh+nu_mesh]
+X_nlp = np.empty(shape=(nx, n_mesh*n_phase))
+X_nlp[idces_int_output, 0] = z_nlp[:n_int_output]
+X_nlp[idces_int_output, -1] = z_nlp[n_int_output:2*n_int_output]
+X_nlp[idces_int_output, 1:-1] = np.nan
+X_nlp[idces_state, :] = z_nlp[2*n_int_output:2*n_int_output+nx_mesh].reshape((nxr, -1), order='F')
+
+U_nlp = z_nlp[2*n_int_output+nx_mesh:2*n_int_output+nx_mesh+nu_mesh].reshape((nu, -1), order='F')
+tf_nlp = z_nlp[2*n_int_output+nx_mesh+nu_mesh]
 t_nlp = tf_nlp*(1+col_points_global)/2
 
 adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
 nu_linkage_nlp = adjoints_nlp[nx:n_phase*nx].reshape((nx, -1), order='F')
 nuf_nlp = adjoints_nlp[n_phase*nx:(n_phase+1)*nx]
-lam_nlp = adjoints_nlp[(n_phase+1)*nx:(n_phase+1)*nx+n_phase*nx*n_col].reshape((nx, -1), order='F') / col_weights[None, :]
+lam_nlp = np.empty(shape=(nx, n_col*n_phase))
+lam_nlp[idces_int_output, :] = adjoints_nlp[:n_int_output]
+lam_nlp[idces_int_output, -1] = z_nlp[n_int_output:2*n_int_output]
+X_nlp[idces_int_output, 1:-1] = np.nan
+X_nlp[idces_state, :] = z_nlp[2*n_int_output:2*n_int_output+nx_mesh].reshape((nxr, -1), order='F')
+
+
+if reduce_state:
+    lam_nlp = np.empty(shape=(nx, n_col*n_phase))
+    lam_nlp[0, :] = adjoints_nlp[(n_phase+1)*nx+n_phase*n_col]
+    lam_nlp[1, :] = adjoints_nlp[(n_phase+1)*nx+n_phase*n_col+1]
+    lam_nlp[2, :] = adjoints_nlp[(n_phase+1)*nx:(n_phase+1)*nx+n_phase*n_col].reshape((1, -1), order='F')
+
+else:
+    lam_nlp = adjoints_nlp[(n_phase + 1) * nx:(n_phase + 1) * nx + n_phase * nx * n_col].reshape((nx, -1), order='F')
 # lam_nlp = adjoints_nlp[n_phase * nx:].reshape((nx, -1), order='F')
 # nuf_nlp = lam_nlp @ interpf_col_matrix
 
