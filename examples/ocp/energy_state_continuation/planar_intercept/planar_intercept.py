@@ -132,9 +132,9 @@ else:
     nxr = nx
 
 n_phase = 1
-n_col = 5
+n_col = 20
 
-collocation_method = 'lg'
+collocation_method = 'zlgl'
 
 if collocation_method == 'lg':
     col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col + 1)
@@ -198,7 +198,8 @@ interp0_mesh_matrix = np.zeros(shape=(n_mesh * n_phase, n_phase), dtype=interp0f
 interpf_mesh_matrix = np.zeros_like(interp0_mesh_matrix)
 for phase in range(n_phase):
     diff_mat[phase*n_col:(phase+1)*n_col, phase*n_mesh:(phase+1)*n_mesh] = diff_mat_local
-    int_mat[phase*n_col:(phase+1)*n_col, phase*n_col:(phase+1)*n_col] = int_mat_local
+    int_mat[phase*n_col:(phase+1)*n_col, phase*n_col:(phase+1)*n_col] = int_mat_local  # Diagonal block is current integration
+    int_mat[phase*n_col:(phase+1)*n_col, :phase*n_col] = np.tile(col_weights_local[None, :], (n_col, phase,))
     interp0_col_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_col_local[0, :]
     interpf_col_matrix[phase * n_col:(phase + 1) * n_col, phase] = interp0f_col_local[1, :]
     interp0_mesh_matrix[phase * n_mesh:(phase + 1) * n_mesh, phase] = interp0f_mesh_local[0, :]
@@ -243,7 +244,7 @@ if use_continuation:
     # Add continuation into dynamics
     dynamic_constraint[idces_fast, :] = dt_phase/2*f_col[idces_fast, :] - s_sym * (X_sym @ diff_mat.T)[idces_fast, :]
 
-xf_int_sym = X_sym[idces_int_output, 0] + tf_sym/2*f_col[idces_int_output, :] @ col_weights
+xf_int_sym = X_sym[idces_int_output, 0] + dt_phase/2*f_col[idces_int_output, :] @ col_weights
 
 # if reduce_state:
 #     dynamic_constraint = ca.vcat((ca.vec(dynamic_constraint[2, :]), ca.sum2(dynamic_constraint[:2, :])))
@@ -329,19 +330,20 @@ t_nlp = tf_nlp*(1+col_points_global)/2
 
 # Calculate integrated states
 f_col_nlp = eom_fun(X_nlp[:, idces_collocation], U_nlp).full()
-X_nlp[idces_int_output, 1:] = X_nlp[idces_int_output, 0:1] + tf_nlp/2*f_col_nlp[idces_int_output, :] @ int_mat.T
+for idx_int in idces_int_output:
+    X_nlp[idx_int, idces_collocation] = X_nlp[idx_int, 0:1] + tf_nlp/(2*n_phase)*f_col_nlp[idx_int, :] @ int_mat.T
 
 # Costate information
 adjoints_nlp = nlp_sol['lam_g'].full().ravel()
 nu0_nlp = adjoints_nlp[:nx]
-nu_linkage_nlp = adjoints_nlp[nx:nx+(n_phase-1)*nxr].reshape((nx, -1), order='F')
+nu_linkage_nlp = adjoints_nlp[nx:nx+(n_phase-1)*nxr].reshape((nxr, -1), order='F')
 nuf_nlp = np.empty_like(nu0_nlp)
 nuf_nlp[idces_state] = adjoints_nlp[nx+(n_phase-1)*nxr:nx+n_phase*nxr]
-nuf_nlp[idces_int_output] = adjoints_nlp[nx+n_phase*nxr:(n_phase+1)*nx]
+nuf_nlp[idces_int_output] = adjoints_nlp[nx+n_phase*nxr:nx+n_phase*nxr+n_int_output]
 
 lam_nlp = np.empty(shape=(nx, n_col * n_phase))
 lam_nlp[idces_int_output, :] = np.nan
-lam_nlp[idces_state, :] = adjoints_nlp[(n_phase + 1) * nx:(n_phase + 1) * nx + n_phase * n_col * nxr].reshape((nxr, -1), order='F')
+lam_nlp[idces_state, :] = adjoints_nlp[nx+n_phase*nxr+n_int_output:nx+n_phase*nxr+n_int_output + n_col*n_phase*nxr].reshape((nxr, -1), order='F')
 for idx_int_output in idces_int_output:
     lam_nlp[idx_int_output, :] = nuf_nlp[idx_int_output]
 # if reduce_state:
