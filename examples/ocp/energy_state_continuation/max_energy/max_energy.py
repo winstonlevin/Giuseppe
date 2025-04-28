@@ -96,7 +96,7 @@ eom_state_sym = ca.vcat((
 ))
 
 # Path cost
-path_cost_sym = -eom_state_sym[0]  # Max Vf - V0
+path_cost_sym = -eom_state_sym[3]  # Max Vf - V0
 
 path_cost_fun = ca.Function('L', (state_sym, control_sym), (path_cost_sym,), ('x', 'u'), ('L',))
 eom_state_fun = ca.Function('f', (state_sym, control_sym), (eom_state_sym,), ('x', 'u'), ('f',))
@@ -170,16 +170,23 @@ bcf_scale = state_scale[:3]
 # ----------------------------------------------------------------------------- #
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
-n_int = 10  # Where the dynamic cost is numerically integrated
-n_basis_max = 3  # Number of basis functions for state approximation
+n_int = 9  # Where the dynamic cost is numerically integrated
+n_basis_max = 9  # Number of basis functions for state approximation
 
 state_order = np.empty(shape=initial_state.shape, dtype=int)
-state_order[:3] = n_basis_max  # 2 bc -> highest order
-state_order[3:] = n_basis_max - 1  # Only 1 bc -> let costate order be 1 higher
-costate_order = state_order - 1  # Eliminate 1 order for each specified boundary condition
-costate_order[:3] -= 1
 control_order = np.empty(shape=(m_control,), dtype=int)
-control_order[:] = state_order[3] - 1
+
+# state_order[:3] = n_basis_max  # 2 bc -> highest order
+# state_order[3:] = n_basis_max - 1  # Only 1 bc -> let costate order be 1 higher
+# costate_order = state_order - 1  # Eliminate 1 order for each specified boundary condition
+# costate_order[:3] -= 1
+# control_order = np.empty(shape=(m_control,), dtype=int)
+# control_order[:] = state_order[3] - 1
+
+# Values for baseline solution
+state_order[:] = n_int + 1.
+control_order[:] = n_int
+costate_order = state_order - 1.
 
 # Generate Basis Functions and Discretize Signals ------------------------------------------- #
 legendre_polys_sym = [1., tau_sym]
@@ -194,15 +201,18 @@ else:
 
 legendre_polys_sym = ca.vcat(legendre_polys_sym)
 
-state_bases = [ca.SX.sym('C' + _x.name(), _nb) for (_x, _nb) in zip(ca.vertsplit(state_sym), state_order)]
-costate_bases = [ca.SX.sym('C' + _x.name(), _nb) for (_x, _nb) in zip(ca.vertsplit(costate_sym), costate_order)]
-control_bases = [ca.SX.sym('C' + _x.name(), _nb) for (_x, _nb) in zip(ca.vertsplit(control_sym), costate_order)]
+state_bases_sym = [ca.SX.sym('C' + _x.name(), _nb) for (_x, _nb) in zip(ca.vertsplit(state_sym), state_order)]
+control_bases_sym = [ca.SX.sym('C' + _x.name(), _nb) for (_x, _nb) in zip(ca.vertsplit(control_sym), control_order)]
 
-state_bases_cat = ca.vcat(state_bases)
-control_bases_cat = ca.vcat(control_bases)
+state_bases_cat = ca.vcat(state_bases_sym)
+control_bases_cat = ca.vcat(control_bases_sym)
 
-state_signal_sym = ca.vcat([ca.dot(_c, legendre_polys_sym[:_c.shape[0]]) for _c in state_bases])
-control_signal_sym = ca.vcat([ca.dot(_c, legendre_polys_sym[:_c.shape[0]]) for _c in control_bases])
+state_signal_sym = state_bias + state_scale * ca.vcat([
+    ca.dot(_c, legendre_polys_sym[:_c.shape[0]]) for _c in state_bases_sym
+])
+control_signal_sym = control_bias + control_scale * ca.vcat([
+    ca.dot(_c, legendre_polys_sym[:_c.shape[0]]) for _c in control_bases_sym
+])
 
 # Integration points and weights
 col_points, col_weights = giuseppe.utils.pseudospectral.lgl(n_int)
@@ -214,10 +224,12 @@ state_dynamic_function_signal_sym = eom_state_fun(
     state_signal_sym, control_signal_sym
 )
 state_dynamic_signal_sym = ca.jacobian(state_dynamic_function_signal_sym, tau_sym)
-dynamic_residual_signal_sym = ca.vec(legendre_polys_sym @ (
-        (tf_sym/2)*state_dynamic_function_signal_sym - state_dynamic_signal_sym
-).T)  # TODO - change to order of costates
-
+dynamic_residual_signal_sym = legendre_polys_sym @ (
+    ((tf_sym/2)*state_dynamic_function_signal_sym - state_dynamic_signal_sym) / state_dynamics_scale
+).T
+dynamics_residual_signal_vec_sym = ca.vcat(([
+    dynamic_residual_signal_sym[:_n, _i] for _i, _n in enumerate(costate_order)
+]))
 
 bc0_signal_sym = ca.substitute(bc0_fun(state_signal_sym), tau_sym, -1.) / bc0_scale
 bcf_signal_sym = ca.substitute(bcf_fun(state_signal_sym), tau_sym, +1.) / bcf_scale
@@ -230,7 +242,7 @@ path_cost_signal_fun = ca.Function(
 )
 dynamic_residual_signal_fun = ca.Function(
     'fres', (tau_sym, state_bases_cat, control_bases_cat),
-    (dynamic_residual_signal_sym,),
+    (dynamics_residual_signal_vec_sym,),
     ('tau', 'Cx', 'Cu'), ('fres',)
 )
 
@@ -256,28 +268,87 @@ nlp_solver = ca.nlpsol('NLP', 'ipopt', nlp)
 # C0 = x0       [For initial state constraint]
 # C1 = xf - x0  [For terminal state constraint]
 # Ci = 0        [Otherwise]
-state_basis_matrix_guess = np.zeros(shape=state_basis_matrix.shape, dtype=float)
-state_basis_matrix_guess[:, 0] = (initial_state - state_bias)/state_scale
-state_basis_matrix_guess[:3, 1] = (terminal_pos - initial_state[:3] - state_bias[:3])/state_scale[:3]
-control_basis_matrix_guess = np.zeros(shape=control_basis_matrix.shape, dtype=float)
-
+state_bases_guess = []
+for idx, _n in enumerate(state_order):
+    state_bases_guess.append(np.zeros(shape=(_n,), dtype=float))
+    state_bases_guess[-1][0] = (initial_state[idx] - state_bias[idx])/state_scale[idx]
+    if idx < 3:
+        state_bases_guess[-1][1] = (terminal_pos[idx] - initial_state[idx] - state_bias[idx])/state_scale[idx]
+state_bases_cat_guess = np.concatenate(state_bases_guess)
+control_bases_guess = [np.zeros(shape=(_n,), dtype=float) for _n in control_order]
+control_bases_cat_guess = np.concatenate(control_bases_guess)
 # For final time, guess based on boundary conditions and scales
 tf_guess = 0.5*np.linalg.norm((terminal_pos - initial_state[:3]) / state_dynamics_scale[:3])
 
 z_guess = np.concatenate((
     (tf_guess,),
-    state_basis_matrix_guess.ravel(order='F'),
-    control_basis_matrix_guess.ravel(order='F')
+    state_bases_cat_guess,
+    control_bases_cat_guess
 ))
 
 # Bounds -- Assuming the problem is well-scaled, we should have coefficients O(1)
 # so I set bounds liberally at O(100). For tf, we know dE/dt < 0, so I set the initial value as its maximum
 lbz = np.empty_like(z_guess)
 lbz[0] = 0.  # tf
-lbz[1:] = -3.  # Coefficients of signals
+lbz[1:] = -1E3  # Coefficients of signals
 
 ubz = np.empty_like(z_guess)
 ubz[0] = 2*tf_guess  # tf
-ubz[1:] = 3.  # Coefficients of signals
+ubz[1:] = 1E3  # Coefficients of signals
 
 nlp_sol = nlp_solver(x0=z_guess, lbg=0., ubg=0., lbx=lbz, ubx=ubz)
+
+# Unpack solution
+tf = nlp_sol['x'][0].full()[0, 0]
+state_bases_cat = nlp_sol['x'][1:1+len(state_bases_cat_guess)].full().ravel()
+control_bases_cat = nlp_sol['x'][1+len(state_bases_cat_guess):].full().ravel()
+state_bases = []
+idx0 = 0
+for n in state_order:
+    state_bases.append(state_bases_cat[idx0:idx0+n])
+    idx0 += n
+control_bases = []
+idx0 = 0
+for n in control_order:
+    control_bases.append(control_bases_cat[idx0:idx0+n])
+    idx0 += n
+
+nu0 = nlp_sol['lam_g'][:bc0_sym.shape[0]].full().ravel()
+nuf = nlp_sol['lam_g'][bc0_sym.shape[0]:bc0_sym.shape[0]+bcf_sym.shape[0]].full().ravel()
+costate_bases_cat = nlp_sol['lam_g'][bc0_sym.shape[0]+bcf_sym.shape[0]:].full().ravel()
+costate_bases = []
+idx0 = 0
+for n in costate_order:
+    costate_bases.append(costate_bases_cat[idx0:idx0+n])
+    idx0 += n
+
+# Save solution
+x_poly_guess = [np.polynomial.legendre.Legendre(_b) for _b in state_bases_guess]
+u_poly_guess = [np.polynomial.legendre.Legendre(_b) for _b in control_bases_guess]
+
+x_poly_sol = [np.polynomial.legendre.Legendre(_b) for _b in state_bases]
+u_poly_sol = [np.polynomial.legendre.Legendre(_b) for _b in control_bases]
+lam_poly_sol = [np.polynomial.legendre.Legendre(_b) for _b in costate_bases]
+
+sol_dict = {
+    'tf_guess': tf_guess,
+    'x_guess': x_poly_guess,
+    'u_guess': u_poly_guess,
+
+    'tf': tf,
+    'x': x_poly_sol,
+    'u': u_poly_sol,
+    'lam': lam_poly_sol,
+    'nu0': nu0,
+    'nuf': nuf,
+
+    'xb': state_bias,
+    'xr': state_scale,
+    'ub': control_bias,
+    'ur': control_scale,
+    'lamb': costate_bias,
+    'lamr': np.ones_like(costate_scale),
+}
+
+with open('sol_nlp.data', 'wb') as f:
+    pickle.dump(sol_dict, f)
