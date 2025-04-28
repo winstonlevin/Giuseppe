@@ -79,7 +79,7 @@ n_phase = 1
 n_col = 8
 n_int = 30
 
-collocation_method = 'lgl'
+collocation_method = 'lg'
 
 if collocation_method == 'lg':
     col_points_local, col_weights_local = giuseppe.utils.pseudospectral.lg(n_col + 1)

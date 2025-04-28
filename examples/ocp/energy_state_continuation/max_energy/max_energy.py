@@ -1,10 +1,6 @@
 import pickle
-from copy import deepcopy
 
-import math
 import numpy as np
-from scipy import optimize, interpolate
-from scipy.sparse.linalg import splu
 import matplotlib
 import casadi as ca
 
@@ -12,14 +8,9 @@ import giuseppe
 
 matplotlib.use('TkAgg', force=True)
 
-ocp = giuseppe.problems.symbolic.StrInputProb()
-
 # -------------------------------------------------------------------------------------------------------------------- #
 # PROBLEM SETUP                                                                                                        #
 # -------------------------------------------------------------------------------------------------------------------- #
-# Independent Variables
-ocp.set_independent('t')
-
 # Constants -------------------------------------- #
 # (from https://doi/org/10.2514/6.1968-877)
 mass = 340.1943  # kg
@@ -73,8 +64,8 @@ control_sym = ca.vcat((alpha_sym, sig_sym))
 state_sym = ca.vcat((h_sym, lat_sym, lon_sym, V_sym, gam_sym, psi_sym))
 costate_sym = ca.vcat([ca.SX.sym('lam_' + _x.name()) for _x in ca.vertsplit(state_sym)])
 
-n_state = state_sym.shape[0]
-m_control = control_sym.shape[0]
+nx = state_sym.shape[0]
+nu = control_sym.shape[0]
 
 # Algebraic expressions
 R_sym = h_sym + re
@@ -167,130 +158,141 @@ costate_bias, costate_scale = np.zeros_like(state_dynamics_scale), 1 / state_dyn
 bc0_scale = state_scale
 bcf_scale = state_scale[:3]
 
+x0_nd = (initial_state - state_bias) / state_scale
+pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
+
 # ----------------------------------------------------------------------------- #
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
-n_int = 9  # Where the dynamic cost is numerically integrated
-n_basis_max = 9  # Number of basis functions for state approximation
+n_col = 8  # Number of basis functions for state estimate (1 more than costate/control)
+n_int = 30  # Number of integration locations
 
-state_order = np.empty(shape=initial_state.shape, dtype=int)
-control_order = np.empty(shape=(m_control,), dtype=int)
 
-# state_order[:3] = n_basis_max  # 2 bc -> highest order
-# state_order[3:] = n_basis_max - 1  # Only 1 bc -> let costate order be 1 higher
-# costate_order = state_order - 1  # Eliminate 1 order for each specified boundary condition
-# costate_order[:3] -= 1
-# control_order = np.empty(shape=(m_control,), dtype=int)
-# control_order[:] = state_order[3] - 1
+collocation_method = 'lg'
 
-# Values for baseline solution
-state_order[:] = n_int + 1.
-control_order[:] = n_int
-costate_order = state_order - 1.
+if collocation_method == 'lg':
+    col_points, col_weights = giuseppe.utils.pseudospectral.lg(n_col + 1)
+    # col_weights = np.insert(col_weights, 0, 0)
+    idces_anchor = np.arange(0, 1, 1)
+    idces_collocation = np.arange(1, n_col + 1, 1)
 
-# Generate Basis Functions and Discretize Signals ------------------------------------------- #
-legendre_polys_sym = [1., tau_sym]
-if n_basis_max > 2:
-    # Generate Legendre polynomials via recurrence relation
-    for n in range(1, n_basis_max-1):
-        legendre_polys_sym.append(
-            ((2*n+1)*tau_sym*legendre_polys_sym[-1] - n*legendre_polys_sym[-2])/(n+1)
-        )
+    proj_points, proj_weights = giuseppe.utils.pseudospectral.lg(n_int+1)
+    proj_points = proj_points[1:]
+elif collocation_method == 'lgr':
+    col_points, col_weights = giuseppe.utils.pseudospectral.lgr(n_col)
+    col_points = np.append(col_points, 1.)
+    idces_anchor = np.array((n_col,))
+    idces_collocation = np.arange(0, n_col, 1)
+
+    proj_points, proj_weights = giuseppe.utils.pseudospectral.lgr(n_int)
+elif collocation_method == 'lgl':
+    col_points, col_weights = giuseppe.utils.pseudospectral.lgl(n_col)
+    idces_anchor = np.empty(shape=(0,), dtype=int)
+    idces_collocation = np.arange(0, n_col, 1)
+
+    proj_points, proj_weights = giuseppe.utils.pseudospectral.lgl(n_int)
+elif collocation_method == 'zlg':
+    assert n_col % 2 == 0, f"ZLG requires an even number of collocation points, but n_col={n_col}!"
+    col_points, col_weights = giuseppe.utils.pseudospectral.lg(n_col+1)
+    col_points = np.sort(np.append(col_points[1:], 0))
+    idces_anchor = np.where(col_points == 0)[0]
+    idces_collocation = np.delete(np.arange(0, n_col+1, 1), idces_anchor)
+
+    proj_points, proj_weights = giuseppe.utils.pseudospectral.lg(n_int+1)
+    proj_points = proj_points[1:]
+elif collocation_method == 'zlgr':
+    assert n_col % 2 == 0, f"ZLG requires an even number of collocation points, but n_col={n_col}!"
+    col_points, col_weights = giuseppe.utils.pseudospectral.lgr(n_col)
+    col_points = np.sort(np.append(col_points, 0))
+    idces_anchor = np.where(col_points == 0)[0]
+    idces_collocation = np.delete(np.arange(0, n_col+1, 1), idces_anchor)
+
+    proj_points, proj_weights = giuseppe.utils.pseudospectral.lgr(n_int)
+elif collocation_method == 'zlgl':
+    assert n_col % 2 == 0, f"ZLGL requires an even number of collocation points, but n_col={n_col}!"
+    col_points, col_weights = giuseppe.utils.pseudospectral.lgl(n_col)
+    col_points = np.sort(np.append(col_points, 0))
+    idces_anchor = np.where(col_points == 0)[0]
+    idces_collocation = np.delete(np.arange(0, n_col+1, 1), idces_anchor)
+
+    proj_points, proj_weights = giuseppe.utils.pseudospectral.lgl(n_int)
 else:
-    legendre_polys_sym = legendre_polys_sym[:n_basis_max]
+    raise ValueError(f'collocation_method=={collocation_method} is not implemented!')
 
-legendre_polys_sym = ca.vcat(legendre_polys_sym)
-
-state_bases_sym = [ca.SX.sym('C' + _x.name(), _nb) for (_x, _nb) in zip(ca.vertsplit(state_sym), state_order)]
-control_bases_sym = [ca.SX.sym('C' + _x.name(), _nb) for (_x, _nb) in zip(ca.vertsplit(control_sym), control_order)]
-
-state_bases_cat = ca.vcat(state_bases_sym)
-control_bases_cat = ca.vcat(control_bases_sym)
-
-state_signal_sym = state_bias + state_scale * ca.vcat([
-    ca.dot(_c, legendre_polys_sym[:_c.shape[0]]) for _c in state_bases_sym
-])
-control_signal_sym = control_bias + control_scale * ca.vcat([
-    ca.dot(_c, legendre_polys_sym[:_c.shape[0]]) for _c in control_bases_sym
-])
-
-# Integration points and weights
-col_points, col_weights = giuseppe.utils.pseudospectral.lgl(n_int)
-
-path_cost_signal_sym = path_cost_fun(
-    state_signal_sym, control_signal_sym
-) / path_cost_scale
-state_dynamic_function_signal_sym = eom_state_fun(
-    state_signal_sym, control_signal_sym
+n_mesh = len(col_points)
+proj_mat, proj_diff_mat = giuseppe.utils.pseudospectral.lagrange_matrices(
+    col_points, proj_points, compute_interp_matrix=True, compute_diff_matrix=True
 )
-state_dynamic_signal_sym = ca.jacobian(state_dynamic_function_signal_sym, tau_sym)
-dynamic_residual_signal_sym = legendre_polys_sym @ (
-    ((tf_sym/2)*state_dynamic_function_signal_sym - state_dynamic_signal_sym) / state_dynamics_scale
-).T
-dynamics_residual_signal_vec_sym = ca.vcat(([
-    dynamic_residual_signal_sym[:_n, _i] for _i, _n in enumerate(costate_order)
-]))
-
-bc0_signal_sym = ca.substitute(bc0_fun(state_signal_sym), tau_sym, -1.) / bc0_scale
-bcf_signal_sym = ca.substitute(bcf_fun(state_signal_sym), tau_sym, +1.) / bcf_scale
-
-# Turn signals into callable functions
-path_cost_signal_fun = ca.Function(
-    'Ladj', (tau_sym, state_bases_cat, control_bases_cat),
-    (path_cost_signal_sym,),
-    ('tau', 'Cx', 'Cu'), ('Ladj',)
+proj_col_mat, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
+    col_points[idces_collocation], proj_points, compute_interp_matrix=True, compute_diff_matrix=False
 )
-dynamic_residual_signal_fun = ca.Function(
-    'fres', (tau_sym, state_bases_cat, control_bases_cat),
-    (dynamics_residual_signal_vec_sym,),
-    ('tau', 'Cx', 'Cu'), ('fres',)
-)
+interp0f_mesh_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
+    col_points, np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
+)  # Interpolate Lam/U to get 0/f values
 
-integral_cost = tf_sym * ca.sum1(ca.vcat([
-    _wi * path_cost_signal_fun(_taui, state_bases_cat, control_bases_cat)
-    for (_taui, _wi) in zip(col_points, col_weights*0.5)
-]))
-dyn_res_sym = ca.sum2(dynamic_residual_signal_fun(col_points[None, :], state_bases_cat, control_bases_cat))
+X_sym = ca.SX.sym('X', nx, n_mesh)  # Include initial state
+U_sym = ca.SX.sym('U', nu, n_col)
+nx_mesh = nx*n_mesh
+nu_mesh = nu*n_col
 
-z_sym = ca.vcat((tf_sym, state_bases_cat, control_bases_cat))
+Xproj_sym = state_bias[:, None] + state_scale[:, None] * (X_sym @ proj_mat.T)
+Uproj_sym = control_bias[:, None] + control_scale[:, None] * (U_sym @ proj_col_mat.T)
+
+tf_sym = ca.SX.sym('tf')
+z_sym = ca.vcat((
+    ca.vec(X_sym),
+    ca.vec(U_sym),
+    tf_sym,
+))
+
+L_proj = path_cost_fun(Xproj_sym, Uproj_sym) / path_cost_scale
+f_proj = eom_state_fun(Xproj_sym, Uproj_sym)
+X0i_sym = X_sym @ interp0f_mesh_local[0]
+Xfi_sym = X_sym @ interp0f_mesh_local[1]
+
+integrated_cost = tf_sym/2 * (L_proj @ proj_weights)
+dynamic_residual = (
+    tf_sym/2*f_proj - X_sym @ proj_diff_mat.T
+) * np.tile(proj_weights[None, :], (nx, 1))
+dynamic_residual /= state_dynamics_scale[:, None]
+collocated_residual = dynamic_residual @ proj_col_mat
+dynamic_constraint = ca.vec(collocated_residual)
+
+bc0_sym = X0i_sym - x0_nd
+bcf_sym = Xfi_sym[:3] - pf_nd
+boundary_constraints = ca.vcat((bc0_sym, bcf_sym))
 
 nlp = {
     'x': z_sym,  # Unknown variables
-    'f': integral_cost,  # Objective function
-    'g': ca.vcat((bc0_signal_sym, bcf_signal_sym, dyn_res_sym))  # Equality constraints
+    'f': integrated_cost,  # Objective function
+    'g': ca.vcat((boundary_constraints, dynamic_constraint))  # Equality constraints
 }
 nlp_solver = ca.nlpsol('NLP', 'ipopt', nlp)
 
 # Initial guess ------------------------------------------- #
-# The first two basis functions are:
-# [1, x]
-# So I set states as:
-# C0 = x0       [For initial state constraint]
-# C1 = xf - x0  [For terminal state constraint]
-# Ci = 0        [Otherwise]
-state_bases_guess = []
-for idx, _n in enumerate(state_order):
-    state_bases_guess.append(np.zeros(shape=(_n,), dtype=float))
-    state_bases_guess[-1][0] = (initial_state[idx] - state_bias[idx])/state_scale[idx]
-    if idx < 3:
-        state_bases_guess[-1][1] = (terminal_pos[idx] - initial_state[idx] - state_bias[idx])/state_scale[idx]
-state_bases_cat_guess = np.concatenate(state_bases_guess)
-control_bases_guess = [np.zeros(shape=(_n,), dtype=float) for _n in control_order]
-control_bases_cat_guess = np.concatenate(control_bases_guess)
+xnd0_guess = x0_nd
+xndf_guess = np.empty_like(xnd0_guess)
+xndf_guess[:3] = pf_nd
+xndf_guess[3:] = x0_nd[3:]
+xnd_guess = ((xnd0_guess + xndf_guess)/2)[:, None] + (xndf_guess - xnd0_guess)[:, None] * col_points[None, :]
+
+und_guess = np.zeros(shape=U_sym.shape, dtype=xnd0_guess.dtype)
+
 # For final time, guess based on boundary conditions and scales
 tf_guess = 0.5*np.linalg.norm((terminal_pos - initial_state[:3]) / state_dynamics_scale[:3])
 
 z_guess = np.concatenate((
     (tf_guess,),
-    state_bases_cat_guess,
-    control_bases_cat_guess
+    xnd_guess.ravel(order='F'),
+    und_guess.ravel(order='F')
 ))
 
+# TODO - set bounds based on state constraints
 # Bounds -- Assuming the problem is well-scaled, we should have coefficients O(1)
 # so I set bounds liberally at O(100). For tf, we know dE/dt < 0, so I set the initial value as its maximum
 lbz = np.empty_like(z_guess)
 lbz[0] = 0.  # tf
-lbz[1:] = -1E3  # Coefficients of signals
+lbz[1:1+nx*n_col] = -1E3  # Coefficients of signals
 
 ubz = np.empty_like(z_guess)
 ubz[0] = 2*tf_guess  # tf
