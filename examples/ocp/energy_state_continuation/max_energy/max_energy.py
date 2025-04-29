@@ -104,6 +104,10 @@ bcf_sym = state_sym[:3] - terminal_pos
 bc0_fun = ca.Function('BC0', (state_sym,), (bc0_sym,), ('x',), ('BC0',))
 bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 
+# Path constraints
+control_lower_bound = np.array((0., -np.pi))  # Make AoA>=0 to disambiguate sign of AoA/Bank
+control_upper_bound = np.array((40*np.pi/180, np.pi))
+
 # -------------------------------------------------------------------------- #
 # SCALING PROCEDURE:                                                         #
 # Since the cost function is the LSE of the                                  #
@@ -126,28 +130,29 @@ bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 #                              XndEst' = A * phi'
 # So that the appropriate error term is:
 #                              dynErr = (Xnd' - XndEst')*Rx/Rf
-
-use_scaling = False
+use_state_scaling = True
+use_control_scaling = True
+use_costate_scaling = True
 
 # Scaling
-if use_scaling:
-    state_bias, state_scale = np.array((
-        (0.,     abs(hf - h0)),      # h
-        (0., abs(latf - lat0)),  # Lat
-        (0., abs(lonf - lon0)),  # Lon
-        (0.,            V0),                # V
-        (0.,              0.5*np.pi),           # gam
-        (0.,              0.5*np.pi),           # psi
-    )).T
-
+if use_state_scaling:
     # state_bias, state_scale = np.array((
-    #     ((hf + h0)/2,     abs(hf - h0)/2),      # h
-    #     ((latf + lat0)/2, abs(latf - lat0)/2),  # Lat
-    #     ((lonf + lon0)/2, abs(lonf - lon0)/2),  # Lon
-    #     (V0/2,            V0/2),                # V
+    #     (0.,     abs(hf - h0)),      # h
+    #     (0., abs(latf - lat0)),  # Lat
+    #     (0., abs(lonf - lon0)),  # Lon
+    #     (0.,            V0),                # V
     #     (0.,              0.5*np.pi),           # gam
     #     (0.,              0.5*np.pi),           # psi
     # )).T
+
+    state_bias, state_scale = np.array((
+        ((hf + h0)/2,     abs(hf - h0)/2),      # h
+        ((latf + lat0)/2, abs(latf - lat0)/2),  # Lat
+        ((lonf + lon0)/2, abs(lonf - lon0)/2),  # Lon
+        (V0/2,            V0/2),                # V
+        (0.,              0.5*np.pi),           # gam
+        (0.,              0.5*np.pi),           # psi
+    )).T
 else:
     state_bias = np.zeros_like(initial_state)
     state_scale = np.ones_like(initial_state)
@@ -155,7 +160,15 @@ else:
 state_inv_scale = 1 / state_scale
 V_scale = state_scale[3]
 
-if use_scaling:
+if use_control_scaling:
+    control_bias = 0.5*(control_upper_bound + control_lower_bound)
+    control_scale = 0.5*(control_upper_bound - control_lower_bound)
+else:
+    control_bias = np.zeros_like(control_lower_bound)
+    control_scale = np.ones_like(control_lower_bound)
+
+
+if use_costate_scaling:
     state_dynamics_bias, state_dynamics_scale = np.array((
         (0., V_scale),  # dh/dt
         (0., V_scale/re),  # dLat/dt
@@ -164,15 +177,11 @@ if use_scaling:
         (0., g0/V_scale),  # dgam/dt
         (0., g0/V_scale),  # dpsi/dt
     )).T
-    control_bias, control_scale = np.array((
-        (0., 40.*np.pi/180),
-        (0., np.pi),
-    )).T
     path_cost_scale = g0  # L = dV/dt
 else:
     state_dynamics_bias = np.zeros_like(initial_state)
     state_dynamics_scale = np.ones_like(initial_state)
-costate_bias, costate_scale = np.zeros_like(state_dynamics_scale), 1 / state_dynamics_scale
+    path_cost_scale = 1.
 
 bc0_scale = state_scale
 bcf_scale = state_scale[:3]
@@ -261,6 +270,7 @@ nx_mesh = nx*n_mesh
 nu_col = nu * n_col
 
 Xproj_sym = state_bias[:, None] + state_scale[:, None] * (X_sym @ proj_mat.T)
+DXproj_sym = state_scale[:, None] * (X_sym @ proj_diff_mat.T)
 Uproj_sym = control_bias[:, None] + control_scale[:, None] * (U_sym @ proj_col_mat.T)
 
 tf_sym = ca.SX.sym('tf')
@@ -277,7 +287,7 @@ Xfi_sym = X_sym @ interp0f_mesh_local[1]
 
 integrated_cost = tf_sym/2 * (L_proj @ proj_weights)
 dynamic_residual = (
-    tf_sym/2*f_proj - X_sym @ proj_diff_mat.T
+    tf_sym/2*f_proj - DXproj_sym
 ) * np.tile(proj_weights[None, :], (nx, 1))
 dynamic_residual /= state_dynamics_scale[:, None]
 collocated_residual = dynamic_residual @ proj_col_mat
@@ -301,10 +311,12 @@ xndf_guess[:3] = pf_nd
 xndf_guess[3:] = x0_nd[3:]
 xnd_guess = 0.5*((xnd0_guess + xndf_guess)[:, None] + (xndf_guess - xnd0_guess)[:, None] * col_points[None, :])
 
-und_guess = np.zeros(shape=U_sym.shape, dtype=xnd0_guess.dtype)
+und_guess = np.empty(shape=U_sym.shape, dtype=xnd0_guess.dtype)
+und_guess[:] = -(control_bias / control_scale)[:, None]  # u = 0
 
 # For final time, guess based on boundary conditions and scales
-tf_guess = np.linalg.norm(np.array((1., re, re))*(terminal_pos - initial_state[:3]) / initial_state[3])
+tf_min = np.linalg.norm(np.array((1., re, re))*(terminal_pos - initial_state[:3]) / initial_state[3])
+tf_guess = tf_min
 
 z_guess = np.concatenate((
     xnd_guess.ravel(order='F'),
@@ -329,11 +341,11 @@ lbx = (lb_state - state_bias) / state_scale
 ubx = (ub_state - state_bias) / state_scale
 
 # Control scaled by bounds already
-lbu = -np.ones_like(control_bias)
-ubu = np.ones_like(control_bias)
+lbu = (control_lower_bound - control_bias) / control_scale
+ubu = (control_upper_bound - control_bias) / control_scale
 
-lbtf = 0.
-ubtf = tf_guess*2.
+lbtf = tf_min
+ubtf = tf_min*3.
 
 ubz = np.empty_like(z_guess)
 ubz[:nx_mesh] = np.tile(ubx, n_mesh)
@@ -352,8 +364,13 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
     X_nlp = state_bias[:, None] + state_scale[:, None] * _z_nlp[:nx_mesh].reshape((nx, -1), order='F')
 
     U_nlp = np.empty(shape=(nu, n_mesh))
+    U_nlp[:, idces_anchor] = np.nan
     U_nlp[:, idces_collocation] = control_bias[:, None] \
         + control_scale[:, None] * _z_nlp[nx_mesh:nx_mesh + nu_col].reshape((nu, -1), order='F')
+
+    # Unwrap angles
+    U_nlp[:, idces_collocation] = np.unwrap(U_nlp[:, idces_collocation], axis=1)
+
     tf_nlp = _z_nlp[nx_mesh + nu_col]
     t_nlp = tf_nlp*(1+col_points)/2
 
@@ -365,7 +382,7 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
         lam_nlp = np.empty(shape=(nx, n_mesh))
         lam_nlp[:, idces_anchor] = np.nan
         lam_nlp[:, idces_collocation] = _adjoints_nlp[nx + bcf_sym.numel():].reshape((nx, -1), order='F') \
-            * state_dynamics_scale[:, None]
+            * path_cost_scale / state_dynamics_scale[:, None]
         # if anchor == 'initial':
         #     # Initial col point
         #     lam_nlp[:, idces_anchor[0]] = -nu0_nlp * bc0_scale

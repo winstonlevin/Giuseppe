@@ -7,6 +7,8 @@ with open('guess_nlp.data', 'rb') as f:
 with open('sol_nlp.data', 'rb') as f:
     sol = pickle.load(f)
 
+r2d = 180./np.pi
+
 # Plot states / costates
 cols = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
@@ -26,32 +28,53 @@ axes_u[-1].set_xlabel(t_lab)
 
 fig_u.tight_layout()
 
-fig_x, axes_x = plt.subplots(sol.x.shape[0], 2)
+fig_x, axes_x = plt.subplots(sol.x.shape[0]//2, 2)
+axes_x_flat = axes_x.ravel()
+fig_lam, axes_lam = plt.subplots(sol.x.shape[0]//2, 2)
+axes_lam_flat = axes_lam.ravel()
 
 x_labels = (
-    r'$h$',
-    r'$\phi$',
-    r'$\theta$',
-    r'$V$',
-    r'$\gamma$',
-    r'$\psi$',
+    r'$h$ [km]',
+    r'$\phi$ [deg]',
+    r'$\theta$ [deg]',
+    r'$V$ [km/s]',
+    r'$\gamma$ [deg]',
+    r'$\psi$ [deg]',
+)
+lam_labels = (
+    r'$\lambda_h$ [s]',
+    r'$\lambda_\phi$ [m/s-rad]',
+    r'$\lambda_\theta$ [m/s-rad]',
+    r'$\lambda_V$ [-]',
+    r'$\lambda_\gamma$ [m/s-rad]',
+    r'$\lambda_\psi$ [m/s-rad]',
+)
+x_scale = (
+    1E-3,
+    r2d,
+    r2d,
+    1E-3,
+    r2d,
+    r2d
 )
 
-for idx, ax_xlam in enumerate(axes_x):
-    ax_x, ax_lam = ax_xlam
+for idx, ax_x in enumerate(axes_x_flat):
+    ax_lam = axes_lam_flat[idx]
 
     ax_x.set_ylabel(x_labels[idx])
     ax_x.grid()
     ax_lam.grid()
-    ax_lam.set_ylabel(r'$\lambda$ ' + x_labels[idx])
-    ax_x.plot(guess.t, guess.x[idx], '--', color=cols[1], label='Guess')
-    ax_x.plot(sol.t, sol.x[idx], color=cols[0], label='Sol')
+    ax_lam.set_ylabel(lam_labels[idx])
+    ax_x.plot(guess.t, guess.x[idx]*x_scale[idx], '--', color=cols[1], label='Guess')
+    ax_x.plot(sol.t, sol.x[idx]*x_scale[idx], color=cols[0], label='Sol')
     ax_lam.plot(sol.t, sol.lam[idx], color=cols[0], label='Sol')
 
-ax_xlam = axes_x[-1]
-ax_xlam[0].set_xlabel(t_lab)
-ax_xlam[1].set_xlabel(t_lab)
+ax_x = axes_x_flat[-1]
+ax_lam = axes_lam_flat[-1]
+ax_x.set_xlabel(t_lab)
+ax_lam.set_xlabel(t_lab)
 
 fig_x.tight_layout()
+fig_lam.tight_layout()
 
 plt.show()
