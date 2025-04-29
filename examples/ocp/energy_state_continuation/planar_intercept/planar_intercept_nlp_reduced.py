@@ -191,7 +191,7 @@ idces_anchor = np.concatenate([idces_anchor_local+n_mesh*_phase for _phase in ra
 X_sym = ca.SX.sym('X', nx, n_mesh*n_phase)  # Include initial state
 U_sym = ca.SX.sym('U', nu, n_col*n_phase)
 nx_mesh = nxr*n_mesh*n_phase
-nu_mesh = nu*n_col*n_phase
+nu_col = nu * n_col * n_phase
 
 Xproj_sym = X_sym @ proj_mat.T
 Uproj_sym = U_sym @ proj_col_mat.T
@@ -273,13 +273,13 @@ lbtf = 0.
 ubz = np.empty_like(z_outer)
 ubz[:n_int_output] = ubx[idces_int_output]
 ubz[n_int_output:n_int_output+nx_mesh] = np.tile(ubx[idces_state], n_mesh*n_phase)
-ubz[n_int_output+nx_mesh:n_int_output+nx_mesh+nu_mesh] = np.tile(ubu, n_col*n_phase)
-ubz[n_int_output+nx_mesh+nu_mesh] = ubtf
+ubz[n_int_output+nx_mesh:n_int_output + nx_mesh + nu_col] = np.tile(ubu, n_col * n_phase)
+ubz[n_int_output + nx_mesh + nu_col] = ubtf
 lbz = np.empty_like(z_outer)
 lbz[:n_int_output] = lbx[idces_int_output]
 lbz[n_int_output:n_int_output+nx_mesh] = np.tile(lbx[idces_state], n_mesh*n_phase)
-lbz[n_int_output+nx_mesh:n_int_output+nx_mesh+nu_mesh] = np.tile(lbu, n_col*n_phase)
-lbz[n_int_output+nx_mesh+nu_mesh] = lbtf
+lbz[n_int_output+nx_mesh:n_int_output + nx_mesh + nu_col] = np.tile(lbu, n_col * n_phase)
+lbz[n_int_output + nx_mesh + nu_col] = lbtf
 
 nlp_sol = nlp_solver(x0=z_outer, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 
@@ -290,8 +290,8 @@ X_nlp[idces_state, :] = z_nlp[n_int_output:n_int_output+nx_mesh].reshape((nxr, -
 X_nlp[idces_int_output, 0] = z_nlp[:n_int_output]
 X_nlp[idces_int_output, 1:] = np.nan
 
-U_nlp = z_nlp[n_int_output+nx_mesh:n_int_output+nx_mesh+nu_mesh].reshape((nu, -1), order='F')
-tf_nlp = z_nlp[n_int_output+nx_mesh+nu_mesh]
+U_nlp = z_nlp[n_int_output+nx_mesh:n_int_output + nx_mesh + nu_col].reshape((nu, -1), order='F')
+tf_nlp = z_nlp[n_int_output + nx_mesh + nu_col]
 t_nlp = tf_nlp*(1+col_points_global)/2
 
 # Calculate integrated states

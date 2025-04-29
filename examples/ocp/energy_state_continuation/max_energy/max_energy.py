@@ -127,32 +127,51 @@ bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 # So that the appropriate error term is:
 #                              dynErr = (Xnd' - XndEst')*Rx/Rf
 
+use_scaling = False
+
 # Scaling
-state_bias, state_scale = np.array((
-    ((hf + h0)/2,     abs(hf - h0)/2),      # h
-    ((latf + lat0)/2, abs(latf - lat0)/2),  # Lat
-    ((lonf + lon0)/2, abs(lonf - lon0)/2),  # Lon
-    (V0/2,            V0/2),                # V
-    (0.,              0.5*np.pi),           # gam
-    (0.,              0.5*np.pi),           # psi
-)).T
+if use_scaling:
+    state_bias, state_scale = np.array((
+        (0.,     abs(hf - h0)),      # h
+        (0., abs(latf - lat0)),  # Lat
+        (0., abs(lonf - lon0)),  # Lon
+        (0.,            V0),                # V
+        (0.,              0.5*np.pi),           # gam
+        (0.,              0.5*np.pi),           # psi
+    )).T
+
+    # state_bias, state_scale = np.array((
+    #     ((hf + h0)/2,     abs(hf - h0)/2),      # h
+    #     ((latf + lat0)/2, abs(latf - lat0)/2),  # Lat
+    #     ((lonf + lon0)/2, abs(lonf - lon0)/2),  # Lon
+    #     (V0/2,            V0/2),                # V
+    #     (0.,              0.5*np.pi),           # gam
+    #     (0.,              0.5*np.pi),           # psi
+    # )).T
+else:
+    state_bias = np.zeros_like(initial_state)
+    state_scale = np.ones_like(initial_state)
+
 state_inv_scale = 1 / state_scale
 V_scale = state_scale[3]
 
-state_dynamics_bias, state_dynamics_scale = np.array((
-    (0., V_scale),  # dh/dt
-    (0., V_scale/re),  # dLat/dt
-    (0., V_scale/re),  # dLon/dt
-    (0., g0),  # dV/dt
-    (0., g0/V_scale),  # dgam/dt
-    (0., g0/V_scale),  # dpsi/dt
-)).T
-control_bias, control_scale = np.array((
-    (0., 40.*np.pi/180),
-    (0., np.pi),
-)).T
-
-path_cost_scale = g0  # L = dV/dt
+if use_scaling:
+    state_dynamics_bias, state_dynamics_scale = np.array((
+        (0., V_scale),  # dh/dt
+        (0., V_scale/re),  # dLat/dt
+        (0., V_scale/re),  # dLon/dt
+        (0., g0),  # dV/dt
+        (0., g0/V_scale),  # dgam/dt
+        (0., g0/V_scale),  # dpsi/dt
+    )).T
+    control_bias, control_scale = np.array((
+        (0., 40.*np.pi/180),
+        (0., np.pi),
+    )).T
+    path_cost_scale = g0  # L = dV/dt
+else:
+    state_dynamics_bias = np.zeros_like(initial_state)
+    state_dynamics_scale = np.ones_like(initial_state)
 costate_bias, costate_scale = np.zeros_like(state_dynamics_scale), 1 / state_dynamics_scale
 
 bc0_scale = state_scale
@@ -164,8 +183,8 @@ pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
 # ----------------------------------------------------------------------------- #
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
-n_col = 8  # Number of basis functions for state estimate (1 more than costate/control)
-n_int = 30  # Number of integration locations
+n_col = 20  # Number of basis functions for state estimate (1 more than costate/control)
+n_int = 20  # Number of integration locations
 
 
 collocation_method = 'lg'
@@ -175,6 +194,7 @@ if collocation_method == 'lg':
     # col_weights = np.insert(col_weights, 0, 0)
     idces_anchor = np.arange(0, 1, 1)
     idces_collocation = np.arange(1, n_col + 1, 1)
+    anchor = 'initial'
 
     proj_points, proj_weights = giuseppe.utils.pseudospectral.lg(n_int+1)
     proj_points = proj_points[1:]
@@ -183,12 +203,14 @@ elif collocation_method == 'lgr':
     col_points = np.append(col_points, 1.)
     idces_anchor = np.array((n_col,))
     idces_collocation = np.arange(0, n_col, 1)
+    anchor = 'initial'
 
     proj_points, proj_weights = giuseppe.utils.pseudospectral.lgr(n_int)
 elif collocation_method == 'lgl':
     col_points, col_weights = giuseppe.utils.pseudospectral.lgl(n_col)
     idces_anchor = np.empty(shape=(0,), dtype=int)
     idces_collocation = np.arange(0, n_col, 1)
+    anchor = 'none'
 
     proj_points, proj_weights = giuseppe.utils.pseudospectral.lgl(n_int)
 elif collocation_method == 'zlg':
@@ -197,6 +219,7 @@ elif collocation_method == 'zlg':
     col_points = np.sort(np.append(col_points[1:], 0))
     idces_anchor = np.where(col_points == 0)[0]
     idces_collocation = np.delete(np.arange(0, n_col+1, 1), idces_anchor)
+    anchor = 'middle'
 
     proj_points, proj_weights = giuseppe.utils.pseudospectral.lg(n_int+1)
     proj_points = proj_points[1:]
@@ -206,6 +229,7 @@ elif collocation_method == 'zlgr':
     col_points = np.sort(np.append(col_points, 0))
     idces_anchor = np.where(col_points == 0)[0]
     idces_collocation = np.delete(np.arange(0, n_col+1, 1), idces_anchor)
+    anchor = 'middle'
 
     proj_points, proj_weights = giuseppe.utils.pseudospectral.lgr(n_int)
 elif collocation_method == 'zlgl':
@@ -214,6 +238,7 @@ elif collocation_method == 'zlgl':
     col_points = np.sort(np.append(col_points, 0))
     idces_anchor = np.where(col_points == 0)[0]
     idces_collocation = np.delete(np.arange(0, n_col+1, 1), idces_anchor)
+    anchor = 'middle'
 
     proj_points, proj_weights = giuseppe.utils.pseudospectral.lgl(n_int)
 else:
@@ -233,7 +258,7 @@ interp0f_mesh_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
 X_sym = ca.SX.sym('X', nx, n_mesh)  # Include initial state
 U_sym = ca.SX.sym('U', nu, n_col)
 nx_mesh = nx*n_mesh
-nu_mesh = nu*n_col
+nu_col = nu * n_col
 
 Xproj_sym = state_bias[:, None] + state_scale[:, None] * (X_sym @ proj_mat.T)
 Uproj_sym = control_bias[:, None] + control_scale[:, None] * (U_sym @ proj_col_mat.T)
@@ -274,83 +299,99 @@ xnd0_guess = x0_nd
 xndf_guess = np.empty_like(xnd0_guess)
 xndf_guess[:3] = pf_nd
 xndf_guess[3:] = x0_nd[3:]
-xnd_guess = ((xnd0_guess + xndf_guess)/2)[:, None] + (xndf_guess - xnd0_guess)[:, None] * col_points[None, :]
+xnd_guess = 0.5*((xnd0_guess + xndf_guess)[:, None] + (xndf_guess - xnd0_guess)[:, None] * col_points[None, :])
 
 und_guess = np.zeros(shape=U_sym.shape, dtype=xnd0_guess.dtype)
 
 # For final time, guess based on boundary conditions and scales
-tf_guess = 0.5*np.linalg.norm((terminal_pos - initial_state[:3]) / state_dynamics_scale[:3])
+tf_guess = np.linalg.norm(np.array((1., re, re))*(terminal_pos - initial_state[:3]) / initial_state[3])
 
 z_guess = np.concatenate((
-    (tf_guess,),
     xnd_guess.ravel(order='F'),
-    und_guess.ravel(order='F')
+    und_guess.ravel(order='F'),
+    (tf_guess,),
 ))
 
-# TODO - set bounds based on state constraints
-# Bounds -- Assuming the problem is well-scaled, we should have coefficients O(1)
-# so I set bounds liberally at O(100). For tf, we know dE/dt < 0, so I set the initial value as its maximum
-lbz = np.empty_like(z_guess)
-lbz[0] = 0.  # tf
-lbz[1:1+nx*n_col] = -1E3  # Coefficients of signals
+lb_state = np.empty_like(initial_state)
+ub_state = np.empty_like(initial_state)
+lb_state[0] = -1_000.  # Altitude
+ub_state[0] = 100_000.
+lb_state[1:3] = initial_state[1:3]  # Lat/lon
+ub_state[1:3] = terminal_pos[1:3]
+lb_state[3] = 10.
+ub_state[3] = 2*initial_state[3]
+lb_state[4] = -85*np.pi/180  # FPA
+ub_state[4] = 85*np.pi/180
+lb_state[5] = -np.pi  # Heading
+ub_state[5] = np.pi
+
+lbx = (lb_state - state_bias) / state_scale
+ubx = (ub_state - state_bias) / state_scale
+
+# Control scaled by bounds already
+lbu = -np.ones_like(control_bias)
+ubu = np.ones_like(control_bias)
+
+lbtf = 0.
+ubtf = tf_guess*2.
 
 ubz = np.empty_like(z_guess)
-ubz[0] = 2*tf_guess  # tf
-ubz[1:] = 1E3  # Coefficients of signals
+ubz[:nx_mesh] = np.tile(ubx, n_mesh)
+ubz[nx_mesh:nx_mesh + nu_col] = np.tile(ubu, n_col)
+ubz[nx_mesh + nu_col] = ubtf
+lbz = np.empty_like(z_guess)
+lbz[:nx_mesh] = np.tile(lbx, n_mesh)
+lbz[nx_mesh:nx_mesh + nu_col] = np.tile(lbu, n_col)
+lbz[nx_mesh + nu_col] = lbtf
 
-nlp_sol = nlp_solver(x0=z_guess, lbg=0., ubg=0., lbx=lbz, ubx=ubz)
+nlp_sol = nlp_solver(x0=z_guess, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 
-# Unpack solution
-tf = nlp_sol['x'][0].full()[0, 0]
-state_bases_cat = nlp_sol['x'][1:1+len(state_bases_cat_guess)].full().ravel()
-control_bases_cat = nlp_sol['x'][1+len(state_bases_cat_guess):].full().ravel()
-state_bases = []
-idx0 = 0
-for n in state_order:
-    state_bases.append(state_bases_cat[idx0:idx0+n])
-    idx0 += n
-control_bases = []
-idx0 = 0
-for n in control_order:
-    control_bases.append(control_bases_cat[idx0:idx0+n])
-    idx0 += n
 
-nu0 = nlp_sol['lam_g'][:bc0_sym.shape[0]].full().ravel()
-nuf = nlp_sol['lam_g'][bc0_sym.shape[0]:bc0_sym.shape[0]+bcf_sym.shape[0]].full().ravel()
-costate_bases_cat = nlp_sol['lam_g'][bc0_sym.shape[0]+bcf_sym.shape[0]:].full().ravel()
-costate_bases = []
-idx0 = 0
-for n in costate_order:
-    costate_bases.append(costate_bases_cat[idx0:idx0+n])
-    idx0 += n
+def unpack_solution(_z_nlp, _adjoints_nlp=None):
+    # Primal information
+    X_nlp = state_bias[:, None] + state_scale[:, None] * _z_nlp[:nx_mesh].reshape((nx, -1), order='F')
 
-# Save solution
-x_poly_guess = [np.polynomial.legendre.Legendre(_b) for _b in state_bases_guess]
-u_poly_guess = [np.polynomial.legendre.Legendre(_b) for _b in control_bases_guess]
+    U_nlp = np.empty(shape=(nu, n_mesh))
+    U_nlp[:, idces_collocation] = control_bias[:, None] \
+        + control_scale[:, None] * _z_nlp[nx_mesh:nx_mesh + nu_col].reshape((nu, -1), order='F')
+    tf_nlp = _z_nlp[nx_mesh + nu_col]
+    t_nlp = tf_nlp*(1+col_points)/2
 
-x_poly_sol = [np.polynomial.legendre.Legendre(_b) for _b in state_bases]
-u_poly_sol = [np.polynomial.legendre.Legendre(_b) for _b in control_bases]
-lam_poly_sol = [np.polynomial.legendre.Legendre(_b) for _b in costate_bases]
+    if _adjoints_nlp is not None:
+        # Costate information
+        nu0_nlp = _adjoints_nlp[:nx]
+        nuf_nlp = _adjoints_nlp[nx:nx + bcf_sym.numel()]
 
-sol_dict = {
-    'tf_guess': tf_guess,
-    'x_guess': x_poly_guess,
-    'u_guess': u_poly_guess,
+        lam_nlp = np.empty(shape=(nx, n_mesh))
+        lam_nlp[:, idces_anchor] = np.nan
+        lam_nlp[:, idces_collocation] = _adjoints_nlp[nx + bcf_sym.numel():].reshape((nx, -1), order='F') \
+            * state_dynamics_scale[:, None]
+        # if anchor == 'initial':
+        #     # Initial col point
+        #     lam_nlp[:, idces_anchor[0]] = -nu0_nlp * bc0_scale
+    else:
+        nu0_nlp = np.empty_like(initial_state)
+        nu0_nlp[:] = np.nan
+        nuf_nlp = np.empty_like(terminal_pos)
+        nuf_nlp[:] = np.nan
+        lam_nlp = np.empty(shape=(nx, n_mesh))
+        lam_nlp[:, idces_anchor] = np.nan
 
-    'tf': tf,
-    'x': x_poly_sol,
-    'u': u_poly_sol,
-    'lam': lam_poly_sol,
-    'nu0': nu0,
-    'nuf': nuf,
+    # Compile solution
+    _sol_nlp = giuseppe.data_classes.Solution()
+    _sol_nlp.t = t_nlp
+    _sol_nlp.x = X_nlp
+    _sol_nlp.lam = lam_nlp
+    _sol_nlp.u = U_nlp
+    _sol_nlp.nu0 = nu0_nlp
+    _sol_nlp.nuf = nuf_nlp
+    return _sol_nlp
 
-    'xb': state_bias,
-    'xr': state_scale,
-    'ub': control_bias,
-    'ur': control_scale,
-    'lamb': costate_bias,
-    'lamr': np.ones_like(costate_scale),
-}
 
+guess_nlp = unpack_solution(z_guess)
+sol_nlp = unpack_solution(nlp_sol['x'].full().ravel(), nlp_sol['lam_g'].full().ravel())
+with open('guess_nlp.data', 'wb') as f:
+    pickle.dump(guess_nlp, f)
 with open('sol_nlp.data', 'wb') as f:
-    pickle.dump(sol_dict, f)
+    pickle.dump(sol_nlp, f)
+
