@@ -9,6 +9,8 @@ with open('guess_nlp.data', 'rb') as f:
     guess = pickle.load(f)
 with open('sol_nlp.data', 'rb') as f:
     sol = pickle.load(f)
+with open('sol_indirect.data', 'rb') as f:
+    sol_indirect = pickle.load(f)
 
 
 def interpolate_signal(_t, _y, _t_interp):
@@ -28,7 +30,8 @@ def interpolate_signal(_t, _y, _t_interp):
     return _y[:, is_col] @ interp_mat.T
 
 
-def interpolate_solution(_sol, _t_interp):
+def interpolate_solution(_sol, n_vals: int = 1000):
+    _t_interp = np.linspace(_sol.t[0], _sol.t[-1], 1_000)
     return giuseppe.data_classes.Solution(
         t=_t_interp,
         nu0=_sol.nu0,
@@ -39,7 +42,8 @@ def interpolate_solution(_sol, _t_interp):
     )
 
 
-sol_interp = interpolate_solution(sol, np.linspace(sol.t[0], sol.t[-1], 1_000))
+sol_nlp_interp = interpolate_solution(sol)
+sol_indirect_interp = interpolate_solution(sol_indirect)
 
 r2d = 180./np.pi
 
@@ -57,8 +61,10 @@ for idx, ax_u in enumerate(axes_u):
     ax_u.set_ylabel(u_labels[idx])
     ax_u.grid()
     ax_u.plot(guess.t, guess.u[idx], '*', color=cols[1], label='Guess')
-    ax_u.plot(sol_interp.t, sol_interp.u[idx], '--', color=cols[0], label='Interp')
-    ax_u.plot(sol.t, sol.u[idx], '*', color=cols[0], label='Sol')
+    ax_u.plot(sol_nlp_interp.t, sol_nlp_interp.u[idx], '--', color=cols[0])
+    ax_u.plot(sol_indirect_interp.t, sol_indirect_interp.u[idx], '--', color=cols[2], label='Indirect')
+    ax_u.plot(sol.t, sol.u[idx], '*', color=cols[0], label='NLP')
+    ax_u.plot(sol_indirect.t, sol_indirect.u[idx], '*', color=cols[2], label='Indirect')
 axes_u[-1].set_xlabel(t_lab)
 
 fig_u.tight_layout()
@@ -101,10 +107,14 @@ for idx, ax_x in enumerate(axes_x_flat):
     ax_lam.grid()
     ax_lam.set_ylabel(lam_labels[idx])
     ax_x.plot(guess.t, guess.x[idx]*x_scale[idx], '*', color=cols[1], label='Guess')
-    ax_x.plot(sol_interp.t, sol_interp.x[idx]*x_scale[idx], '--', color=cols[0], label='Interp')
+    ax_x.plot(sol_nlp_interp.t, sol_nlp_interp.x[idx] * x_scale[idx], '--', color=cols[0])
+    ax_x.plot(sol_indirect_interp.t, sol_indirect_interp.x[idx] * x_scale[idx], '--', color=cols[2])
     ax_x.plot(sol.t, sol.x[idx]*x_scale[idx], '*', color=cols[0], label='Sol')
-    ax_lam.plot(sol_interp.t, sol_interp.lam[idx], '--', color=cols[0], label='Interp')
+    ax_x.plot(sol_indirect.t, sol_indirect.x[idx] * x_scale[idx], '*', color=cols[2], label='Indirect')
+    ax_lam.plot(sol_nlp_interp.t, sol_nlp_interp.lam[idx], '--', color=cols[0])
+    ax_lam.plot(sol_indirect_interp.t, sol_indirect_interp.lam[idx], '--', color=cols[2])
     ax_lam.plot(sol.t, sol.lam[idx], '*', color=cols[0], label='Sol')
+    ax_lam.plot(sol_indirect.t, sol_indirect.lam[idx], '*', color=cols[2], label='Indirect')
 
 ax_x = axes_x_flat[-1]
 ax_lam = axes_lam_flat[-1]

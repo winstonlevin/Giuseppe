@@ -192,8 +192,8 @@ pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
 # ----------------------------------------------------------------------------- #
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
-n_col = 9  # Number of basis functions for state estimate (1 more than costate/control)
-n_int = 30  # Number of integration locations
+n_col = 30  # Number of basis functions for state estimate (1 more than costate/control)
+n_int = 100  # Number of integration locations
 
 
 collocation_method = 'lg'
@@ -280,18 +280,18 @@ z_sym = ca.vcat((
     tf_sym,
 ))
 
-L_proj = path_cost_fun(Xproj_sym, Uproj_sym) / path_cost_scale
-f_proj = eom_state_fun(Xproj_sym, Uproj_sym)
+L_proj_sym = path_cost_fun(Xproj_sym, Uproj_sym) / path_cost_scale
+f_proj_sym = eom_state_fun(Xproj_sym, Uproj_sym)
 X0i_sym = X_sym @ interp0f_mesh[0]
 Xfi_sym = X_sym @ interp0f_mesh[1]
 
-integrated_cost = tf_sym/2 * (L_proj @ proj_weights)
-dynamic_residual = (
-    tf_sym/2*f_proj - DXproj_sym
+integrated_cost_sym = tf_sym / 2 * (L_proj_sym @ proj_weights)
+dynamic_residual_sym = (
+    tf_sym / 2 * f_proj_sym - DXproj_sym
 ) * np.tile(proj_weights[None, :], (nx, 1))
-dynamic_residual /= state_dynamics_scale[:, None]
-collocated_residual = dynamic_residual @ proj_col_mat
-dynamic_constraint = ca.vec(collocated_residual)
+dynamic_residual_sym /= state_dynamics_scale[:, None]
+collocated_residual_sym = dynamic_residual_sym @ proj_col_mat
+dynamic_constraint_sym = ca.vec(collocated_residual_sym)
 
 bc0_sym = X0i_sym - x0_nd
 bcf_sym = Xfi_sym[:3] - pf_nd
@@ -299,8 +299,8 @@ boundary_constraints = ca.vcat((bc0_sym, bcf_sym))
 
 nlp = {
     'x': z_sym,  # Unknown variables
-    'f': integrated_cost,  # Objective function
-    'g': ca.vcat((boundary_constraints, dynamic_constraint))  # Equality constraints
+    'f': integrated_cost_sym,  # Objective function
+    'g': ca.vcat((boundary_constraints, dynamic_constraint_sym))  # Equality constraints
 }
 nlp_solver = ca.nlpsol('NLP', 'ipopt', nlp)
 
@@ -339,22 +339,20 @@ ub_state[5] = np.pi
 
 lbx = (lb_state - state_bias) / state_scale
 ubx = (ub_state - state_bias) / state_scale
-
-# Control scaled by bounds already
 lbu = (control_lower_bound - control_bias) / control_scale
 ubu = (control_upper_bound - control_bias) / control_scale
 
 lbtf = tf_min
 ubtf = tf_min*3.
 
-ubz = np.empty_like(z_guess)
-ubz[:nx_mesh] = np.tile(ubx, n_mesh)
-ubz[nx_mesh:nx_mesh + nu_col] = np.tile(ubu, n_col)
-ubz[nx_mesh + nu_col] = ubtf
 lbz = np.empty_like(z_guess)
 lbz[:nx_mesh] = np.tile(lbx, n_mesh)
 lbz[nx_mesh:nx_mesh + nu_col] = np.tile(lbu, n_col)
 lbz[nx_mesh + nu_col] = lbtf
+ubz = np.empty_like(z_guess)
+ubz[:nx_mesh] = np.tile(ubx, n_mesh)
+ubz[nx_mesh:nx_mesh + nu_col] = np.tile(ubu, n_col)
+ubz[nx_mesh + nu_col] = ubtf
 
 nlp_sol = nlp_solver(x0=z_guess, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 
@@ -387,9 +385,9 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
         lam_nlp[:, idces_anchor] = np.nan
         lam_nlp[:, idces_collocation] = _adjoints_nlp[nx + bcf_sym.numel():].reshape((nx, -1), order='F') \
             * path_cost_scale / state_dynamics_scale[:, None]
-        # if anchor == 'initial':
-        #     # Initial col point
-        #     lam_nlp[:, idces_anchor[0]] = -nu0_nlp * bc0_scale
+
+        lam_nlp[:, 0] = -nu0_nlp / bc0_scale  # Import closure conditions
+        lam_nlp[:3, -1] = nuf_nlp / bcf_scale
     else:
         nu0_nlp = np.empty_like(initial_state)
         nu0_nlp[:] = np.nan
@@ -422,3 +420,197 @@ with open('guess_nlp.data', 'wb') as f:
 with open('sol_nlp.data', 'wb') as f:
     pickle.dump(sol_nlp, f)
 
+# ----------------------------------------------------------------------------------------------------- #
+# INDIRECT SOLUTION                                                                                     #
+# ----------------------------------------------------------------------------------------------------- #
+# Scalar signals -------------------------- #
+hamiltonian_sym = path_cost_sym + ca.dot(costate_sym, eom_state_sym)
+
+eom_costate_sym = -ca.jacobian(hamiltonian_sym, state_sym).T
+control_law_sym = ca.jacobian(hamiltonian_sym, control_sym).T
+
+hamiltonian_fun = ca.Function(
+    'H', (state_sym, costate_sym, control_sym), (hamiltonian_sym,), ('x', 'lam', 'u'), ('H',)
+)
+eom_costate_fun = ca.Function(
+    'nHx', (state_sym, costate_sym, control_sym), (eom_costate_sym,), ('x', 'lam', 'u'), ('nHx',)
+)
+control_law_fun = ca.Function(
+    'Hu', (state_sym, costate_sym, control_sym), (control_law_sym,), ('x', 'lam', 'u'), ('Hu',)
+)
+# ----------------------------------------- #
+
+
+# Update scales --------------------------- #
+def gen_scales(_y, _tol: float = 1E-3):
+    _y_max = _y.max(initial=-np.inf, axis=-1)
+    _y_min = _y.min(initial=np.inf, axis=-1)
+    return 0.5*(_y_max + _y_min), np.maximum(0.5*(_y_max - _y_min), _tol)
+
+
+if use_state_scaling:
+    state_bias, state_scale = gen_scales(sol_nlp.x)
+
+    x0_nd = (initial_state - state_bias) / state_scale
+    pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
+if use_control_scaling:
+    control_bias, control_scale = gen_scales(sol_nlp.u[:, 1:-1])
+if use_costate_scaling:
+    costate_bias, costate_scale = gen_scales(sol_nlp.lam[:, 1:-1])
+
+    # Dynamics scaling
+    hu_vals_nlp = control_law_fun(
+        sol_nlp.x[:, idces_collocation], sol_nlp.lam[:, idces_collocation], sol_nlp.u[:, idces_collocation]
+    ).full()
+    dxdt_vals_nlp = eom_state_fun(
+        sol_nlp.x[:, idces_collocation], sol_nlp.u[:, idces_collocation]
+    ).full()
+    dlamdt_vals_nlp = eom_costate_fun(
+        sol_nlp.x[:, idces_collocation], sol_nlp.lam[:, idces_collocation], sol_nlp.u[:, idces_collocation]
+    ).full()
+
+    # Scaling for dynamics
+    g_bias, g_scale = gen_scales(hu_vals_nlp)
+    f_bias, f_scale = gen_scales(np.vstack((dxdt_vals_nlp, dlamdt_vals_nlp)))
+else:
+    costate_bias = np.zeros_like(initial_state)
+    costate_scale = np.ones_like(initial_state)
+
+    g_bias = np.zeros_like(control_lower_bound)
+    g_scale = np.ones_like(g_bias)
+    f_bias = np.zeros(shape=(2*nx,), dtype=initial_state.dtype)
+    f_scale = np.ones_like(f_bias)
+
+Lam_sym = ca.SX.sym('Lam', X_sym.shape)
+
+# Update scaling
+Xproj_sym = state_bias[:, None] + state_scale[:, None] * (X_sym @ proj_mat.T)
+DXproj_sym = state_scale[:, None] * (X_sym @ proj_diff_mat.T)
+Uproj_sym = control_bias[:, None] + control_scale[:, None] * (U_sym @ proj_col_mat.T)
+
+Lamproj_sym = costate_bias[:, None] + costate_scale[:, None] * (X_sym @ proj_mat.T)
+DLamproj_sym = costate_scale[:, None] * (X_sym @ proj_diff_mat.T)
+DZproj_sym = ca.vcat((DXproj_sym, DLamproj_sym))
+
+# The objective is the integrated error of the dynamics and algebraic signals
+f_proj_sym = ca.vcat((
+    eom_state_fun(Xproj_sym, Uproj_sym),
+    eom_costate_fun(Xproj_sym, Lamproj_sym, Uproj_sym),
+))
+g_proj_sym = control_law_fun(Xproj_sym, Lamproj_sym, Uproj_sym)
+
+dynamic_residual_sym = (
+    tf_sym/2*f_proj_sym - DZproj_sym
+) * np.tile(proj_weights[None, :], (2*nx, 1))
+dynamic_residual_sym /= f_scale[:, None]
+algebraic_residual = g_proj_sym * (proj_weights[None, :] / g_scale[:, None])
+
+error_proj = ca.sum1(0.5 * dynamic_residual_sym ** 2) + ca.sum1(0.5 * algebraic_residual ** 2)
+integrated_error = ca.sum2(error_proj)
+
+# Boundary conditions
+X0i_sym = X_sym @ interp0f_mesh[0]
+Xfi_sym = X_sym @ interp0f_mesh[1]
+Lamfi_sym = Lam_sym @ interp0f_mesh[1]
+
+bc0_sym = X0i_sym - x0_nd  # Initial state fixed
+bcf_sym = ca.vcat((Xfi_sym[:3] - pf_nd, Lamfi_sym[3:]))  # Initial pos fixed, term. vel free -> term. vel. costate = 0
+boundary_constraints = ca.vcat((bc0_sym, bcf_sym))
+
+z_sym = ca.vcat((
+    ca.vec(X_sym),
+    ca.vec(Lam_sym),
+    ca.vec(U_sym),
+    tf_sym,
+))
+if col_points[-1] == 1:
+    # Terminal point IS collocated
+    z_guess = np.concatenate((
+        sol_nlp.x.ravel(order='F'),
+        sol_nlp.lam.ravel(order='F'),
+        sol_nlp.u[:, idces_collocation].ravel(order='F'),
+        sol_nlp.t[-1:],
+    ))
+else:
+    # Terminal point was extrapolated
+    z_guess = np.concatenate((
+        sol_nlp.x[:, :-1].ravel(order='F'),
+        sol_nlp.lam[:, :-1].ravel(order='F'),
+        sol_nlp.u[:, idces_collocation].ravel(order='F'),
+        sol_nlp.t[-1:],
+    ))
+
+indirect_nlp = {
+    'x': z_sym,  # Unknown variables
+    'f': integrated_error,  # Objective function
+    'g': boundary_constraints  # Equality constraints
+}
+indirect_nlp_solver = ca.nlpsol('INLP', 'ipopt', indirect_nlp)
+
+# Bound guess with updated scales
+lbx = (lb_state - state_bias) / state_scale
+ubx = (ub_state - state_bias) / state_scale
+lbu = (control_lower_bound - control_bias) / control_scale
+ubu = (control_upper_bound - control_bias) / control_scale
+
+# Allow 100% increase/decrease in costate bounds
+lblam = np.empty_like(lbx)
+lblam[:] = -2.
+ublam = np.empty_like(ubx)
+ublam[:] = 2.
+
+lbz = np.empty_like(z_guess)
+lbz[:nx_mesh] = np.tile(lbx, n_mesh)
+lbz[nx_mesh:2*nx_mesh] = np.tile(lblam, n_mesh)
+lbz[2*nx_mesh:-1] = np.tile(lbu, n_col)
+lbz[-1] = lbtf
+ubz = np.empty_like(z_guess)
+ubz[:nx_mesh] = np.tile(ubx, n_mesh)
+ubz[nx_mesh:2*nx_mesh] = np.tile(ublam, n_mesh)
+ubz[2*nx_mesh:-1] = np.tile(ubu, n_col)
+ubz[-1] = ubtf
+
+indirect_nlp_sol = indirect_nlp_solver(x0=z_guess, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
+
+# Unpack indirect solution
+z_indirect = indirect_nlp_sol['x'].full().ravel()
+adjoints_indirect = indirect_nlp_sol['lam_g'].full().ravel()
+
+X_indirect = np.empty_like(sol_nlp.x)
+X_indirect[:] = np.nan
+X_indirect[:, :-1] = z_indirect[:nx_mesh].reshape((nx, -1), order='F')
+X_indirect[:, -1] = X_indirect[:, :-1] @ interp0f_mesh[1]
+X_indirect = state_bias[:, None] + state_scale[:, None] * X_indirect
+Lam_indirect = np.empty_like(sol_nlp.lam)
+Lam_indirect[:] = np.nan
+Lam_indirect[:, :-1] = z_indirect[nx_mesh:2*nx_mesh].reshape((nx, -1), order='F')
+Lam_indirect[:, -1] = Lam_indirect[:, :-1] @ interp0f_mesh[1]
+Lam_indirect = costate_bias[:, None] + costate_scale[:, None] * Lam_indirect
+U_indirect = np.empty_like(sol_nlp.u)
+U_indirect[:] = np.nan
+U_indirect[:, idces_collocation] = z_indirect[2*nx_mesh:-1].reshape((nu, -1), order='F')
+U_indirect = control_bias[:, None] + control_scale[:, None] * U_indirect
+tf_indirect = z_indirect[-1]
+t_indirect = np.empty_like(sol_nlp.t)
+t_indirect[:-1] = tf_indirect * 0.5*(col_points + 1)
+t_indirect[-1] = tf_indirect
+sol_indirect = giuseppe.data_classes.Solution(
+    t=t_indirect,
+    x=X_indirect,
+    lam=Lam_indirect,
+    u=U_indirect,
+    nu0=-Lam_indirect[:, 0],
+    nuf=Lam_indirect[:3, -1],
+)
+
+with open('sol_indirect.data', 'wb') as f:
+    pickle.dump(sol_indirect, f)
+
+# z_sym = ca.vcat((
+#     ca.vec(X_sym),
+#     ca.vec(Lam_sym),
+#     ca.vec(U_sym),
+#     tf_sym,
+# ))
+
+# TODO - see if indirect method improves accuracy with same dimension
