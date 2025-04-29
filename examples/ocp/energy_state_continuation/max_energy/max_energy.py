@@ -38,7 +38,7 @@ psi0 = 0.  # [rad]
 
 # (terminal)
 hf = 0.
-lonf = 5. * np.pi/180
+lonf = 3. * np.pi/180
 latf = 1. * np.pi/180
 
 lamVf = 0.
@@ -192,8 +192,8 @@ pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
 # ----------------------------------------------------------------------------- #
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
-n_col = 20  # Number of basis functions for state estimate (1 more than costate/control)
-n_int = 20  # Number of integration locations
+n_col = 9  # Number of basis functions for state estimate (1 more than costate/control)
+n_int = 30  # Number of integration locations
 
 
 collocation_method = 'lg'
@@ -260,7 +260,7 @@ proj_mat, proj_diff_mat = giuseppe.utils.pseudospectral.lagrange_matrices(
 proj_col_mat, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
     col_points[idces_collocation], proj_points, compute_interp_matrix=True, compute_diff_matrix=False
 )
-interp0f_mesh_local, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
+interp0f_mesh, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
     col_points, np.array((-1, +1)), compute_interp_matrix=True, compute_diff_matrix=False
 )  # Interpolate Lam/U to get 0/f values
 
@@ -282,8 +282,8 @@ z_sym = ca.vcat((
 
 L_proj = path_cost_fun(Xproj_sym, Uproj_sym) / path_cost_scale
 f_proj = eom_state_fun(Xproj_sym, Uproj_sym)
-X0i_sym = X_sym @ interp0f_mesh_local[0]
-Xfi_sym = X_sym @ interp0f_mesh_local[1]
+X0i_sym = X_sym @ interp0f_mesh[0]
+Xfi_sym = X_sym @ interp0f_mesh[1]
 
 integrated_cost = tf_sym/2 * (L_proj @ proj_weights)
 dynamic_residual = (
@@ -369,7 +369,11 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
         + control_scale[:, None] * _z_nlp[nx_mesh:nx_mesh + nu_col].reshape((nu, -1), order='F')
 
     # Unwrap angles
-    U_nlp[:, idces_collocation] = np.unwrap(U_nlp[:, idces_collocation], axis=1)
+    sig_unwrapped = np.unwrap(U_nlp[1, idces_collocation], period=np.pi)
+    flip_sign = np.zeros(shape=(n_mesh,), dtype=bool)
+    flip_sign[idces_collocation] = np.not_equal(np.sign(sig_unwrapped), np.sign(U_nlp[1, idces_collocation]))
+    U_nlp[0, flip_sign] *= -1
+    U_nlp[1, idces_collocation] = sig_unwrapped
 
     tf_nlp = _z_nlp[nx_mesh + nu_col]
     t_nlp = tf_nlp*(1+col_points)/2
@@ -393,6 +397,12 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
         nuf_nlp[:] = np.nan
         lam_nlp = np.empty(shape=(nx, n_mesh))
         lam_nlp[:, idces_anchor] = np.nan
+
+    # Append terminal condition
+    t_nlp = np.append(t_nlp, tf_nlp)
+    X_nlp = np.append(X_nlp, (X_nlp @ interp0f_mesh[1])[:, None], axis=-1)
+    U_nlp = np.append(U_nlp, np.nan*U_nlp[:, -1:], axis=-1)
+    lam_nlp = np.append(lam_nlp, np.nan*lam_nlp[:, -1:], axis=-1)
 
     # Compile solution
     _sol_nlp = giuseppe.data_classes.Solution()
