@@ -374,6 +374,10 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
     U_nlp[0, flip_sign] *= -1
     U_nlp[1, idces_collocation] = sig_unwrapped
 
+    # Ensure AoA mostly positive
+    if np.dot(U_nlp[0, idces_collocation], col_weights) < 0:
+        U_nlp *= -1
+
     tf_nlp = _z_nlp[nx_mesh + nu_col]
     t_nlp = tf_nlp*(1+col_points)/2
 
