@@ -193,7 +193,7 @@ pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
 n_col = 9  # Number of basis functions for state estimate (1 more than costate/control)
-n_int = 18  # Number of integration locations
+n_int = 9  # Number of integration locations
 
 
 collocation_method = 'lg'

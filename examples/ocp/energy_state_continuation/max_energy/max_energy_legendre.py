@@ -193,7 +193,7 @@ pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
 n_col = 9  # Order of basis functions for state estimate (1 more than costate/control)
-n_int = 18  # Number of integration locations
+n_int = 9  # Number of integration locations
 
 
 # Generate basis functions ------------------------------------------------------------------------------------------- #
@@ -281,8 +281,7 @@ xndf_guess[3:] = x0_nd[3:]
 
 # Fit 1st 2 coefficients to initial/terminal state guess
 xnd_guess = np.zeros(shape=X_sym.shape, dtype=initial_state.dtype)
-xnd_guess[:, 0] = xnd0_guess
-xnd_guess[:, 1] = xndf_guess - xnd0_guess
+xnd_guess[:, :2] = np.linalg.solve(interp0f_mesh[:, :2], np.vstack((xnd0_guess, xndf_guess))).T
 
 und_guess = np.zeros(shape=U_sym.shape, dtype=control_lower_bound.dtype)
 und_guess[:, 0] = -(control_bias / control_scale)  # u = u0 = 0
@@ -299,88 +298,84 @@ z_guess = np.concatenate((
     (tf_guess,),
 ))
 
-lb_state = np.empty_like(initial_state)
-ub_state = np.empty_like(initial_state)
-lb_state[0] = -1_000.  # Altitude
-ub_state[0] = 100_000.
-lb_state[1:3] = initial_state[1:3]  # Lat/lon
-ub_state[1:3] = terminal_pos[1:3]
-lb_state[3] = 10.
-ub_state[3] = 2*initial_state[3]
-lb_state[4] = -85*np.pi/180  # FPA
-ub_state[4] = 85*np.pi/180
-lb_state[5] = -np.pi  # Heading
-ub_state[5] = np.pi
+# Bound coefficients based on assumption that |znd| <= 1.
+# Since: |phi_i(t)| <= 1
+# Each term must be in the bounds:
+# |C_i| <= Nb
+cx_max = n_col + 1
+cu_max = n_col
 
-lbx = (lb_state - state_bias) / state_scale
-ubx = (ub_state - state_bias) / state_scale
-lbu = (control_lower_bound - control_bias) / control_scale
-ubu = (control_upper_bound - control_bias) / control_scale
-
+# Time bounds
 lbtf = tf_min
 ubtf = tf_min*3.
 
 lbz = np.empty_like(z_guess)
-lbz[:nx_mesh] = np.tile(lbx, n_mesh)
-lbz[nx_mesh:nx_mesh + nu_col] = np.tile(lbu, n_col)
-lbz[nx_mesh + nu_col] = lbtf
+lbz[:nx_mesh] = -cx_max
+lbz[nx_mesh:nx_mesh+nu_col] = -cu_max
+lbz[-1] = lbtf
+
 ubz = np.empty_like(z_guess)
-ubz[:nx_mesh] = np.tile(ubx, n_mesh)
-ubz[nx_mesh:nx_mesh + nu_col] = np.tile(ubu, n_col)
-ubz[nx_mesh + nu_col] = ubtf
+ubz[:nx_mesh] = cx_max
+ubz[nx_mesh:nx_mesh+nu_col] = cu_max
+ubz[-1] = ubtf
 
 nlp_sol = nlp_solver(x0=z_guess, lbg=0, ubg=0, lbx=lbz, ubx=ubz)
 
 
 def unpack_solution(_z_nlp, _adjoints_nlp=None):
     # Primal information
-    X_nlp = state_bias[:, None] + state_scale[:, None] * _z_nlp[:nx_mesh].reshape((nx, -1), order='F')
+    Xnd_nlp = _z_nlp[:nx_mesh].reshape((nx, -1), order='F')
+    Und_nlp = _z_nlp[nx_mesh:nx_mesh + nu_col].reshape((nu, -1), order='F')
 
-    U_nlp = np.empty(shape=(nu, n_mesh))
-    U_nlp[:, idces_anchor] = np.nan
-    U_nlp[:, idces_collocation] = control_bias[:, None] \
-        + control_scale[:, None] * _z_nlp[nx_mesh:nx_mesh + nu_col].reshape((nu, -1), order='F')
+    X_nlp = state_bias[:, None] + state_scale[:, None] * (Xnd_nlp @ proj_mat.T)
+    U_nlp = control_bias[:, None] + control_scale[:, None] * (Und_nlp @ proj_col_mat.T)
 
     # Unwrap angles
-    sig_unwrapped = np.unwrap(U_nlp[1, idces_collocation], period=np.pi)
-    flip_sign = np.zeros(shape=(n_mesh,), dtype=bool)
-    flip_sign[idces_collocation] = np.not_equal(np.sign(sig_unwrapped), np.sign(U_nlp[1, idces_collocation]))
+    sig_unwrapped = np.unwrap(U_nlp[1, :], period=np.pi)
+    flip_sign = np.not_equal(np.sign(sig_unwrapped), np.sign(U_nlp[1, :]))
     U_nlp[0, flip_sign] *= -1
-    U_nlp[1, idces_collocation] = sig_unwrapped
+    U_nlp[1, :] = sig_unwrapped
 
     tf_nlp = _z_nlp[nx_mesh + nu_col]
-    t_nlp = tf_nlp*(1+col_points)/2
+    t_nlp = tf_nlp*(1+proj_points)/2
 
     if _adjoints_nlp is not None:
         # Costate information
         nu0_nlp = _adjoints_nlp[:nx]
         nuf_nlp = _adjoints_nlp[nx:nx + bcf_sym.numel()]
 
-        lam_nlp = np.empty(shape=(nx, n_mesh))
-        lam_nlp[:, idces_anchor] = np.nan
-        lam_nlp[:, idces_collocation] = _adjoints_nlp[nx + bcf_sym.numel():].reshape((nx, -1), order='F') \
-            * path_cost_scale / state_dynamics_scale[:, None]
-
-        # lam_nlp[:, 0] = -nu0_nlp / bc0_scale  # Import closure conditions
-        # lam_nlp[:3, -1] = nuf_nlp / bcf_scale
+        Lamnd_nlp = _adjoints_nlp[nx + bcf_sym.numel():].reshape((nx, -1), order='F')
+        lam_nlp = (path_cost_scale / state_dynamics_scale[:, None]) * (Lamnd_nlp @ proj_col_mat.T)
     else:
         nu0_nlp = np.empty_like(initial_state)
         nu0_nlp[:] = np.nan
         nuf_nlp = np.empty_like(terminal_pos)
         nuf_nlp[:] = np.nan
-        lam_nlp = np.empty(shape=(nx, n_mesh))
-        lam_nlp[:, idces_anchor] = np.nan
+        lam_nlp = np.empty(shape=(nx, n_int))
+        lam_nlp[:] = np.nan
+        Lamnd_nlp = np.empty(shape=(nx, n_col))
+        Lamnd_nlp[:] = np.nan
 
-    # Append terminal condition
-    t_nlp = np.append(t_nlp, tf_nlp)
-    X_nlp = np.append(X_nlp, (X_nlp @ interp0f_mesh[1])[:, None], axis=-1)
-    U_nlp = np.append(U_nlp, np.nan*U_nlp[:, -1:], axis=-1)
-    lam_nlp = np.append(lam_nlp, np.nan*lam_nlp[:, -1:], axis=-1)
+    if proj_points[0] != 0:
+        # Append initial condition
+        t_nlp = np.concatenate(((0.,), t_nlp))
+        X_nlp = np.concatenate(((state_bias + state_scale * (Xnd_nlp @ interp0f_mesh[0]))[:, None], X_nlp), axis=-1)
+        U_nlp = np.concatenate((np.nan*U_nlp[:, :1], U_nlp), axis=-1)
+        lam_nlp = np.concatenate((np.nan*lam_nlp[:, :1], lam_nlp), axis=-1)
+    if proj_points[-1] != 1:
+        # Append terminal condition
+        t_nlp = np.append(t_nlp, tf_nlp)
+        X_nlp = np.append(X_nlp, (state_bias + state_scale * (Xnd_nlp @ interp0f_mesh[1]))[:, None], axis=-1)
+        U_nlp = np.append(U_nlp, np.nan*U_nlp[:, -1:], axis=-1)
+        lam_nlp = np.append(lam_nlp, np.nan*lam_nlp[:, -1:], axis=-1)
 
-    # Save where points are anchored/collocated for later use
-    point_order = np.zeros(shape=t_nlp.shape, dtype=int)
-    point_order[idces_collocation] += 2
-    point_order[idces_anchor] += 1
+    # Save coefficients for later
+    coef_info = np.concatenate((
+        (Xnd_nlp.size, Lamnd_nlp.size, Und_nlp.size),
+        Xnd_nlp.ravel(order='F'),
+        Lamnd_nlp.ravel(order='F'),
+        Und_nlp.ravel(order='F')
+    ))
 
     # Compile solution
     return giuseppe.data_classes.Solution(
@@ -390,13 +385,13 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
         u=U_nlp,
         nu0=nu0_nlp,
         nuf=nuf_nlp,
-        k=point_order
+        k=coef_info
     )
 
 
 guess_nlp = unpack_solution(z_guess)
 sol_nlp = unpack_solution(nlp_sol['x'].full().ravel(), nlp_sol['lam_g'].full().ravel())
-with open('guess_nlp.data', 'wb') as f:
+with open('guess_nlp_legendre.data', 'wb') as f:
     pickle.dump(guess_nlp, f)
-with open('sol_nlp.data', 'wb') as f:
+with open('sol_nlp_legendre.data', 'wb') as f:
     pickle.dump(sol_nlp, f)
