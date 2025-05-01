@@ -105,7 +105,7 @@ bc0_fun = ca.Function('BC0', (state_sym,), (bc0_sym,), ('x',), ('BC0',))
 bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 
 # Path constraints
-control_lower_bound = np.array((0., -np.pi))  # Make AoA>=0 to disambiguate sign of AoA/Bank
+control_lower_bound = np.array((-40*np.pi, -np.pi))  # Make AoA>=0 to disambiguate sign of AoA/Bank
 control_upper_bound = np.array((40*np.pi/180, np.pi))
 
 # -------------------------------------------------------------------------- #
@@ -329,8 +329,8 @@ lb_state = np.empty_like(initial_state)
 ub_state = np.empty_like(initial_state)
 lb_state[0] = -1_000.  # Altitude
 ub_state[0] = 100_000.
-lb_state[1:3] = initial_state[1:3]  # Lat/lon
-ub_state[1:3] = terminal_pos[1:3]
+lb_state[1:3] = initial_state[1:3] - 2*np.pi/180  # Lat/lon
+ub_state[1:3] = terminal_pos[1:3] + 2*np.pi/180
 lb_state[3] = 10.
 ub_state[3] = 2*initial_state[3]
 lb_state[4] = -85*np.pi/180  # FPA
