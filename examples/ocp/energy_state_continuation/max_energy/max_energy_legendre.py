@@ -105,8 +105,8 @@ bc0_fun = ca.Function('BC0', (state_sym,), (bc0_sym,), ('x',), ('BC0',))
 bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 
 # Path constraints
-control_lower_bound = np.array((0., -np.pi))  # Make AoA>=0 to disambiguate sign of AoA/Bank
-control_upper_bound = np.array((40*np.pi/180, np.pi))
+control_lower_bound = np.array((-40*np.pi, -3*np.pi))  # Make AoA>=0 to disambiguate sign of AoA/Bank
+control_upper_bound = np.array((40*np.pi/180, 3*np.pi))
 
 # -------------------------------------------------------------------------- #
 # SCALING PROCEDURE:                                                         #
@@ -192,8 +192,8 @@ pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
 # ----------------------------------------------------------------------------- #
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
-n_col = 9  # Order of basis functions for state estimate (1 more than costate/control)
-n_int = 9  # Number of integration locations
+n_col = 10  # Order of basis functions for state estimate (1 more than costate/control)
+n_int = 20  # Number of integration locations
 
 
 # Generate basis functions ------------------------------------------------------------------------------------------- #
@@ -330,15 +330,15 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
     X_nlp = state_bias[:, None] + state_scale[:, None] * (Xnd_nlp @ proj_mat.T)
     U_nlp = control_bias[:, None] + control_scale[:, None] * (Und_nlp @ proj_col_mat.T)
 
-    # Unwrap angles
-    sig_unwrapped = np.unwrap(U_nlp[1, :], period=np.pi)
-    flip_sign = np.not_equal(np.sign(sig_unwrapped), np.sign(U_nlp[1, :]))
-    U_nlp[0, flip_sign] *= -1
-    U_nlp[1, :] = sig_unwrapped
-
-    # Ensure AoA mostly positive
-    if np.dot(U_nlp[0, :], proj_weights) < 0:
-        U_nlp *= -1
+    # # Unwrap angles
+    # sig_unwrapped = np.unwrap(U_nlp[1, :], period=np.pi)
+    # flip_sign = np.not_equal(np.sign(sig_unwrapped), np.sign(U_nlp[1, :]))
+    # U_nlp[0, flip_sign] *= -1
+    # U_nlp[1, :] = sig_unwrapped
+    #
+    # # Ensure AoA mostly positive
+    # if np.dot(U_nlp[0, :], proj_weights) < 0:
+    #     U_nlp *= -1
 
     tf_nlp = _z_nlp[nx_mesh + nu_col]
     t_nlp = tf_nlp*(1+proj_points)/2
