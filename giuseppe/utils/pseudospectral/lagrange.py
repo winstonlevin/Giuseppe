@@ -7,9 +7,78 @@ This script is adapted from Dymos, which is licensed under:
 Multidisciplinary Systems," Journal of Open Source Software, 6(59), 2809 (2021).
 DOI: https://doi.org/10.21105/joss.02809.
 """
+from warnings import warn
 from typing import Optional
 
 import numpy as np
+
+
+def lagrange_matrices_with_generators(x_disc, x_interp=None, compute_interp_matrix=True, compute_diff_matrix=True):
+    """
+    Compute the lagrange matrices.
+
+    The lagrange matrics are given 'discretization' nodes at which
+    values are specified and 'interpolation' nodes at which values will be desired,
+    returns interpolation and differentiation matrices which provide polynomial
+    values and derivatives.
+
+    Parameters
+    ----------
+    x_disc : np.array
+        The cardinal nodes at which values of the variable are specified.
+    x_interp : np.array
+        The interior nodes at which interpolated values of the variable or its derivative
+        are desired. If left unsupplied, defaults to x_disc.
+    compute_interp_matrix : bool
+        If True, construct and return the interpolation matrix, otherwise return None.
+    compute_diff_matrix : bool
+        If True, construct and return the differentiation matrix, otherwise return None. The
+        differentiation matrix can be prohibitively expensive to build as the number of
+        discretization points grows large.
+
+    Returns
+    -------
+    np.array
+        A num_i x num_c matrix which, when post-multiplied by values specified
+        at x_disc, returns the intepolated values at x_interp.
+
+    np.array or None
+        A num_i x num_c matrix which, when post-multiplied by values specified
+        at x_disc, returns the intepolated derivatives at x_interp. This is returned
+        as None if compute_diff_matrix is None.
+    """
+    nd = len(x_disc)
+    if x_interp is None:
+        x_interp = x_disc
+        ni = nd
+    else:
+        ni = len(x_interp)
+
+    # Barycentric Weights
+    diff = np.reshape(x_disc, (nd, 1)) - np.reshape(x_disc, (1, nd))
+    np.fill_diagonal(diff, 1.0)
+    wb = 1. / np.prod(diff, axis=1)
+
+    # Differences used in both Li and Di
+    diff = np.reshape(x_interp, (ni, 1)) - np.reshape(x_disc, (1, nd))
+
+    # Compute Li
+    if compute_interp_matrix:
+        Li = np.vstack([wb[j] * (np.prod(diff[:, :j], axis=1) * np.prod(diff[:, j+1:], axis=1)) for j in range(nd)]).T
+    else:
+        Li = None
+
+    # Compute Di
+    if compute_diff_matrix:
+        idces = np.arange(0, nd, 1)
+        Di = np.vstack([
+            sum(wb[j] * np.prod(diff[:, np.delete(idces, (k, j))], axis=1) for k in range(nd) if k != j)
+            for j in range(nd)
+        ]).T
+    else:
+        Di = None
+
+    return Li, Di
 
 
 def lagrange_matrices(x_disc, x_interp=None, compute_interp_matrix=True, compute_diff_matrix=True):
@@ -46,6 +115,8 @@ def lagrange_matrices(x_disc, x_interp=None, compute_interp_matrix=True, compute
         at x_disc, returns the intepolated derivatives at x_interp. This is returned
         as None if compute_diff_matrix is None.
     """
+    warn("Use lagrange_matrices_with_generators instead of lagrance_matrices", DeprecationWarning, stacklevel=2)
+
     nd = len(x_disc)
     if x_interp is None:
         x_interp = x_disc
