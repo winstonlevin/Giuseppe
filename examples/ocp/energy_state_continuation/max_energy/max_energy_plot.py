@@ -15,8 +15,8 @@ with open('sol_nlp.data', 'rb') as f:
     sol_nlp = pickle.load(f)
 with open('sol_nlp_legendre.data', 'rb') as f:
     sol_legendre = pickle.load(f)
-with open('sol_indirect.data', 'rb') as f:
-    sol_indirect = pickle.load(f)
+with open('sol_nonsingular.data', 'rb') as f:
+    sol_nonsingular = pickle.load(f)
 
 
 def interpolate_signal(_t, _y, _t_interp):
@@ -72,7 +72,7 @@ for idx, ax_u in enumerate(axes_u):
     ax_u.plot(sol_nlp_interp.t, sol_nlp_interp.u[idx], **nlp_interp_plot_kwargs)
     ax_u.plot(sol_nlp.t, sol_nlp.u[idx], **nlp_plot_kwargs)
     ax_u.plot(sol_legendre.t, sol_legendre.u[idx], **legendre_plot_kwargs)
-    ax_u.plot(sol_indirect.t, sol_indirect.u[idx], **indirect_plot_kwargs)
+    ax_u.plot(sol_nonsingular.t, sol_nonsingular.u[idx], **indirect_plot_kwargs)
 axes_u[-1].set_xlabel(t_lab)
 
 fig_u.tight_layout()
@@ -119,12 +119,12 @@ for idx, ax_x in enumerate(axes_x_flat):
     ax_x.plot(sol_nlp_interp.t, sol_nlp_interp.x[idx] * x_scale[idx], **nlp_interp_plot_kwargs)
     ax_x.plot(sol_nlp.t, sol_nlp.x[idx] * x_scale[idx], **nlp_plot_kwargs)
     ax_x.plot(sol_legendre.t, sol_legendre.x[idx] * x_scale[idx], **legendre_plot_kwargs)
-    ax_x.plot(sol_indirect.t, sol_indirect.x[idx] * x_scale[idx], **indirect_plot_kwargs)
+    ax_x.plot(sol_nonsingular.t, sol_nonsingular.x[idx] * x_scale[idx], **indirect_plot_kwargs)
 
     ax_lam.plot(sol_nlp_interp.t, sol_nlp_interp.lam[idx], **nlp_interp_plot_kwargs)
     ax_lam.plot(sol_nlp.t, sol_nlp.lam[idx], **nlp_plot_kwargs)
     ax_lam.plot(sol_legendre.t, sol_legendre.lam[idx], **legendre_plot_kwargs)
-    ax_lam.plot(sol_indirect.t, sol_indirect.lam[idx], **indirect_plot_kwargs)
+    ax_lam.plot(sol_nonsingular.t, sol_nonsingular.lam[idx], **indirect_plot_kwargs)
 
 ax_x = axes_x_flat[-1]
 ax_lam = axes_lam_flat[-1]
