@@ -78,29 +78,34 @@ Vlat_sym = V_sym * ca.cos(gam_sym)
 Reqt_sym = R_sym * ca.cos(lat_sym)
 
 # Dynamics
-eom_num_state_sym = ca.vcat((
+eom_rhs_state_sym = ca.vcat((
     V_sym * ca.sin(gam_sym),
     Vlat_sym * ca.sin(psi_sym),
     Vlat_sym * ca.cos(psi_sym),
     -drag_sym - g_sym*ca.sin(gam_sym),
-    (lift_sym*ca.cos(sig_sym) - g_sym) * R_sym - V_sym**2,
-    (lift_sym*ca.sin(sig_sym)) * Reqt_sym - Vlat_sym**2 * ca.cos(psi_sym)*ca.sin(lat_sym)
+    lift_sym*ca.cos(sig_sym) - (g_sym - V_sym*V_sym/R_sym) * ca.cos(gam_sym),
+    lift_sym*ca.sin(sig_sym),
 ))
-eom_den_state_sym = ca.vcat((
-    1.,
-    R_sym,
-    Reqt_sym,
-    1.,
-    V_sym * R_sym,
-    Vlat_sym * Reqt_sym
-))
+
+eom_lhs_permutation_sym = ca.SX.eye(nx)
+eom_lhs_permutation_sym[1, 1] = R_sym
+eom_lhs_permutation_sym[2, 2] = Reqt_sym
+eom_lhs_permutation_sym[4, 4] = V_sym
+eom_lhs_permutation_sym[5, 5] = Vlat_sym
+eom_lhs_permutation_sym[5, 2] = Vlat_sym * np.sin(lat_sym)
 
 # Path cost
-path_cost_sym = -eom_num_state_sym[3]/eom_den_state_sym[3]  # Max Vf - V0
+path_cost_sym = -eom_rhs_state_sym[3]  # Max Vf - V0
 
 path_cost_fun = ca.Function('L', (state_sym, control_sym), (path_cost_sym,), ('x', 'u'), ('L',))
-eom_num_state_fun = ca.Function('fN', (state_sym, control_sym), (eom_num_state_sym,), ('x', 'u'), ('fN',))
-eom_den_state_fun = ca.Function('fN', (state_sym, control_sym), (eom_den_state_sym,), ('x', 'u'), ('fD',))
+eom_rhs_state_fun = ca.Function(
+    'f', (state_sym, control_sym), (eom_rhs_state_sym,), ('x', 'u'), ('f',)
+)
+eom_lhs_permutation_state_fun = ca.Function(
+    'P', (state_sym, control_sym), (eom_lhs_permutation_sym,), ('x', 'u'), ('P',)
+)
+
+# TODO - adjust below to refactor [fD dx/dt = fN] to [P dx/dt = f]
 
 # Boundary conditions
 # (initial)
