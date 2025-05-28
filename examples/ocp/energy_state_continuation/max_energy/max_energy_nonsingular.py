@@ -101,7 +101,24 @@ eom_lhs_permutation_state_fun = ca.Function(
     'P', (state_sym, control_sym), (eom_lhs_permutation_sym,), ('x', 'u'), ('P',)
 )
 
-# TODO - adjust below to refactor [fD dx/dt = fN] to [P dx/dt = f]
+# TODO - swap to implicit dynamic calculation after
+# TODO - fixing error in dynamics formulation
+# TODO - [P * (dx/dt) - f =/= 0 right now]
+# Explicit dynamic formulation
+eom_state_sym = ca.vcat((
+    V_sym * ca.sin(gam_sym),
+    ((V_sym/R_sym) * ca.cos(gam_sym)) * ca.sin(psi_sym),
+    ((V_sym/R_sym) * ca.cos(gam_sym)) * ca.cos(psi_sym)/ca.cos(lat_sym),
+    -drag_sym - g_sym*ca.sin(gam_sym),
+    (lift_sym*ca.cos(sig_sym) - (g_sym - V_sym**2/R_sym))/V_sym,
+    (lift_sym*ca.sin(sig_sym) - Vlat_sym**2/R_sym * ca.cos(psi_sym)*ca.tan(lat_sym))/Vlat_sym
+))
+eom_state_fun = ca.Function('f', (state_sym, control_sym), (eom_state_sym,), ('x', 'u'), ('f',))
+
+# Implicit formulation
+# eom_state_fun = ca.Function(
+#     'f', (state_sym, control_sym), (ca.solve(eom_lhs_permutation_sym, eom_rhs_state_sym),), ('x', 'u'), ('f',)
+# )
 
 # Boundary conditions
 # (initial)
@@ -170,11 +187,24 @@ else:
     control_scale = np.ones_like(control_lower_bound)
 
 if use_costate_scaling:
-    state_dynamics_bias = np.zeros_like(initial_state)
-    state_dynamics_scale = np.empty_like(state_scale)
-    state_dynamics_scale[:3] = V_scale
-    state_dynamics_scale[3:] = g0
-    path_cost_scale = state_dynamics_scale[3]
+    # TODO - swap to implicit scales
+    # Explicit scales
+    state_dynamics_bias, state_dynamics_scale = np.array((
+        (0., V_scale),  # dh/dt
+        (0., V_scale/re),  # dLat/dt
+        (0., V_scale/re),  # dLon/dt
+        (0., g0),  # dV/dt
+        (0., g0/V_scale),  # dgam/dt
+        (0., g0/V_scale),  # dpsi/dt
+    )).T
+    path_cost_scale = g0  # L = dV/dt
+
+    # Affine implicit scales
+    # state_dynamics_bias = np.zeros_like(initial_state)
+    # state_dynamics_scale = np.empty_like(state_scale)
+    # state_dynamics_scale[:3] = V_scale
+    # state_dynamics_scale[3:] = g0
+    # path_cost_scale = state_dynamics_scale[3]
 else:
     state_dynamics_bias = np.zeros_like(initial_state)
     state_dynamics_scale = np.ones_like(initial_state)
@@ -283,12 +313,23 @@ X0i_sym = X_sym @ interp0f_mesh[0]
 Xfi_sym = X_sym @ interp0f_mesh[1]
 
 integrated_cost_sym = tf_sym / 2 * (L_proj_sym @ proj_weights)
-dynamic_residual_sym = ca.hcat([
-    (tf_sym*0.5 * eom_rhs_state_fun(_Xproj, _Uproj) - eom_lhs_permutation_state_fun(_Xproj, _Uproj) @ _DXproj)
-    / state_dynamics_scale
-    for (_Xproj, _Uproj, _DXproj) in zip(ca.horzsplit(Xproj_sym), ca.horzsplit(Uproj_sym), ca.horzsplit(DXproj_sym))
-]) * np.tile(proj_weights[None, :], (nx, 1))
-collocated_residual_sym = dynamic_residual_sym @ proj_col_mat  # Contract integrator dimension to costate dimension
+
+# TODO - swap to new affine implicit dynamic constraint
+# Old explicit dynamics ------------------------------------------- #
+f_proj_sym = eom_state_fun(Xproj_sym, Uproj_sym)
+dynamic_residual_sym = (
+    tf_sym / 2 * f_proj_sym - DXproj_sym
+) * np.tile(proj_weights[None, :], (nx, 1))
+dynamic_residual_sym /= state_dynamics_scale[:, None]
+
+# New affine implicit dynamics ------------------------------------ #
+# dynamic_residual_sym = ca.hcat([
+#     (tf_sym*0.5 * eom_rhs_state_fun(_Xproj, _Uproj) - eom_lhs_permutation_state_fun(_Xproj, _Uproj) @ _DXproj)
+#     / state_dynamics_scale
+#     for (_Xproj, _Uproj, _DXproj) in zip(ca.horzsplit(Xproj_sym), ca.horzsplit(Uproj_sym), ca.horzsplit(DXproj_sym))
+# ]) * np.tile(proj_weights[None, :], (nx, 1))
+
+collocated_residual_sym = dynamic_residual_sym @ proj_col_mat
 dynamic_constraint_sym = ca.vec(collocated_residual_sym)
 
 bc0_sym = X0i_sym - x0_nd
@@ -374,13 +415,16 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
 
         lam_nlp = np.empty(shape=(nx, n_mesh))
         lam_nlp[:, idces_anchor] = np.nan
-        lam_nlp[:, idces_collocation] = _adjoints_nlp[nx + bcf_sym.numel():].reshape((nx, -1), order='F')
-        lam_nlp[:, idces_collocation] *= path_cost_scale / state_dynamics_scale[:, None]
 
-        lam_nlp = np.vstack([
-            np.dot(eom_lhs_permutation_state_fun(_x, _u).full(), _lam)
-            for (_x, _u, _lam) in zip(X_nlp.T, U_nlp.T, lam_nlp.T)
-        ]).T
+        lam_nlp[:, idces_collocation] = _adjoints_nlp[nx + bcf_sym.numel():].reshape((nx, -1), order='F') \
+            * path_cost_scale / state_dynamics_scale[:, None]
+
+        # TODO - when using implicit formulation, include this correction:
+        # TODO - lam[explicit] = (P^T) @ lam[affine implicit]
+        # lam_nlp = np.vstack([
+        #     np.dot(eom_lhs_permutation_state_fun(_x, _u).full(), _lam)
+        #     for (_x, _u, _lam) in zip(X_nlp.T, U_nlp.T, lam_nlp.T)
+        # ]).T
     else:
         nu0_nlp = np.empty_like(initial_state)
         nu0_nlp[:] = np.nan
