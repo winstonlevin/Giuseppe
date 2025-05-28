@@ -40,10 +40,6 @@ psi0 = 0.  # [rad]
 hf = 0.
 lonf = 3. * np.pi/180
 latf = 1. * np.pi/180
-
-lamVf = 0.
-lamgamf = 0.
-lampsif = 0.
 # ------------------------------------------------ #
 
 # Symbolic expressions to derive necessary conditions for optimality ------------------------------------------------- #
@@ -120,7 +116,7 @@ bc0_fun = ca.Function('BC0', (state_sym,), (bc0_sym,), ('x',), ('BC0',))
 bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 
 # Path constraints
-control_lower_bound = np.array((-40*np.pi, -3*np.pi))
+control_lower_bound = np.array((-40*np.pi/180, -3*np.pi))  # [0] = AoA, [1] = Bank
 control_upper_bound = np.array((40*np.pi/180, 3*np.pi))
 
 # -------------------------------------------------------------------------- #
@@ -151,15 +147,6 @@ use_costate_scaling = True
 
 # Scaling
 if use_state_scaling:
-    # state_bias, state_scale = np.array((
-    #     (0.,     abs(hf - h0)),      # h
-    #     (0., abs(latf - lat0)),  # Lat
-    #     (0., abs(lonf - lon0)),  # Lon
-    #     (0.,            V0),                # V
-    #     (0.,              0.5*np.pi),           # gam
-    #     (0.,              0.5*np.pi),           # psi
-    # )).T
-
     state_bias, state_scale = np.array((
         ((hf + h0)/2,     abs(hf - h0)/2),      # h
         ((latf + lat0)/2, abs(latf - lat0)/2),  # Lat
@@ -182,35 +169,12 @@ else:
     control_bias = np.zeros_like(control_lower_bound)
     control_scale = np.ones_like(control_lower_bound)
 
-# eom_num_state_sym = ca.vcat((
-#     V_sym * ca.sin(gam_sym),
-#     Vlat_sym * ca.sin(psi_sym),
-#     Vlat_sym * ca.cos(psi_sym),
-#     -drag_sym - g_sym*ca.sin(gam_sym),
-#     (lift_sym*ca.cos(sig_sym) - g_sym) * R_sym - V_sym**2,
-#     (lift_sym*ca.sin(sig_sym)) * Reqt_sym - Vlat_sym**2 * ca.cos(psi_sym)*ca.sin(lat_sym)
-# ))
-# eom_den_state_sym = ca.vcat((
-#     1.,
-#     R_sym,
-#     Reqt_sym,
-#     1.,
-#     V_sym * R_sym,
-#     Vlat_sym * Reqt_sym
-# ))
-
 if use_costate_scaling:
     state_dynamics_bias = np.zeros_like(initial_state)
-    state_num_dynamics_scale, state_den_dynamics_scale = np.array((
-        (V_scale, 1.),  # dh/dt
-        (V_scale, re),  # dLat/dt
-        (V_scale, re),  # dLon/dt
-        (g0, 1.),  # dV/dt
-        (g0*re, V_scale*re),  # dgam/dt
-        (g0*re, V_scale*re),  # dpsi/dt
-    )).T
-    state_dynamics_scale = state_num_dynamics_scale / state_den_dynamics_scale
-    path_cost_scale = g0  # L = dV/dt
+    state_dynamics_scale = np.empty_like(state_scale)
+    state_dynamics_scale[:3] = V_scale
+    state_dynamics_scale[3:] = g0
+    path_cost_scale = state_dynamics_scale[3]
 else:
     state_dynamics_bias = np.zeros_like(initial_state)
     state_dynamics_scale = np.ones_like(initial_state)
@@ -315,19 +279,16 @@ z_sym = ca.vcat((
 ))
 
 L_proj_sym = path_cost_fun(Xproj_sym, Uproj_sym) / path_cost_scale
-f_num_proj_sym = eom_num_state_fun(Xproj_sym, Uproj_sym)
-f_den_proj_sym = eom_den_state_fun(Xproj_sym, Uproj_sym)
 X0i_sym = X_sym @ interp0f_mesh[0]
 Xfi_sym = X_sym @ interp0f_mesh[1]
 
 integrated_cost_sym = tf_sym / 2 * (L_proj_sym @ proj_weights)
-dynamic_residual_sym = (
-    tf_sym / 2 * (f_num_proj_sym / state_num_dynamics_scale[:, None])
-    - (f_den_proj_sym / state_num_dynamics_scale[:, None]) * DXproj_sym
-) * np.tile(proj_weights[None, :], (nx, 1))
-dynamic_residual_sym /= (f_den_proj_sym/state_den_dynamics_scale[:, None])  # Original formulation
-# dynamic_residual_sym *= (f_den_proj_sym/state_den_dynamics_scale[:, None])
-collocated_residual_sym = dynamic_residual_sym @ proj_col_mat  # Downscale integrator dimension to costate dimension
+dynamic_residual_sym = ca.hcat([
+    (tf_sym*0.5 * eom_rhs_state_fun(_Xproj, _Uproj) - eom_lhs_permutation_state_fun(_Xproj, _Uproj) @ _DXproj)
+    / state_dynamics_scale
+    for (_Xproj, _Uproj, _DXproj) in zip(ca.horzsplit(Xproj_sym), ca.horzsplit(Uproj_sym), ca.horzsplit(DXproj_sym))
+]) * np.tile(proj_weights[None, :], (nx, 1))
+collocated_residual_sym = dynamic_residual_sym @ proj_col_mat  # Contract integrator dimension to costate dimension
 dynamic_constraint_sym = ca.vec(collocated_residual_sym)
 
 bc0_sym = X0i_sym - x0_nd
@@ -403,17 +364,6 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
     U_nlp[:, idces_collocation] = control_bias[:, None] \
         + control_scale[:, None] * _z_nlp[nx_mesh:nx_mesh + nu_col].reshape((nu, -1), order='F')
 
-    # # Unwrap angles
-    # sig_unwrapped = np.unwrap(U_nlp[1, idces_collocation], period=np.pi)
-    # flip_sign = np.zeros(shape=(n_mesh,), dtype=bool)
-    # flip_sign[idces_collocation] = np.not_equal(np.sign(sig_unwrapped), np.sign(U_nlp[1, idces_collocation]))
-    # U_nlp[0, flip_sign] *= -1
-    # U_nlp[1, idces_collocation] = sig_unwrapped
-    #
-    # # Ensure AoA mostly positive
-    # if np.dot(U_nlp[0, idces_collocation], col_weights) < 0:
-    #     U_nlp *= -1
-
     tf_nlp = _z_nlp[nx_mesh + nu_col]
     t_nlp = tf_nlp*(1+col_points)/2
 
@@ -425,9 +375,12 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
         lam_nlp = np.empty(shape=(nx, n_mesh))
         lam_nlp[:, idces_anchor] = np.nan
         lam_nlp[:, idces_collocation] = _adjoints_nlp[nx + bcf_sym.numel():].reshape((nx, -1), order='F')
-        f_den_col = eom_den_state_fun(X_nlp[:, idces_collocation], U_nlp[:, idces_collocation]).full()
-        # lam_nlp[:, idces_collocation] *= (f_den_col / state_den_dynamics_scale[:, None])  # **2
         lam_nlp[:, idces_collocation] *= path_cost_scale / state_dynamics_scale[:, None]
+
+        lam_nlp = np.vstack([
+            np.dot(eom_lhs_permutation_state_fun(_x, _u).full(), _lam)
+            for (_x, _u, _lam) in zip(X_nlp.T, U_nlp.T, lam_nlp.T)
+        ]).T
     else:
         nu0_nlp = np.empty_like(initial_state)
         nu0_nlp[:] = np.nan

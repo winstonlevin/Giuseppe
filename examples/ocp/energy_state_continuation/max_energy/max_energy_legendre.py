@@ -105,7 +105,7 @@ bc0_fun = ca.Function('BC0', (state_sym,), (bc0_sym,), ('x',), ('BC0',))
 bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 
 # Path constraints
-control_lower_bound = np.array((-40*np.pi, -3*np.pi))  # Make AoA>=0 to disambiguate sign of AoA/Bank
+control_lower_bound = np.array((-40*np.pi/180, -3*np.pi))  # [0] = AoA, [1] = Bank
 control_upper_bound = np.array((40*np.pi/180, 3*np.pi))
 
 # -------------------------------------------------------------------------- #

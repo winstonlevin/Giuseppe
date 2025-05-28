@@ -52,11 +52,15 @@ r2d = 180./np.pi
 # Plot states / costates
 cols = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-guess_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[1], 'label': 'Guess'}
+# guess_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[1], 'label': 'Guess'}
 nlp_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[0], 'label': 'NLP'}
 nlp_interp_plot_kwargs = {'linestyle': '--', 'color': cols[0]}
-legendre_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[2], 'label': 'NLP Leg.', 'markersize': 6}
-indirect_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[3], 'label': 'Indirect', 'markersize': 6}
+# legendre_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[2], 'label': 'NLP Leg.', 'markersize': 6}
+nonsingular_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[3], 'label': 'Nonsingular', 'markersize': 6}
+
+guess_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[1], 'label': 'Guess'}
+legendre_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[2], 'label': 'NLP Leg.', 'markersize': 6}
+# indirect_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[3], 'label': 'Indirect', 'markersize': 6}
 
 fig_u, axes_u = plt.subplots(sol_nlp.u.shape[0])
 u_labels = (
@@ -72,7 +76,7 @@ for idx, ax_u in enumerate(axes_u):
     ax_u.plot(sol_nlp_interp.t, sol_nlp_interp.u[idx], **nlp_interp_plot_kwargs)
     ax_u.plot(sol_nlp.t, sol_nlp.u[idx], **nlp_plot_kwargs)
     ax_u.plot(sol_legendre.t, sol_legendre.u[idx], **legendre_plot_kwargs)
-    ax_u.plot(sol_nonsingular.t, sol_nonsingular.u[idx], **indirect_plot_kwargs)
+    ax_u.plot(sol_nonsingular.t, sol_nonsingular.u[idx], **nonsingular_plot_kwargs)
 axes_u[-1].set_xlabel(t_lab)
 
 fig_u.tight_layout()
@@ -119,12 +123,12 @@ for idx, ax_x in enumerate(axes_x_flat):
     ax_x.plot(sol_nlp_interp.t, sol_nlp_interp.x[idx] * x_scale[idx], **nlp_interp_plot_kwargs)
     ax_x.plot(sol_nlp.t, sol_nlp.x[idx] * x_scale[idx], **nlp_plot_kwargs)
     ax_x.plot(sol_legendre.t, sol_legendre.x[idx] * x_scale[idx], **legendre_plot_kwargs)
-    ax_x.plot(sol_nonsingular.t, sol_nonsingular.x[idx] * x_scale[idx], **indirect_plot_kwargs)
+    ax_x.plot(sol_nonsingular.t, sol_nonsingular.x[idx] * x_scale[idx], **nonsingular_plot_kwargs)
 
     ax_lam.plot(sol_nlp_interp.t, sol_nlp_interp.lam[idx], **nlp_interp_plot_kwargs)
     ax_lam.plot(sol_nlp.t, sol_nlp.lam[idx], **nlp_plot_kwargs)
     ax_lam.plot(sol_legendre.t, sol_legendre.lam[idx], **legendre_plot_kwargs)
-    ax_lam.plot(sol_nonsingular.t, sol_nonsingular.lam[idx], **indirect_plot_kwargs)
+    ax_lam.plot(sol_nonsingular.t, sol_nonsingular.lam[idx], **nonsingular_plot_kwargs)
 
 ax_x = axes_x_flat[-1]
 ax_lam = axes_lam_flat[-1]
