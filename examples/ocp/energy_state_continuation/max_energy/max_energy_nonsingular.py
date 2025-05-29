@@ -133,8 +133,8 @@ bc0_fun = ca.Function('BC0', (state_sym,), (bc0_sym,), ('x',), ('BC0',))
 bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 
 # Path constraints
-control_lower_bound = np.array((-40*np.pi/180, -3*np.pi))  # [0] = AoA, [1] = Bank
-control_upper_bound = np.array((40*np.pi/180, 3*np.pi))
+control_lower_bound = np.array((0*np.pi/180, -np.pi))  # [0] = AoA, [1] = Bank
+control_upper_bound = np.array((40*np.pi/180, np.pi))
 
 # -------------------------------------------------------------------------- #
 # SCALING PROCEDURE:                                                         #
@@ -187,24 +187,23 @@ else:
     control_scale = np.ones_like(control_lower_bound)
 
 if use_costate_scaling:
-    # TODO - swap to implicit scales
-    # Explicit scales
-    state_dynamics_bias, state_dynamics_scale = np.array((
-        (0., V_scale),  # dh/dt
-        (0., V_scale/re),  # dLat/dt
-        (0., V_scale/re),  # dLon/dt
-        (0., g0),  # dV/dt
-        (0., g0/V_scale),  # dgam/dt
-        (0., g0/V_scale),  # dpsi/dt
-    )).T
-    path_cost_scale = g0  # L = dV/dt
+    # # Explicit scales
+    # state_dynamics_bias, state_dynamics_scale = np.array((
+    #     (0., V_scale),  # dh/dt
+    #     (0., V_scale/re),  # dLat/dt
+    #     (0., V_scale/re),  # dLon/dt
+    #     (0., g0),  # dV/dt
+    #     (0., g0/V_scale),  # dgam/dt
+    #     (0., g0/V_scale),  # dpsi/dt
+    # )).T
+    # path_cost_scale = g0  # L = dV/dt
 
     # Affine implicit scales
-    # state_dynamics_bias = np.zeros_like(initial_state)
-    # state_dynamics_scale = np.empty_like(state_scale)
-    # state_dynamics_scale[:3] = V_scale
-    # state_dynamics_scale[3:] = g0
-    # path_cost_scale = state_dynamics_scale[3]
+    state_dynamics_bias = np.zeros_like(initial_state)
+    state_dynamics_scale = np.empty_like(state_scale)
+    state_dynamics_scale[:3] = V_scale
+    state_dynamics_scale[3:] = g0
+    path_cost_scale = state_dynamics_scale[3]
 else:
     state_dynamics_bias = np.zeros_like(initial_state)
     state_dynamics_scale = np.ones_like(initial_state)
@@ -220,7 +219,7 @@ pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
 n_col = 10  # Number of basis functions for state estimate (1 more than costate/control)
-n_int = 10  # Number of integration locations
+n_int = 15  # Number of integration locations
 
 
 collocation_method = 'lg'
@@ -317,10 +316,8 @@ integrated_cost_sym = tf_sym / 2 * (L_proj_sym @ proj_weights)
 # TODO - swap to new affine implicit dynamic constraint
 # Old explicit dynamics ------------------------------------------- #
 f_proj_sym = eom_state_fun(Xproj_sym, Uproj_sym)
-dynamic_residual_sym = (
-    tf_sym / 2 * f_proj_sym - DXproj_sym
-) * np.tile(proj_weights[None, :], (nx, 1))
-dynamic_residual_sym /= state_dynamics_scale[:, None]
+dynamic_residual_sym = tf_sym / 2 * f_proj_sym - DXproj_sym
+dynamic_residual_sym *= (proj_weights[None, :] / state_dynamics_scale[:, None])
 
 # New affine implicit dynamics ------------------------------------ #
 # dynamic_residual_sym = ca.hcat([
@@ -329,7 +326,7 @@ dynamic_residual_sym /= state_dynamics_scale[:, None]
 #     for (_Xproj, _Uproj, _DXproj) in zip(ca.horzsplit(Xproj_sym), ca.horzsplit(Uproj_sym), ca.horzsplit(DXproj_sym))
 # ]) * np.tile(proj_weights[None, :], (nx, 1))
 
-collocated_residual_sym = dynamic_residual_sym @ proj_col_mat
+collocated_residual_sym = dynamic_residual_sym @ proj_col_mat  # Contract residual down to costate dimension
 dynamic_constraint_sym = ca.vec(collocated_residual_sym)
 
 bc0_sym = X0i_sym - x0_nd
@@ -404,6 +401,9 @@ def unpack_solution(_z_nlp, _adjoints_nlp=None):
     U_nlp[:, idces_anchor] = np.nan
     U_nlp[:, idces_collocation] = control_bias[:, None] \
         + control_scale[:, None] * _z_nlp[nx_mesh:nx_mesh + nu_col].reshape((nu, -1), order='F')
+
+    # Wrap heading values to +/-pi
+    U_nlp[1, :] = np.mod(U_nlp[1, :] + np.pi, 2*np.pi) - np.pi
 
     tf_nlp = _z_nlp[nx_mesh + nu_col]
     t_nlp = tf_nlp*(1+col_points)/2
