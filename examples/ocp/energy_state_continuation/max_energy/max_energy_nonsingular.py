@@ -33,7 +33,7 @@ h_ref = 7_500  # Density decay rate [m]
 # (initial)
 h0 = 40e3  # [m]
 lon0 = 0.  # [rad]
-lat0 = 88. * d2r  # [rad]
+lat0 = 87. * d2r  # [rad]
 V0 = 2e3  # [m/s]
 gam0 = 0.  # [rad]
 psi0 = 90. * d2r  # [rad]
@@ -41,7 +41,7 @@ psi0 = 90. * d2r  # [rad]
 # (terminal)
 hf = 0.
 lonf = 0. * d2r
-latf = 91. * d2r
+latf = 90. * d2r
 gamf = -90. * d2r
 # ------------------------------------------------ #
 
@@ -216,8 +216,8 @@ gamf_nd = (gamf - state_bias[4]) / state_scale[4]
 # ----------------------------------------------------------------------------- #
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
-n_col = 10  # Number of basis functions for state estimate (1 more than costate/control)
-n_int = 20  # Number of integration locations
+n_col = 15  # Number of basis functions for state estimate (1 more than costate/control)
+n_int = 25  # Number of integration locations
 
 
 collocation_method = 'lg'
@@ -365,10 +365,16 @@ lb_state[0] = -1_000.  # Altitude
 ub_state[0] = 100_000.
 lb_state[1:3] = initial_state[1:3]  # Lat/lon
 ub_state[1:3] = terminal_pos[1:3]
+
+lb_state[1] -= 0.5 * d2r
+ub_state[1] += 0.5*d2r
+lb_state[2] -= 179 * d2r
+ub_state[2] += 180 *d2r
+
 lb_state[3] = 10.
 ub_state[3] = 2*initial_state[3]
-lb_state[4] = -90*np.pi/180  # FPA
-ub_state[4] = 90*np.pi/180
+lb_state[4] = -120*np.pi/180  # FPA
+ub_state[4] = 120*np.pi/180
 lb_state[5] = -np.pi  # Heading
 ub_state[5] = np.pi
 

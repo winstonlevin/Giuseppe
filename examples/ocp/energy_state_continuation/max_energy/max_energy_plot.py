@@ -9,12 +9,25 @@ import giuseppe
 
 mpl.rcParams['axes.formatter.useoffset'] = False
 
+
+def nanize_sol(_sol):
+    _sol.t[:] = np.nan
+    _sol.x[:] = np.nan
+    _sol.lam[:] = np.nan
+    _sol.u[:] = np.nan
+    _sol.nu0[:] = np.nan
+    _sol.nuf[:] = np.nan
+
+
 with open('guess_nlp_legendre.data', 'rb') as f:
     guess = pickle.load(f)
+    nanize_sol(guess)  # Do not plot
 with open('sol_nlp.data', 'rb') as f:
     sol_nlp = pickle.load(f)
+    nanize_sol(sol_nlp)  # Do not plot
 with open('sol_nlp_legendre.data', 'rb') as f:
     sol_legendre = pickle.load(f)
+    nanize_sol(sol_legendre)  # Do not plot
 with open('sol_nonsingular.data', 'rb') as f:
     sol_nonsingular = pickle.load(f)
 
@@ -48,21 +61,16 @@ def interpolate_solution(_sol, n_vals: int = 1000):
 sol_nlp_interp = interpolate_solution(sol_nlp)
 
 r2d = 180./np.pi
+d2r = np.pi/180.
 
 # Plot states / costates
 cols = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-# guess_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[1], 'label': 'Guess'}
-# nlp_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[0], 'label': 'NLP'}
-# nlp_interp_plot_kwargs = {'linestyle': '--', 'color': cols[0]}
-# legendre_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[2], 'label': 'NLP Leg.', 'markersize': 6}
+guess_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[1], 'label': 'Guess'}
+nlp_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[0], 'label': 'NLP'}
+nlp_interp_plot_kwargs = {'linestyle': '--', 'color': cols[0]}
+legendre_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[2], 'label': 'NLP Leg.', 'markersize': 6}
 nonsingular_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[3], 'label': 'Nonsingular', 'markersize': 6}
-
-guess_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[1], 'label': 'Guess'}
-nlp_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[0], 'label': 'NLP'}
-nlp_interp_plot_kwargs = {'linestyle': '', 'color': cols[0]}
-legendre_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[2], 'label': 'NLP Leg.', 'markersize': 6}
-# nonsingular_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[3], 'label': 'Indirect', 'markersize': 6}
 
 fig_u, axes_u = plt.subplots(sol_nlp.u.shape[0])
 u_labels = (
@@ -113,6 +121,15 @@ x_scale = (
     r2d
 )
 
+x_singularities = (
+    None,
+    90.*d2r,
+    None,
+    None,
+    -90.*d2r,
+    None,
+)
+
 for idx, ax_x in enumerate(axes_x_flat):
     ax_lam = axes_lam_flat[idx]
 
@@ -120,6 +137,9 @@ for idx, ax_x in enumerate(axes_x_flat):
     ax_x.grid()
     ax_lam.grid()
     ax_lam.set_ylabel(lam_labels[idx])
+
+    if x_singularities[idx] is not None:
+        ax_x.axhline(y=x_singularities[idx]*x_scale[idx], color='k', linestyle='--')
 
     ax_x.plot(guess.t, guess.x[idx]*x_scale[idx], **guess_plot_kwargs)
     ax_x.plot(sol_nlp_interp.t, sol_nlp_interp.x[idx] * x_scale[idx], **nlp_interp_plot_kwargs)
@@ -141,34 +161,34 @@ fig_x.tight_layout()
 fig_lam.tight_layout()
 
 
-# Fig Legendre Polynomial Coefficients to solutions
-def fit_legendre(_t, _y):
-    # Non-dimensionalize time
-    _t0, _tf = _t[0], _t[-1]
-    _tb, _tr = 0.5*(_tf + _t0), 0.5*(_tf - _t0)
-    _tau = (_t - _tb) / _tr
-
-    # Generate legendre basis
-    _nb = _tau.size
-    _bases = [np.polynomial.Legendre.basis(_deg) for _deg in range(_nb)]
-
-    # Generate coefficient matrix
-    _design_matrix = np.vstack([_phi(_tau) for _phi in _bases])
-
-    # Non-dimensionalize state
-    _yl, _yu = _y.min(initial=np.inf, axis=-1), _y.max(initial=-np.inf, axis=-1)
-    _yb, _yr = 0.5*(_yu + _yl), 0.5*(_yu - _yl)
-    _y_nd = (_y - _yb[:, None]) / _yr[:, None]
-
-    # Generate fit
-    return np.linalg.solve(_design_matrix, _y_nd.T).T
-
-
-X_leg = fit_legendre(sol_nlp.t[sol_nlp.k > 0], sol_nlp.x[:, sol_nlp.k > 0])
-U_leg = fit_legendre(sol_nlp.t[sol_nlp.k > 1], sol_nlp.u[:, sol_nlp.k > 1])
-Lam_leg = fit_legendre(sol_nlp.t[sol_nlp.k > 1], sol_nlp.lam[:, sol_nlp.k > 1])
-
-print('Largest Legendre coeff magnitude (for n.d. state/control/costate):')
-print(np.max((np.abs(X_leg).max(), np.abs(U_leg).max(), np.abs(Lam_leg).max())))
+# # Fit Legendre Polynomial Coefficients to solutions
+# def fit_legendre(_t, _y):
+#     # Non-dimensionalize time
+#     _t0, _tf = _t[0], _t[-1]
+#     _tb, _tr = 0.5*(_tf + _t0), 0.5*(_tf - _t0)
+#     _tau = (_t - _tb) / _tr
+#
+#     # Generate legendre basis
+#     _nb = _tau.size
+#     _bases = [np.polynomial.Legendre.basis(_deg) for _deg in range(_nb)]
+#
+#     # Generate coefficient matrix
+#     _design_matrix = np.vstack([_phi(_tau) for _phi in _bases])
+#
+#     # Non-dimensionalize state
+#     _yl, _yu = _y.min(initial=np.inf, axis=-1), _y.max(initial=-np.inf, axis=-1)
+#     _yb, _yr = 0.5*(_yu + _yl), 0.5*(_yu - _yl)
+#     _y_nd = (_y - _yb[:, None]) / _yr[:, None]
+#
+#     # Generate fit
+#     return np.linalg.solve(_design_matrix, _y_nd.T).T
+#
+#
+# X_leg = fit_legendre(sol_nlp.t[sol_nlp.k > 0], sol_nlp.x[:, sol_nlp.k > 0])
+# U_leg = fit_legendre(sol_nlp.t[sol_nlp.k > 1], sol_nlp.u[:, sol_nlp.k > 1])
+# Lam_leg = fit_legendre(sol_nlp.t[sol_nlp.k > 1], sol_nlp.lam[:, sol_nlp.k > 1])
+#
+# print('Largest Legendre coeff magnitude (for n.d. state/control/costate):')
+# print(np.max((np.abs(X_leg).max(), np.abs(U_leg).max(), np.abs(Lam_leg).max())))
 
 plt.show()
