@@ -40,7 +40,7 @@ psi0 = 0.  # [rad]
 hf = 0.
 lonf = 3. * np.pi/180
 latf = 0. * np.pi/180
-gamf = -32.5 * np.pi/180
+gamf = -90. * np.pi/180
 # ------------------------------------------------ #
 
 # Symbolic expressions to derive necessary conditions for optimality ------------------------------------------------- #
@@ -127,7 +127,7 @@ bc0_sym = state_sym - initial_state
 terminal_pos = np.array((hf, latf, lonf))
 
 # Path constraints
-control_lower_bound = np.array((0*np.pi/180, -np.pi))  # [0] = AoA, [1] = Bank
+control_lower_bound = np.array((-40*np.pi/180, -np.pi))  # [0] = AoA, [1] = Bank
 control_upper_bound = np.array((40*np.pi/180, np.pi))
 
 # -------------------------------------------------------------------------- #
@@ -327,7 +327,7 @@ dynamic_constraint_sym = ca.vec(collocated_residual_sym)
 
 bc0_sym = X0i_sym - x0_nd
 bcf_sym = ca.vcat((Xfi_sym[:3] - pf_nd, Xfi_sym[4] - gamf_nd))
-bcf_sym = bcf_sym[:-1]
+# bcf_sym = bcf_sym[:-1]
 boundary_constraints = ca.vcat((bc0_sym, bcf_sym))
 
 nlp = {

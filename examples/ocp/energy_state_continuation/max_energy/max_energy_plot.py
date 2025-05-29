@@ -53,14 +53,14 @@ r2d = 180./np.pi
 cols = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 # guess_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[1], 'label': 'Guess'}
-nlp_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[0], 'label': 'NLP'}
-nlp_interp_plot_kwargs = {'linestyle': '--', 'color': cols[0]}
+# nlp_plot_kwargs = {'marker': '*', 'linestyle': '', 'color': cols[0], 'label': 'NLP'}
+# nlp_interp_plot_kwargs = {'linestyle': '--', 'color': cols[0]}
 # legendre_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[2], 'label': 'NLP Leg.', 'markersize': 6}
 nonsingular_plot_kwargs = {'marker': 'o', 'linestyle': '', 'color': cols[3], 'label': 'Nonsingular', 'markersize': 6}
 
 guess_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[1], 'label': 'Guess'}
-# nlp_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[0], 'label': 'NLP'}
-# nlp_interp_plot_kwargs = {'linestyle': '', 'color': cols[0]}
+nlp_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[0], 'label': 'NLP'}
+nlp_interp_plot_kwargs = {'linestyle': '', 'color': cols[0]}
 legendre_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[2], 'label': 'NLP Leg.', 'markersize': 6}
 # nonsingular_plot_kwargs = {'marker': '', 'linestyle': '', 'color': cols[3], 'label': 'Indirect', 'markersize': 6}
 
