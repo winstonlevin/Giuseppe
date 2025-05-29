@@ -82,7 +82,7 @@ eom_state_sym = ca.vcat((
     ((V_sym/R_sym) * ca.cos(gam_sym)) * ca.sin(psi_sym),
     ((V_sym/R_sym) * ca.cos(gam_sym)) * ca.cos(psi_sym)/ca.cos(lat_sym),
     -drag_sym - g_sym*ca.sin(gam_sym),
-    (lift_sym*ca.cos(sig_sym) - (g_sym - V_sym**2/R_sym))/V_sym,
+    (lift_sym*ca.cos(sig_sym) - (g_sym - V_sym**2/R_sym)*ca.cos(gam_sym))/V_sym,
     (lift_sym*ca.sin(sig_sym) - Vlat_sym**2/R_sym * ca.cos(psi_sym)*ca.tan(lat_sym))/Vlat_sym
 ))
 
@@ -193,7 +193,7 @@ pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
 # Discretization of continuous signals                                          #
 # ----------------------------------------------------------------------------- #
 n_col = 10  # Number of basis functions for state estimate (1 more than costate/control)
-n_int = 15  # Number of integration locations
+n_int = 20  # Number of integration locations
 
 
 collocation_method = 'lg'

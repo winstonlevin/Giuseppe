@@ -82,7 +82,7 @@ eom_state_sym = ca.vcat((
     ((V_sym/R_sym) * ca.cos(gam_sym)) * ca.sin(psi_sym),
     ((V_sym/R_sym) * ca.cos(gam_sym)) * ca.cos(psi_sym)/ca.cos(lat_sym),
     -drag_sym - g_sym*ca.sin(gam_sym),
-    (lift_sym*ca.cos(sig_sym) - (g_sym - V_sym**2/R_sym))/V_sym,
+    (lift_sym*ca.cos(sig_sym) - (g_sym - V_sym**2/R_sym) * ca.cos(gam_sym))/V_sym,
     (lift_sym*ca.sin(sig_sym) - Vlat_sym**2/R_sym * ca.cos(psi_sym)*ca.tan(lat_sym))/Vlat_sym
 ))
 
