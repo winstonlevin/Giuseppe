@@ -32,8 +32,8 @@ h_ref = 7_500  # Density decay rate [m]
 # Boundary conditions
 # (initial)
 h0 = 40e3  # [m]
-lon0 = 0.
-lat0 = 0.
+lon0 = 0.  # [rad]
+lat0 = 87. * d2r  # [rad]
 V0 = 2e3  # [m/s]
 gam0 = 0.  # [rad]
 psi0 = 90. * d2r  # [rad]
@@ -41,7 +41,7 @@ psi0 = 90. * d2r  # [rad]
 # (terminal)
 hf = 0.
 lonf = 0. * d2r
-latf = 3. * d2r
+latf = 90. * d2r
 gamf = -90. * d2r
 # ------------------------------------------------ #
 
