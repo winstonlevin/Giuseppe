@@ -39,11 +39,7 @@ psi0 = 0.  # [rad]
 # (terminal)
 hf = 0.
 lonf = 3. * np.pi/180
-latf = 1. * np.pi/180
-
-lamVf = 0.
-lamgamf = 0.
-lampsif = 0.
+latf = 0. * np.pi/180
 # ------------------------------------------------ #
 
 # Symbolic expressions to derive necessary conditions for optimality ------------------------------------------------- #
@@ -136,22 +132,14 @@ use_costate_scaling = True
 
 # Scaling
 if use_state_scaling:
-    # state_bias, state_scale = np.array((
-    #     (0.,     abs(hf - h0)),      # h
-    #     (0., abs(latf - lat0)),  # Lat
-    #     (0., abs(lonf - lon0)),  # Lon
-    #     (0.,            V0),                # V
-    #     (0.,              0.5*np.pi),           # gam
-    #     (0.,              0.5*np.pi),           # psi
-    # )).T
-
+    lat_lon_scale = 0.5 * ((latf - lat0) ** 2 + (lonf - lon0) ** 2) ** 0.5
     state_bias, state_scale = np.array((
-        ((hf + h0)/2,     abs(hf - h0)/2),      # h
-        ((latf + lat0)/2, abs(latf - lat0)/2),  # Lat
-        ((lonf + lon0)/2, abs(lonf - lon0)/2),  # Lon
-        (V0/2,            V0/2),                # V
-        (0.,              0.5*np.pi),           # gam
-        (0.,              0.5*np.pi),           # psi
+        ((hf + h0)/2,     abs(hf - h0)/2),  # h
+        ((latf + lat0)/2, lat_lon_scale),   # Lat
+        ((lonf + lon0)/2, lat_lon_scale),   # Lon
+        (V0/2,            V0/2),            # V
+        (0.,              0.5*np.pi),       # gam
+        (0.,              0.5*np.pi),       # psi
     )).T
 else:
     state_bias = np.zeros_like(initial_state)
@@ -329,12 +317,12 @@ lb_state = np.empty_like(initial_state)
 ub_state = np.empty_like(initial_state)
 lb_state[0] = -1_000.  # Altitude
 ub_state[0] = 100_000.
-lb_state[1:3] = initial_state[1:3] - 2*np.pi/180  # Lat/lon
-ub_state[1:3] = terminal_pos[1:3] + 2*np.pi/180
+lb_state[1:3] = initial_state[1:3]  # Lat/lon
+ub_state[1:3] = terminal_pos[1:3]
 lb_state[3] = 10.
 ub_state[3] = 2*initial_state[3]
-lb_state[4] = -85*np.pi/180  # FPA
-ub_state[4] = 85*np.pi/180
+lb_state[4] = -89*np.pi/180  # FPA
+ub_state[4] = 89*np.pi/180
 lb_state[5] = -np.pi  # Heading
 ub_state[5] = np.pi
 

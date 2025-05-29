@@ -39,8 +39,8 @@ psi0 = 0.  # [rad]
 # (terminal)
 hf = 0.
 lonf = 3. * np.pi/180
-latf = 1. * np.pi/180
-gamf = -90. * np.pi/180
+latf = 0. * np.pi/180
+gamf = -32.5 * np.pi/180
 # ------------------------------------------------ #
 
 # Symbolic expressions to derive necessary conditions for optimality ------------------------------------------------- #
@@ -158,13 +158,14 @@ use_costate_scaling = True
 
 # Scaling
 if use_state_scaling:
+    lat_lon_scale = 0.5 * ((latf - lat0) ** 2 + (lonf - lon0) ** 2) ** 0.5
     state_bias, state_scale = np.array((
-        ((hf + h0)/2,     abs(hf - h0)/2),      # h
-        ((latf + lat0)/2, abs(latf - lat0)/2),  # Lat
-        ((lonf + lon0)/2, abs(lonf - lon0)/2),  # Lon
-        (V0/2,            V0/2),                # V
-        (0.,              0.5*np.pi),           # gam
-        (0.,              0.5*np.pi),           # psi
+        ((hf + h0)/2,     abs(hf - h0)/2),  # h
+        ((latf + lat0)/2, lat_lon_scale),   # Lat
+        ((lonf + lon0)/2, lat_lon_scale),   # Lon
+        (V0/2,            V0/2),            # V
+        (0.,              0.5*np.pi),       # gam
+        (0.,              0.5*np.pi),       # psi
     )).T
 else:
     state_bias = np.zeros_like(initial_state)
@@ -326,6 +327,7 @@ dynamic_constraint_sym = ca.vec(collocated_residual_sym)
 
 bc0_sym = X0i_sym - x0_nd
 bcf_sym = ca.vcat((Xfi_sym[:3] - pf_nd, Xfi_sym[4] - gamf_nd))
+bcf_sym = bcf_sym[:-1]
 boundary_constraints = ca.vcat((bc0_sym, bcf_sym))
 
 nlp = {
@@ -359,12 +361,12 @@ lb_state = np.empty_like(initial_state)
 ub_state = np.empty_like(initial_state)
 lb_state[0] = -1_000.  # Altitude
 ub_state[0] = 100_000.
-lb_state[1:3] = initial_state[1:3] - 2*np.pi/180  # Lat/lon
-ub_state[1:3] = terminal_pos[1:3] + 2*np.pi/180
+lb_state[1:3] = initial_state[1:3]  # Lat/lon
+ub_state[1:3] = terminal_pos[1:3]
 lb_state[3] = 10.
 ub_state[3] = 2*initial_state[3]
-lb_state[4] = -85*np.pi/180  # FPA
-ub_state[4] = 85*np.pi/180
+lb_state[4] = -90*np.pi/180  # FPA
+ub_state[4] = 90*np.pi/180
 lb_state[5] = -np.pi  # Heading
 ub_state[5] = np.pi
 
