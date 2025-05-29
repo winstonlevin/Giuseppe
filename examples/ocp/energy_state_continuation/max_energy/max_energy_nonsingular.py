@@ -40,6 +40,7 @@ psi0 = 0.  # [rad]
 hf = 0.
 lonf = 3. * np.pi/180
 latf = 1. * np.pi/180
+gamf = -90. * np.pi/180
 # ------------------------------------------------ #
 
 # Symbolic expressions to derive necessary conditions for optimality ------------------------------------------------- #
@@ -124,10 +125,6 @@ bc0_sym = state_sym - initial_state
 
 # (terminal)
 terminal_pos = np.array((hf, latf, lonf))
-bcf_sym = state_sym[:3] - terminal_pos
-
-bc0_fun = ca.Function('BC0', (state_sym,), (bc0_sym,), ('x',), ('BC0',))
-bcf_fun = ca.Function('BCf', (state_sym,), (bcf_sym,), ('x',), ('BCf',))
 
 # Path constraints
 control_lower_bound = np.array((0*np.pi/180, -np.pi))  # [0] = AoA, [1] = Bank
@@ -211,6 +208,7 @@ bcf_scale = state_scale[:3]
 
 x0_nd = (initial_state - state_bias) / state_scale
 pf_nd = (terminal_pos - state_bias[:3]) / state_scale[:3]
+gamf_nd = (gamf - state_bias[4]) / state_scale[4]
 
 # ----------------------------------------------------------------------------- #
 # Discretization of continuous signals                                          #
@@ -327,7 +325,7 @@ collocated_residual_sym = dynamic_residual_sym @ proj_col_mat  # Contract residu
 dynamic_constraint_sym = ca.vec(collocated_residual_sym)
 
 bc0_sym = X0i_sym - x0_nd
-bcf_sym = Xfi_sym[:3] - pf_nd
+bcf_sym = ca.vcat((Xfi_sym[:3] - pf_nd, Xfi_sym[4] - gamf_nd))
 boundary_constraints = ca.vcat((bc0_sym, bcf_sym))
 
 nlp = {
