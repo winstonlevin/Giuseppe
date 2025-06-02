@@ -329,6 +329,9 @@ dynamic_constraint_sym = ca.vec(collocated_residual_sym)
 
 bc0_sym = X0i_sym - x0_nd
 bcf_sym = ca.vcat((Xfi_sym[:3] - pf_nd, Xfi_sym[4] - gamf_nd))
+if np.isclose(abs(latf), np.pi*0.5):
+    # At pole, longitude is irrelevant
+    bcf_sym = ca.vcat((bcf_sym[0:2], bcf_sym[3:]))
 # bcf_sym = bcf_sym[:-1]
 boundary_constraints = ca.vcat((bc0_sym, bcf_sym))
 
@@ -366,10 +369,10 @@ ub_state[0] = 100_000.
 lb_state[1:3] = initial_state[1:3]  # Lat/lon
 ub_state[1:3] = terminal_pos[1:3]
 
-lb_state[1] -= 0.5 * d2r
-ub_state[1] += 0.5*d2r
-lb_state[2] -= 179 * d2r
-ub_state[2] += 180 *d2r
+lb_state[1] -= 90 * d2r
+ub_state[1] += 91 * d2r
+lb_state[2] -= 180 * d2r
+ub_state[2] += 181 * d2r
 
 lb_state[3] = 10.
 ub_state[3] = 2*initial_state[3]
