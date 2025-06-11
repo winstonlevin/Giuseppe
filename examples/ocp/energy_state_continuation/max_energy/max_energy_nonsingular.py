@@ -58,11 +58,8 @@ psi_sym = ca.SX.sym('psi')
 
 alpha_sym = ca.SX.sym('alpha')
 sig_sym = ca.SX.sym('sig')
-sin_sig_sym = ca.SX.sym('sin_sig')
-cos_sig_sym = ca.SX.sym('cos_sig')
 
 control_sym = ca.vcat((alpha_sym, sig_sym))
-control_trig_sym = ca.vcat((alpha_sym, sin_sig_sym, cos_sig_sym))
 state_sym = ca.vcat((h_sym, lat_sym, lon_sym, V_sym, gam_sym, psi_sym))
 costate_sym = ca.vcat([ca.SX.sym('lam_' + _x.name()) for _x in ca.vertsplit(state_sym)])
 
@@ -85,8 +82,8 @@ eom_rhs_state_sym = ca.vcat((
     Vlat_sym * ca.sin(psi_sym),
     Vlat_sym * ca.cos(psi_sym),
     -drag_sym - g_sym*ca.sin(gam_sym),
-    lift_sym*cos_sig_sym - (g_sym - V_sym**2/R_sym) * ca.cos(gam_sym),
-    lift_sym*sin_sig_sym,
+    lift_sym*ca.cos(sig_sym) - (g_sym - V_sym**2/R_sym) * ca.cos(gam_sym),
+    lift_sym*ca.sin(sig_sym),
 ))
 
 eom_lhs_permutation_sym = ca.SX.eye(nx)
@@ -99,9 +96,9 @@ eom_lhs_permutation_sym[5, 2] = Vlat_sym * np.sin(lat_sym)
 # Path cost
 path_cost_sym = -eom_rhs_state_sym[3]  # Max Vf - V0
 
-path_cost_fun = ca.Function('L', (state_sym, control_trig_sym), (path_cost_sym,), ('x', 'uT'), ('L',))
+path_cost_fun = ca.Function('L', (state_sym, control_sym), (path_cost_sym,), ('x', 'uT'), ('L',))
 eom_rhs_state_fun = ca.Function(
-    'f', (state_sym, control_trig_sym), (eom_rhs_state_sym,), ('x', 'uT'), ('f',)
+    'f', (state_sym, control_sym), (eom_rhs_state_sym,), ('x', 'uT'), ('f',)
 )
 eom_lhs_permutation_state_fun = ca.Function(
     'P', (state_sym,), (eom_lhs_permutation_sym,), ('x',), ('P',)
@@ -109,7 +106,7 @@ eom_lhs_permutation_state_fun = ca.Function(
 
 # Implicit formulation
 eom_state_fun = ca.Function(
-    'f', (state_sym, control_trig_sym), (ca.solve(eom_lhs_permutation_sym, eom_rhs_state_sym),), ('x', 'uT'), ('f',)
+    'f', (state_sym, control_sym), (ca.solve(eom_lhs_permutation_sym, eom_rhs_state_sym),), ('x', 'uT'), ('f',)
 )
 
 # Boundary conditions
@@ -270,28 +267,12 @@ interp0f_mesh, _ = giuseppe.utils.pseudospectral.lagrange_matrices(
 
 X_sym = ca.SX.sym('X', nx, n_mesh)  # Include initial state
 U_sym = ca.SX.sym('U', nu, n_col)
-Ud_sym = control_bias[:, None] + control_scale[:, None] * U_sym
-UT_sym = ca.vcat((
-    Ud_sym[0, :],
-    ca.sin(Ud_sym[1, :]),
-    ca.cos(Ud_sym[1, :]),
-))
 nx_mesh = nx*n_mesh
 nu_col = nu * n_col
 
 Xproj_sym = state_bias[:, None] + state_scale[:, None] * (X_sym @ proj_mat.T)
 DXproj_sym = state_scale[:, None] * (X_sym @ proj_diff_mat.T)
-UTproj_sym = UT_sym @ proj_col_mat.T
 Uproj_sym = control_bias[:, None] + control_scale[:, None] * (U_sym @ proj_col_mat.T)
-
-# UTproj_sym[0, :] = Uproj_sym[0, :]
-UTproj_sym[1, :] = np.sin(Uproj_sym[1, :])  # TODO - remove
-UTproj_sym[2, :] = np.cos(Uproj_sym[1, :])
-
-# Adjust to ensure trig is norm 1
-sin_cos_interp_norm = ca.sqrt(ca.sum1(UTproj_sym[1:, :] * UTproj_sym[1:, :]))
-UTproj_sym[1, :] /= sin_cos_interp_norm
-UTproj_sym[2, :] /= sin_cos_interp_norm
 
 tf_sym = ca.SX.sym('tf')
 z_sym = ca.vcat((
@@ -300,7 +281,7 @@ z_sym = ca.vcat((
     tf_sym,
 ))
 
-L_proj_sym = path_cost_fun(Xproj_sym, UTproj_sym) / path_cost_scale
+L_proj_sym = path_cost_fun(Xproj_sym, Uproj_sym) / path_cost_scale
 X0i_sym = X_sym @ interp0f_mesh[0]
 Xfi_sym = X_sym @ interp0f_mesh[1]
 
@@ -318,10 +299,10 @@ integrated_cost_sym = tf_sym / 2 * ((L_proj_sym + L_U_sym) @ proj_weights)
 
 # New affine implicit dynamics ------------------------------------ #
 dynamic_residual_sym = ca.hcat([
-    (tf_sym*0.5 * eom_rhs_state_fun(_Xproj, _UTproj) - eom_lhs_permutation_state_fun(_Xproj) @ _DXproj)
+    (tf_sym*0.5 * eom_rhs_state_fun(_Xproj, _Uproj) - eom_lhs_permutation_state_fun(_Xproj) @ _DXproj)
     * _wi / state_dynamics_scale
-    for (_Xproj, _UTproj, _DXproj, _wi)
-    in zip(ca.horzsplit(Xproj_sym), ca.horzsplit(UTproj_sym), ca.horzsplit(DXproj_sym), proj_weights)
+    for (_Xproj, _Uproj, _DXproj, _wi)
+    in zip(ca.horzsplit(Xproj_sym), ca.horzsplit(Uproj_sym), ca.horzsplit(DXproj_sym), proj_weights)
 ])
 
 collocated_residual_sym = dynamic_residual_sym @ proj_col_mat  # Contract residual down to costate dimension
